@@ -6,4 +6,3 @@
 - Jenkins permissions remain authoritative for every request.
 - Artifact downloads are constrained to the configured artifact directory and reject absolute paths or traversal.
 - Trigger and cancel actions can emit append-only JSONL audit records.
-

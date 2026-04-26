@@ -13,4 +13,3 @@ Run validation with:
 ```bash
 go test ./...
 ```
-

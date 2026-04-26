@@ -33,7 +33,7 @@ func (l *Logger) Emit(event Event) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if event.Time.IsZero() {
 		event.Time = time.Now().UTC()
 	}

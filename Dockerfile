@@ -9,4 +9,3 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/jenkins-mcp-server /jenkins-mcp-server
 USER nonroot:nonroot
 ENTRYPOINT ["/jenkins-mcp-server"]
-

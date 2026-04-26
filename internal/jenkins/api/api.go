@@ -140,7 +140,7 @@ func (a *API) GetLog(ctx context.Context, job string, number int, start, max int
 		return model.LogChunk{}, err
 	}
 	if status < 200 || status > 299 {
-		return model.LogChunk{}, fmt.Errorf("Jenkins returned HTTP %d", status)
+		return model.LogChunk{}, fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	text := string(body)
 	truncated := false
@@ -250,7 +250,7 @@ func (a *API) DownloadArtifact(ctx context.Context, job string, number int, rel 
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("Jenkins returned HTTP %d", status)
+		return nil, fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	return body, nil
 }
@@ -270,7 +270,7 @@ func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]st
 		return "", err
 	}
 	if status < 200 || status > 399 {
-		return "", fmt.Errorf("Jenkins returned HTTP %d", status)
+		return "", fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	return headers.Get("Location"), nil
 }
@@ -301,7 +301,7 @@ func (a *API) CancelBuild(ctx context.Context, job string, number int) error {
 		return err
 	}
 	if status < 200 || status > 399 {
-		return fmt.Errorf("Jenkins returned HTTP %d", status)
+		return fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	return nil
 }

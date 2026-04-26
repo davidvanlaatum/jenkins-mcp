@@ -96,7 +96,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return 0, nil, nil, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	b, err := readBounded(res.Body, 8*1024*1024)
 	if err != nil {
 		return 0, nil, nil, err

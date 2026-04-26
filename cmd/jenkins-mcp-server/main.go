@@ -49,7 +49,7 @@ func run() error {
 }
 
 func printHelp() {
-	fmt.Fprintf(os.Stdout, `jenkins-mcp-server %s
+	_, _ = fmt.Fprintf(os.Stdout, `jenkins-mcp-server %s
 
 Runs a Jenkins MCP server over stdio.
 
