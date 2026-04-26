@@ -31,6 +31,28 @@ type Job struct {
 	Color    string `json:"color,omitempty"`
 	Class    string `json:"class,omitempty"`
 }
+
+type JobDetail struct {
+	Job
+	Description     string                `json:"description,omitempty"`
+	Buildable       bool                  `json:"buildable"`
+	InQueue         bool                  `json:"inQueue"`
+	NextBuildNumber int                   `json:"nextBuildNumber,omitempty"`
+	LastBuild       *BuildSummary         `json:"lastBuild,omitempty"`
+	LastSuccessful  *BuildSummary         `json:"lastSuccessfulBuild,omitempty"`
+	LastFailed      *BuildSummary         `json:"lastFailedBuild,omitempty"`
+	Parameters      []ParameterDefinition `json:"parameters,omitempty"`
+}
+
+type ParameterDefinition struct {
+	Name        string   `json:"name"`
+	Type        string   `json:"type,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Default     any      `json:"default,omitempty"`
+	Choices     []string `json:"choices,omitempty"`
+	Required    bool     `json:"required,omitempty"`
+}
+
 type BuildSummary struct {
 	Number    int    `json:"number"`
 	URL       string `json:"url"`

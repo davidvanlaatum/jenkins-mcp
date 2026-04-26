@@ -119,6 +119,93 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 	return jobs, nil
 }
 
+func (a *API) GetJob(ctx context.Context, job string) (model.JobDetail, error) {
+	path := urlx.JobPath(job) + "/api/json"
+	tree := "name,fullName,url,color,_class,description,buildable,inQueue,nextBuildNumber,lastBuild[number,url,result,building,timestamp,duration],lastSuccessfulBuild[number,url,result,building,timestamp,duration],lastFailedBuild[number,url,result,building,timestamp,duration],property[parameterDefinitions[*]]"
+	var raw struct {
+		Name                string        `json:"name"`
+		FullName            string        `json:"fullName"`
+		URL                 string        `json:"url"`
+		Color               string        `json:"color"`
+		Class               string        `json:"_class"`
+		Description         string        `json:"description"`
+		Buildable           bool          `json:"buildable"`
+		InQueue             bool          `json:"inQueue"`
+		NextBuildNumber     int           `json:"nextBuildNumber"`
+		LastBuild           *buildJSON    `json:"lastBuild"`
+		LastSuccessfulBuild *buildJSON    `json:"lastSuccessfulBuild"`
+		LastFailedBuild     *buildJSON    `json:"lastFailedBuild"`
+		Properties          []jobProperty `json:"property"`
+	}
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+		return model.JobDetail{}, err
+	}
+	detail := model.JobDetail{
+		Job:             model.Job{Name: raw.Name, FullName: raw.FullName, URL: raw.URL, Color: raw.Color, Class: raw.Class},
+		Description:     raw.Description,
+		Buildable:       raw.Buildable,
+		InQueue:         raw.InQueue,
+		NextBuildNumber: raw.NextBuildNumber,
+		Parameters:      parseParameterDefinitions(raw.Properties),
+	}
+	if raw.LastBuild != nil {
+		summary := summary(*raw.LastBuild)
+		detail.LastBuild = &summary
+	}
+	if raw.LastSuccessfulBuild != nil {
+		summary := summary(*raw.LastSuccessfulBuild)
+		detail.LastSuccessful = &summary
+	}
+	if raw.LastFailedBuild != nil {
+		summary := summary(*raw.LastFailedBuild)
+		detail.LastFailed = &summary
+	}
+	return detail, nil
+}
+
+type jobProperty struct {
+	ParameterDefinitions []parameterDefinitionJSON `json:"parameterDefinitions"`
+}
+
+type parameterDefinitionJSON struct {
+	Class            string   `json:"_class"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	DefaultParameter rawValue `json:"defaultParameterValue"`
+	DefaultValue     any      `json:"defaultValue"`
+	Choices          []string `json:"choices"`
+	IsRequired       bool     `json:"isRequired"`
+	Trim             bool     `json:"trim"`
+}
+
+type rawValue struct {
+	Value any `json:"value"`
+}
+
+func parseParameterDefinitions(properties []jobProperty) []model.ParameterDefinition {
+	var out []model.ParameterDefinition
+	for _, property := range properties {
+		for _, param := range property.ParameterDefinitions {
+			if param.Name == "" {
+				continue
+			}
+			defaultValue := param.DefaultValue
+			if defaultValue == nil {
+				defaultValue = param.DefaultParameter.Value
+			}
+			out = append(out, model.ParameterDefinition{
+				Name:        param.Name,
+				Type:        param.Class,
+				Description: param.Description,
+				Default:     defaultValue,
+				Choices:     param.Choices,
+				Required:    param.IsRequired,
+			})
+		}
+	}
+	return out
+}
+
 type buildJSON struct {
 	Number          int               `json:"number"`
 	URL             string            `json:"url"`

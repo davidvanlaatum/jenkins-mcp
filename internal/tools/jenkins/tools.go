@@ -149,6 +149,22 @@ type GetBuildResponse struct {
 	Build model.Build `json:"build"`
 }
 
+type GetJobResponse struct {
+	Job model.JobDetail `json:"job"`
+}
+
+func GetJob(ctx context.Context, deps Deps, in JobRequest) (GetJobResponse, error) {
+	if err := validation.JobPath(in.Job); err != nil {
+		return GetJobResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return GetJobResponse{}, err
+	}
+	job, err := api.GetJob(ctx, in.Job)
+	return GetJobResponse{Job: job}, err
+}
+
 func GetBuild(ctx context.Context, deps Deps, in BuildRequest) (GetBuildResponse, error) {
 	if err := validateBuild(in.Job, in.Build); err != nil {
 		return GetBuildResponse{}, err

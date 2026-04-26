@@ -4,6 +4,7 @@
 
 - `jenkins_get_capabilities`: checks configured controllers, response limits, installed plugins, and feature availability.
 - `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal.
+- `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.
 - `jenkins_list_builds`: lists recent builds for a job.
 - `jenkins_get_build`: returns build metadata, causes, parameters, artifacts, and changes.
 - `jenkins_get_log`: reads bounded progressive log chunks with `start` and `nextStart` offsets.

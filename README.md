@@ -6,6 +6,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 
 - `jenkins_get_capabilities`
 - `jenkins_list_jobs`
+- `jenkins_get_job`
 - `jenkins_list_builds`
 - `jenkins_get_build`
 - `jenkins_get_log`

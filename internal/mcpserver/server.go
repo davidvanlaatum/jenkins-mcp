@@ -40,6 +40,10 @@ func (s *Server) register() {
 		out, err := jenkinstools.ListJobs(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_job", Description: "Get Jenkins job metadata, recent build references, and parameter definitions."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.JobRequest) (*mcp.CallToolResult, jenkinstools.GetJobResponse, error) {
+		out, err := jenkinstools.GetJob(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_list_builds", Description: "List recent builds for a Jenkins job."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.ListBuildsRequest) (*mcp.CallToolResult, jenkinstools.ListBuildsResponse, error) {
 		out, err := jenkinstools.ListBuilds(ctx, s.deps, in)
 		return nil, out, err
