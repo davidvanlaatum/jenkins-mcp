@@ -63,6 +63,21 @@ type LogChunk struct {
 	More      bool   `json:"more"`
 	Truncated bool   `json:"truncated"`
 }
+
+type LogMatch struct {
+	Line    int    `json:"line"`
+	Text    string `json:"text"`
+	Context string `json:"context,omitempty"`
+}
+
+type LogSearchResult struct {
+	Query        string     `json:"query"`
+	Matches      []LogMatch `json:"matches"`
+	ScannedBytes int64      `json:"scannedBytes"`
+	NextStart    int64      `json:"nextStart"`
+	More         bool       `json:"more"`
+	Truncated    bool       `json:"truncated"`
+}
 type TestReport struct {
 	TotalCount int         `json:"totalCount"`
 	FailCount  int         `json:"failCount"`
@@ -108,4 +123,31 @@ type PipelineStage struct {
 	StartTime  int64  `json:"startTimeMillis,omitempty"`
 	DurationMS int64  `json:"durationMillis,omitempty"`
 	PauseMS    int64  `json:"pauseMillis,omitempty"`
+}
+
+type ArtifactContent struct {
+	RelativePath string `json:"relativePath"`
+	Text         string `json:"text,omitempty"`
+	Bytes        int    `json:"bytes"`
+	Inline       bool   `json:"inline"`
+	Truncated    bool   `json:"truncated"`
+}
+
+type CoverageReport struct {
+	Available bool           `json:"available"`
+	Endpoint  string         `json:"endpoint,omitempty"`
+	Summary   map[string]any `json:"summary,omitempty"`
+}
+
+type IssuesReport struct {
+	Available bool           `json:"available"`
+	Endpoint  string         `json:"endpoint,omitempty"`
+	Summary   map[string]any `json:"summary,omitempty"`
+}
+
+type BuildWatch struct {
+	Build    BuildSummary `json:"build"`
+	Log      LogChunk     `json:"log"`
+	Pipeline *PipelineRun `json:"pipeline,omitempty"`
+	Complete bool         `json:"complete"`
 }

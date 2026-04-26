@@ -52,6 +52,14 @@ func (s *Server) register() {
 		out, err := jenkinstools.GetLog(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_search_log", Description: "Search a bounded console log chunk for text and return matching lines with optional context."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.SearchLogRequest) (*mcp.CallToolResult, jenkinstools.SearchLogResponse, error) {
+		out, err := jenkinstools.SearchLog(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_tail_log", Description: "Read the tail of a Jenkins console log using progressive log offsets."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.TailLogRequest) (*mcp.CallToolResult, jenkinstools.TailLogResponse, error) {
+		out, err := jenkinstools.TailLog(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_test_report", Description: "Fetch JUnit test summary and bounded test case details when available."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.TestReportRequest) (*mcp.CallToolResult, jenkinstools.TestReportResponse, error) {
 		out, err := jenkinstools.TestReport(ctx, s.deps, in)
 		return nil, out, err
@@ -62,6 +70,22 @@ func (s *Server) register() {
 	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_download_artifact", Description: "Download a Jenkins artifact to the configured safe local artifact directory."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.DownloadArtifactRequest) (*mcp.CallToolResult, jenkinstools.DownloadArtifactResponse, error) {
 		out, err := jenkinstools.DownloadArtifact(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_read_artifact", Description: "Read a small text Jenkins artifact inline, bounded by configured inline response limits."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.ReadArtifactRequest) (*mcp.CallToolResult, jenkinstools.ReadArtifactResponse, error) {
+		out, err := jenkinstools.ReadArtifact(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_coverage", Description: "Fetch coverage summary from common Jenkins coverage plugin endpoints when available."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.CoverageResponse, error) {
+		out, err := jenkinstools.Coverage(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_issues", Description: "Fetch Warnings NG or analysis issue summary from common Jenkins plugin endpoints when available."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.IssuesResponse, error) {
+		out, err := jenkinstools.Issues(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_watch_build", Description: "Inspect build state plus a progressive log chunk and Pipeline stages for polling running builds."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.WatchBuildRequest) (*mcp.CallToolResult, jenkinstools.WatchBuildResponse, error) {
+		out, err := jenkinstools.WatchBuild(ctx, s.deps, in)
 		return nil, out, err
 	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_trigger_build", Description: "Trigger a Jenkins build. Disabled unless mutations.enabled is true."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.TriggerBuildRequest) (*mcp.CallToolResult, jenkinstools.TriggerBuildResponse, error) {

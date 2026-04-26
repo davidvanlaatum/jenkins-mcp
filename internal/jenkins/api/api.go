@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
@@ -153,6 +154,53 @@ func (a *API) GetLog(ctx context.Context, job string, number int, start, max int
 	return model.LogChunk{Text: text, Start: start, NextStart: next, More: more, Truncated: truncated}, nil
 }
 
+func (a *API) SearchLog(ctx context.Context, job string, number int, start int64, query string, maxBytes int64, maxMatches int, contextLines int) (model.LogSearchResult, error) {
+	if query == "" {
+		return model.LogSearchResult{}, fmt.Errorf("query is required")
+	}
+	chunk, err := a.GetLog(ctx, job, number, start, maxBytes)
+	if err != nil {
+		return model.LogSearchResult{}, err
+	}
+	lines := strings.Split(chunk.Text, "\n")
+	matches := make([]model.LogMatch, 0)
+	for i, line := range lines {
+		if !strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
+			continue
+		}
+		match := model.LogMatch{Line: i + 1, Text: line}
+		if contextLines > 0 {
+			from := max(0, i-contextLines)
+			to := min(len(lines), i+contextLines+1)
+			match.Context = strings.Join(lines[from:to], "\n")
+		}
+		matches = append(matches, match)
+		if maxMatches > 0 && len(matches) >= maxMatches {
+			break
+		}
+	}
+	return model.LogSearchResult{
+		Query:        query,
+		Matches:      matches,
+		ScannedBytes: int64(len(chunk.Text)),
+		NextStart:    chunk.NextStart,
+		More:         chunk.More,
+		Truncated:    chunk.Truncated || (maxMatches > 0 && len(matches) >= maxMatches),
+	}, nil
+}
+
+func (a *API) TailLog(ctx context.Context, job string, number int, tailBytes int64) (model.LogChunk, error) {
+	first, err := a.GetLog(ctx, job, number, 0, 1)
+	if err != nil {
+		return model.LogChunk{}, err
+	}
+	start := first.NextStart - tailBytes
+	if start < 0 {
+		start = 0
+	}
+	return a.GetLog(ctx, job, number, start, tailBytes)
+}
+
 func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly bool, limit int) (model.TestReport, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
 	var raw struct {
@@ -253,6 +301,52 @@ func (a *API) DownloadArtifact(ctx context.Context, job string, number int, rel 
 		return nil, fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	return body, nil
+}
+
+func (a *API) ReadArtifact(ctx context.Context, job string, number int, rel string, maxBytes int64) (model.ArtifactContent, error) {
+	body, err := a.DownloadArtifact(ctx, job, number, rel)
+	if err != nil {
+		return model.ArtifactContent{}, err
+	}
+	truncated := false
+	if maxBytes > 0 && int64(len(body)) > maxBytes {
+		body = body[:maxBytes]
+		truncated = true
+	}
+	if !utf8.Valid(body) {
+		return model.ArtifactContent{RelativePath: rel, Bytes: len(body), Inline: false, Truncated: truncated}, nil
+	}
+	return model.ArtifactContent{RelativePath: rel, Text: string(body), Bytes: len(body), Inline: true, Truncated: truncated}, nil
+}
+
+func (a *API) CoverageReport(ctx context.Context, job string, number int) (model.CoverageReport, error) {
+	candidates := []string{
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/coverage/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/coverage/result/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/jacoco/api/json",
+	}
+	for _, candidate := range candidates {
+		var raw map[string]any
+		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
+			return model.CoverageReport{Available: true, Endpoint: candidate, Summary: raw}, nil
+		}
+	}
+	return model.CoverageReport{Available: false}, nil
+}
+
+func (a *API) IssuesReport(ctx context.Context, job string, number int) (model.IssuesReport, error) {
+	candidates := []string{
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ngResult/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/analysisResult/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings/api/json",
+	}
+	for _, candidate := range candidates {
+		var raw map[string]any
+		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
+			return model.IssuesReport{Available: true, Endpoint: candidate, Summary: raw}, nil
+		}
+	}
+	return model.IssuesReport{Available: false}, nil
 }
 
 func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]string) (string, error) {

@@ -144,6 +144,62 @@ func GetLog(ctx context.Context, deps Deps, in GetLogRequest) (GetLogResponse, e
 	return GetLogResponse{Log: log}, err
 }
 
+type SearchLogRequest struct {
+	Controller   string `json:"controller,omitempty"`
+	Job          string `json:"job"`
+	Build        int    `json:"build"`
+	Query        string `json:"query"`
+	Start        int64  `json:"start,omitempty"`
+	MaxBytes     int64  `json:"maxBytes,omitempty"`
+	MaxMatches   int    `json:"maxMatches,omitempty"`
+	ContextLines int    `json:"contextLines,omitempty"`
+}
+type SearchLogResponse struct {
+	Result model.LogSearchResult `json:"result"`
+}
+
+func SearchLog(ctx context.Context, deps Deps, in SearchLogRequest) (SearchLogResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return SearchLogResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return SearchLogResponse{}, err
+	}
+	maxBytes := in.MaxBytes
+	if maxBytes <= 0 || maxBytes > deps.Config.Limits.MaxResponseBytes {
+		maxBytes = deps.Config.Limits.MaxResponseBytes
+	}
+	result, err := api.SearchLog(ctx, in.Job, in.Build, in.Start, in.Query, maxBytes, pagination.BoundLimit(in.MaxMatches, 20, 200), pagination.BoundLimit(in.ContextLines, 0, 10))
+	return SearchLogResponse{Result: result}, err
+}
+
+type TailLogRequest struct {
+	Controller string `json:"controller,omitempty"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+	Bytes      int64  `json:"bytes,omitempty"`
+}
+type TailLogResponse struct {
+	Log model.LogChunk `json:"log"`
+}
+
+func TailLog(ctx context.Context, deps Deps, in TailLogRequest) (TailLogResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return TailLogResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return TailLogResponse{}, err
+	}
+	tailBytes := in.Bytes
+	if tailBytes <= 0 || tailBytes > deps.Config.Limits.LogChunkBytes {
+		tailBytes = deps.Config.Limits.LogChunkBytes
+	}
+	log, err := api.TailLog(ctx, in.Job, in.Build, tailBytes)
+	return TailLogResponse{Log: log}, err
+}
+
 type TestReportRequest struct {
 	Controller string `json:"controller,omitempty"`
 	Job        string `json:"job"`
@@ -203,6 +259,103 @@ func DownloadArtifact(ctx context.Context, deps Deps, in DownloadArtifactRequest
 	}
 	d, err := artifacts.Download(ctx, deps.Config.Artifacts.DownloadDir, api, in.Job, in.Build, in.RelativePath)
 	return DownloadArtifactResponse{Download: d}, err
+}
+
+type ReadArtifactRequest struct {
+	Controller   string `json:"controller,omitempty"`
+	Job          string `json:"job"`
+	Build        int    `json:"build"`
+	RelativePath string `json:"relativePath"`
+	MaxBytes     int64  `json:"maxBytes,omitempty"`
+}
+type ReadArtifactResponse struct {
+	Artifact model.ArtifactContent `json:"artifact"`
+}
+
+func ReadArtifact(ctx context.Context, deps Deps, in ReadArtifactRequest) (ReadArtifactResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return ReadArtifactResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ReadArtifactResponse{}, err
+	}
+	maxBytes := in.MaxBytes
+	if maxBytes <= 0 || maxBytes > deps.Config.Limits.InlineBytes {
+		maxBytes = deps.Config.Limits.InlineBytes
+	}
+	artifact, err := api.ReadArtifact(ctx, in.Job, in.Build, in.RelativePath, maxBytes)
+	return ReadArtifactResponse{Artifact: artifact}, err
+}
+
+type CoverageResponse struct {
+	Report model.CoverageReport `json:"report"`
+}
+
+func Coverage(ctx context.Context, deps Deps, in BuildRequest) (CoverageResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return CoverageResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return CoverageResponse{}, err
+	}
+	report, err := api.CoverageReport(ctx, in.Job, in.Build)
+	return CoverageResponse{Report: report}, err
+}
+
+type IssuesResponse struct {
+	Report model.IssuesReport `json:"report"`
+}
+
+func Issues(ctx context.Context, deps Deps, in BuildRequest) (IssuesResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return IssuesResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return IssuesResponse{}, err
+	}
+	report, err := api.IssuesReport(ctx, in.Job, in.Build)
+	return IssuesResponse{Report: report}, err
+}
+
+type WatchBuildRequest struct {
+	Controller string `json:"controller,omitempty"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+	LogStart   int64  `json:"logStart,omitempty"`
+	MaxBytes   int64  `json:"maxBytes,omitempty"`
+}
+type WatchBuildResponse struct {
+	Watch model.BuildWatch `json:"watch"`
+}
+
+func WatchBuild(ctx context.Context, deps Deps, in WatchBuildRequest) (WatchBuildResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return WatchBuildResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return WatchBuildResponse{}, err
+	}
+	build, err := api.GetBuild(ctx, in.Job, in.Build)
+	if err != nil {
+		return WatchBuildResponse{}, err
+	}
+	maxBytes := in.MaxBytes
+	if maxBytes <= 0 || maxBytes > deps.Config.Limits.LogChunkBytes {
+		maxBytes = deps.Config.Limits.LogChunkBytes
+	}
+	log, err := api.GetLog(ctx, in.Job, in.Build, in.LogStart, maxBytes)
+	if err != nil {
+		return WatchBuildResponse{}, err
+	}
+	var pipelinePtr *model.PipelineRun
+	if pipeline, err := api.PipelineRun(ctx, in.Job, in.Build); err == nil {
+		pipelinePtr = &pipeline
+	}
+	return WatchBuildResponse{Watch: model.BuildWatch{Build: build.BuildSummary, Log: log, Pipeline: pipelinePtr, Complete: !build.Building}}, nil
 }
 
 type TriggerBuildRequest struct {
