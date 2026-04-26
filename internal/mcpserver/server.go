@@ -68,6 +68,14 @@ func (s *Server) register() {
 		out, err := jenkinstools.PipelineRun(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_pipeline_stage", Description: "Fetch Pipeline stage details and child flow nodes for a stage id."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.PipelineStageRequest) (*mcp.CallToolResult, jenkinstools.PipelineStageResponse, error) {
+		out, err := jenkinstools.PipelineStage(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_pipeline_node_log", Description: "Fetch bounded log output for a Pipeline flow node id."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.PipelineNodeLogRequest) (*mcp.CallToolResult, jenkinstools.PipelineNodeLogResponse, error) {
+		out, err := jenkinstools.PipelineNodeLog(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_download_artifact", Description: "Download a Jenkins artifact to the configured safe local artifact directory."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.DownloadArtifactRequest) (*mcp.CallToolResult, jenkinstools.DownloadArtifactResponse, error) {
 		out, err := jenkinstools.DownloadArtifact(ctx, s.deps, in)
 		return nil, out, err

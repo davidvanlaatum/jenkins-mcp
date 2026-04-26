@@ -125,6 +125,32 @@ type PipelineStage struct {
 	PauseMS    int64  `json:"pauseMillis,omitempty"`
 }
 
+type PipelineStageDetail struct {
+	PipelineStage
+	Nodes []PipelineNode `json:"nodes,omitempty"`
+}
+
+type PipelineNode struct {
+	ID                   string   `json:"id,omitempty"`
+	Name                 string   `json:"name,omitempty"`
+	Status               string   `json:"status,omitempty"`
+	ParameterDescription string   `json:"parameterDescription,omitempty"`
+	StartTime            int64    `json:"startTimeMillis,omitempty"`
+	DurationMS           int64    `json:"durationMillis,omitempty"`
+	PauseMS              int64    `json:"pauseMillis,omitempty"`
+	ParentNodes          []string `json:"parentNodes,omitempty"`
+	HasLog               bool     `json:"hasLog"`
+}
+
+type PipelineNodeLog struct {
+	NodeID     string `json:"nodeId"`
+	NodeStatus string `json:"nodeStatus,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Length     int64  `json:"length"`
+	HasMore    bool   `json:"hasMore"`
+	Truncated  bool   `json:"truncated"`
+}
+
 type ArtifactContent struct {
 	RelativePath string `json:"relativePath"`
 	Text         string `json:"text,omitempty"`

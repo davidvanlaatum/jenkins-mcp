@@ -287,6 +287,93 @@ func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.Pi
 	return run, nil
 }
 
+func (a *API) PipelineStage(ctx context.Context, job string, number int, stageID string) (model.PipelineStageDetail, error) {
+	if stageID == "" {
+		return model.PipelineStageDetail{}, fmt.Errorf("stage id is required")
+	}
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/execution/node/" + url.PathEscape(stageID) + "/wfapi/describe"
+	var raw struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		Status         string `json:"status"`
+		StartTime      int64  `json:"startTimeMillis"`
+		DurationMillis int64  `json:"durationMillis"`
+		PauseMillis    int64  `json:"pauseDurationMillis"`
+		StageFlowNodes []struct {
+			ID                   string   `json:"id"`
+			Name                 string   `json:"name"`
+			Status               string   `json:"status"`
+			ParameterDescription string   `json:"parameterDescription"`
+			StartTime            int64    `json:"startTimeMillis"`
+			DurationMillis       int64    `json:"durationMillis"`
+			PauseMillis          int64    `json:"pauseDurationMillis"`
+			ParentNodes          []string `json:"parentNodes"`
+			Links                struct {
+				Log *struct {
+					Href string `json:"href"`
+				} `json:"log"`
+			} `json:"_links"`
+		} `json:"stageFlowNodes"`
+	}
+	if err := a.client.GetJSON(ctx, path, nil, &raw); err != nil {
+		return model.PipelineStageDetail{}, err
+	}
+	detail := model.PipelineStageDetail{
+		PipelineStage: model.PipelineStage{
+			ID:         raw.ID,
+			Name:       raw.Name,
+			Status:     raw.Status,
+			StartTime:  raw.StartTime,
+			DurationMS: raw.DurationMillis,
+			PauseMS:    raw.PauseMillis,
+		},
+	}
+	for _, node := range raw.StageFlowNodes {
+		detail.Nodes = append(detail.Nodes, model.PipelineNode{
+			ID:                   node.ID,
+			Name:                 node.Name,
+			Status:               node.Status,
+			ParameterDescription: node.ParameterDescription,
+			StartTime:            node.StartTime,
+			DurationMS:           node.DurationMillis,
+			PauseMS:              node.PauseMillis,
+			ParentNodes:          node.ParentNodes,
+			HasLog:               node.Links.Log != nil,
+		})
+	}
+	return detail, nil
+}
+
+func (a *API) PipelineNodeLog(ctx context.Context, job string, number int, nodeID string, maxBytes int64) (model.PipelineNodeLog, error) {
+	if nodeID == "" {
+		return model.PipelineNodeLog{}, fmt.Errorf("node id is required")
+	}
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/execution/node/" + url.PathEscape(nodeID) + "/wfapi/log"
+	var raw struct {
+		NodeID     string `json:"nodeId"`
+		NodeStatus string `json:"nodeStatus"`
+		Text       string `json:"text"`
+		Length     int64  `json:"length"`
+		HasMore    bool   `json:"hasMore"`
+	}
+	if err := a.client.GetJSON(ctx, path, nil, &raw); err != nil {
+		return model.PipelineNodeLog{}, err
+	}
+	truncated := false
+	if maxBytes > 0 && int64(len(raw.Text)) > maxBytes {
+		raw.Text = raw.Text[:maxBytes]
+		truncated = true
+	}
+	return model.PipelineNodeLog{
+		NodeID:     raw.NodeID,
+		NodeStatus: raw.NodeStatus,
+		Text:       raw.Text,
+		Length:     raw.Length,
+		HasMore:    raw.HasMore,
+		Truncated:  truncated,
+	}, nil
+}
+
 func (a *API) DownloadArtifact(ctx context.Context, job string, number int, rel string) ([]byte, error) {
 	cleanRel, err := security.CleanRelativePath(rel)
 	if err != nil {

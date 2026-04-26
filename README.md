@@ -13,6 +13,8 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_tail_log`
 - `jenkins_get_test_report`
 - `jenkins_get_pipeline_run`
+- `jenkins_get_pipeline_stage`
+- `jenkins_get_pipeline_node_log`
 - `jenkins_watch_build`
 - `jenkins_get_coverage`
 - `jenkins_get_issues`

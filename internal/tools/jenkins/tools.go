@@ -239,6 +239,55 @@ func PipelineRun(ctx context.Context, deps Deps, in BuildRequest) (PipelineRunRe
 	return PipelineRunResponse{Run: run}, err
 }
 
+type PipelineStageRequest struct {
+	Controller string `json:"controller,omitempty"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+	StageID    string `json:"stageId"`
+}
+type PipelineStageResponse struct {
+	Stage model.PipelineStageDetail `json:"stage"`
+}
+
+func PipelineStage(ctx context.Context, deps Deps, in PipelineStageRequest) (PipelineStageResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return PipelineStageResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return PipelineStageResponse{}, err
+	}
+	stage, err := api.PipelineStage(ctx, in.Job, in.Build, in.StageID)
+	return PipelineStageResponse{Stage: stage}, err
+}
+
+type PipelineNodeLogRequest struct {
+	Controller string `json:"controller,omitempty"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+	NodeID     string `json:"nodeId"`
+	MaxBytes   int64  `json:"maxBytes,omitempty"`
+}
+type PipelineNodeLogResponse struct {
+	Log model.PipelineNodeLog `json:"log"`
+}
+
+func PipelineNodeLog(ctx context.Context, deps Deps, in PipelineNodeLogRequest) (PipelineNodeLogResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return PipelineNodeLogResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return PipelineNodeLogResponse{}, err
+	}
+	maxBytes := in.MaxBytes
+	if maxBytes <= 0 || maxBytes > deps.Config.Limits.LogChunkBytes {
+		maxBytes = deps.Config.Limits.LogChunkBytes
+	}
+	log, err := api.PipelineNodeLog(ctx, in.Job, in.Build, in.NodeID, maxBytes)
+	return PipelineNodeLogResponse{Log: log}, err
+}
+
 type DownloadArtifactRequest struct {
 	Controller   string `json:"controller,omitempty"`
 	Job          string `json:"job"`

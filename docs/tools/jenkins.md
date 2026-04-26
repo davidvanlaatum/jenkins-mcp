@@ -11,6 +11,8 @@
 - `jenkins_tail_log`: reads the tail of the console log using Jenkins progressive log offsets.
 - `jenkins_get_test_report`: returns JUnit summary and bounded case details.
 - `jenkins_get_pipeline_run`: returns Pipeline stages through Jenkins `wfapi` when the plugin endpoint is available.
+- `jenkins_get_pipeline_stage`: returns a Pipeline stage and its child flow nodes.
+- `jenkins_get_pipeline_node_log`: returns bounded log output for a Pipeline flow node.
 - `jenkins_watch_build`: returns build state, a progressive log chunk, and Pipeline stages for polling running builds.
 - `jenkins_get_coverage`: probes common coverage plugin endpoints and returns a summary when available.
 - `jenkins_get_issues`: probes common Warnings NG / analysis endpoints and returns a summary when available.
