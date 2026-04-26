@@ -511,6 +511,10 @@ func (a *API) QueueItem(ctx context.Context, id int64) (model.QueueItem, error) 
 		Why        string     `json:"why"`
 		Cancelled  bool       `json:"cancelled"`
 		Executable *buildJSON `json:"executable"`
+		Task       struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"task"`
 	}
 	if err := a.client.GetJSON(ctx, path, nil, &q); err != nil {
 		return model.QueueItem{}, err
@@ -520,7 +524,48 @@ func (a *API) QueueItem(ctx context.Context, id int64) (model.QueueItem, error) 
 		s := summary(*q.Executable)
 		ex = &s
 	}
-	return model.QueueItem{ID: q.ID, URL: q.URL, Why: q.Why, Cancelled: q.Cancelled, Executable: ex}, nil
+	return model.QueueItem{ID: q.ID, URL: q.URL, Why: q.Why, Cancelled: q.Cancelled, TaskName: q.Task.Name, TaskURL: q.Task.URL, Executable: ex}, nil
+}
+
+func (a *API) ListQueue(ctx context.Context) ([]model.QueueItem, error) {
+	var raw struct {
+		Items []struct {
+			ID         int64      `json:"id"`
+			URL        string     `json:"url"`
+			Why        string     `json:"why"`
+			Cancelled  bool       `json:"cancelled"`
+			Executable *buildJSON `json:"executable"`
+			Task       struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"task"`
+		} `json:"items"`
+	}
+	tree := "items[id,url,why,cancelled,task[name,url],executable[number,url,result,building,timestamp,duration]]"
+	if err := a.client.GetJSON(ctx, "queue/api/json", url.Values{"tree": {tree}}, &raw); err != nil {
+		return nil, err
+	}
+	items := make([]model.QueueItem, 0, len(raw.Items))
+	for _, item := range raw.Items {
+		var ex *model.BuildSummary
+		if item.Executable != nil {
+			s := summary(*item.Executable)
+			ex = &s
+		}
+		items = append(items, model.QueueItem{ID: item.ID, URL: item.URL, Why: item.Why, Cancelled: item.Cancelled, TaskName: item.Task.Name, TaskURL: item.Task.URL, Executable: ex})
+	}
+	return items, nil
+}
+
+func (a *API) CancelQueueItem(ctx context.Context, id int64) error {
+	status, _, _, err := a.client.Post(ctx, "queue/cancelItem", url.Values{"id": {strconv.FormatInt(id, 10)}}, nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status > 399 {
+		return fmt.Errorf("jenkins returned HTTP %d", status)
+	}
+	return nil
 }
 
 func (a *API) CancelBuild(ctx context.Context, job string, number int) error {

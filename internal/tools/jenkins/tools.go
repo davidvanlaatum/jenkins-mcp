@@ -441,6 +441,19 @@ type QueueItemResponse struct {
 	Item model.QueueItem `json:"item"`
 }
 
+type ListQueueResponse struct {
+	Items []model.QueueItem `json:"items"`
+}
+
+func ListQueue(ctx context.Context, deps Deps, in BaseRequest) (ListQueueResponse, error) {
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ListQueueResponse{}, err
+	}
+	items, err := api.ListQueue(ctx)
+	return ListQueueResponse{Items: items}, err
+}
+
 func QueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (QueueItemResponse, error) {
 	api, err := apiFor(deps, in.Controller)
 	if err != nil {
@@ -448,6 +461,23 @@ func QueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (QueueItemRe
 	}
 	item, err := api.QueueItem(ctx, in.ID)
 	return QueueItemResponse{Item: item}, err
+}
+
+type CancelQueueItemResponse struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func CancelQueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (CancelQueueItemResponse, error) {
+	if !deps.Config.Mutations.Enabled {
+		return CancelQueueItemResponse{}, apperrors.New(apperrors.CodeMutationDisabled, "mutating Jenkins tools are disabled")
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return CancelQueueItemResponse{}, err
+	}
+	err = api.CancelQueueItem(ctx, in.ID)
+	emit(deps, in.Controller, "cancel_queue_item", fmt.Sprintf("%d", in.ID), err)
+	return CancelQueueItemResponse{Cancelled: err == nil}, err
 }
 
 type CancelBuildResponse struct {

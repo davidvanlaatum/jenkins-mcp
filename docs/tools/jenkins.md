@@ -18,11 +18,13 @@
 - `jenkins_get_issues`: probes common Warnings NG / analysis endpoints and returns a summary when available.
 - `jenkins_read_artifact`: returns small UTF-8 text artifacts inline within configured size limits.
 - `jenkins_download_artifact`: writes an artifact into the configured safe local directory.
+- `jenkins_list_queue`: lists current Jenkins queue items.
 - `jenkins_get_queue_item`: inspects a queue item by id.
 
 ## Mutating Tools
 
 - `jenkins_trigger_build`: triggers a build or parameterized build.
+- `jenkins_cancel_queue_item`: cancels a queued Jenkins item.
 - `jenkins_cancel_build`: stops a running build.
 
 Mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.

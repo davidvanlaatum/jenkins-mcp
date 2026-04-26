@@ -118,6 +118,8 @@ type QueueItem struct {
 	URL        string        `json:"url,omitempty"`
 	Why        string        `json:"why,omitempty"`
 	Cancelled  bool          `json:"cancelled"`
+	TaskName   string        `json:"taskName,omitempty"`
+	TaskURL    string        `json:"taskUrl,omitempty"`
 	Executable *BuildSummary `json:"executable,omitempty"`
 }
 

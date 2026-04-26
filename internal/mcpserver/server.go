@@ -104,6 +104,14 @@ func (s *Server) register() {
 		out, err := jenkinstools.QueueItem(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_list_queue", Description: "List current Jenkins queue items."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BaseRequest) (*mcp.CallToolResult, jenkinstools.ListQueueResponse, error) {
+		out, err := jenkinstools.ListQueue(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_cancel_queue_item", Description: "Cancel a queued Jenkins item. Disabled unless mutations.enabled is true."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.QueueItemRequest) (*mcp.CallToolResult, jenkinstools.CancelQueueItemResponse, error) {
+		out, err := jenkinstools.CancelQueueItem(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_cancel_build", Description: "Cancel a running Jenkins build. Disabled unless mutations.enabled is true."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.CancelBuildResponse, error) {
 		out, err := jenkinstools.CancelBuild(ctx, s.deps, in)
 		return nil, out, err

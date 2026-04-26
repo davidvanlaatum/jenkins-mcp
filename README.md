@@ -21,7 +21,9 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_read_artifact`
 - `jenkins_download_artifact`
 - `jenkins_trigger_build`
+- `jenkins_list_queue`
 - `jenkins_get_queue_item`
+- `jenkins_cancel_queue_item`
 - `jenkins_cancel_build`
 
 Mutating tools are disabled unless explicitly enabled in configuration.
