@@ -338,6 +338,23 @@ type DownloadArtifactRequest struct {
 	Build        int    `json:"build"`
 	RelativePath string `json:"relativePath"`
 }
+
+type ListArtifactsResponse struct {
+	Artifacts []model.Artifact `json:"artifacts"`
+}
+
+func ListArtifacts(ctx context.Context, deps Deps, in BuildRequest) (ListArtifactsResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return ListArtifactsResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ListArtifactsResponse{}, err
+	}
+	build, err := api.GetBuild(ctx, in.Job, in.Build)
+	return ListArtifactsResponse{Artifacts: build.Artifacts}, err
+}
+
 type DownloadArtifactResponse struct {
 	Download artifacts.DownloadResult `json:"download"`
 }
@@ -411,6 +428,26 @@ func Issues(ctx context.Context, deps Deps, in BuildRequest) (IssuesResponse, er
 	}
 	report, err := api.IssuesReport(ctx, in.Job, in.Build)
 	return IssuesResponse{Report: report}, err
+}
+
+type ChangesResponse struct {
+	ChangeSets []model.ChangeSet `json:"changeSets"`
+	Truncated  bool              `json:"truncated"`
+}
+
+func Changes(ctx context.Context, deps Deps, in BuildRequest) (ChangesResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return ChangesResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ChangesResponse{}, err
+	}
+	build, err := api.GetBuild(ctx, in.Job, in.Build)
+	if err != nil {
+		return ChangesResponse{}, err
+	}
+	return ChangesResponse{ChangeSets: build.ChangeSets}, nil
 }
 
 type WatchBuildRequest struct {

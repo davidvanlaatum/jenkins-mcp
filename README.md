@@ -18,6 +18,8 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_watch_build`
 - `jenkins_get_coverage`
 - `jenkins_get_issues`
+- `jenkins_get_changes`
+- `jenkins_list_artifacts`
 - `jenkins_read_artifact`
 - `jenkins_download_artifact`
 - `jenkins_trigger_build`

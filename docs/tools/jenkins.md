@@ -16,6 +16,8 @@
 - `jenkins_watch_build`: returns build state, a progressive log chunk, and Pipeline stages for polling running builds.
 - `jenkins_get_coverage`: probes common coverage plugin endpoints and returns a summary when available.
 - `jenkins_get_issues`: probes common Warnings NG / analysis endpoints and returns a summary when available.
+- `jenkins_get_changes`: returns SCM change sets exposed on the build.
+- `jenkins_list_artifacts`: lists build artifacts without fetching content.
 - `jenkins_read_artifact`: returns small UTF-8 text artifacts inline within configured size limits.
 - `jenkins_download_artifact`: writes an artifact into the configured safe local directory.
 - `jenkins_list_queue`: lists current Jenkins queue items.

@@ -80,6 +80,10 @@ func (s *Server) register() {
 		out, err := jenkinstools.DownloadArtifact(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_list_artifacts", Description: "List artifacts for a Jenkins build without fetching artifact content."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.ListArtifactsResponse, error) {
+		out, err := jenkinstools.ListArtifacts(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_read_artifact", Description: "Read a small text Jenkins artifact inline, bounded by configured inline response limits."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.ReadArtifactRequest) (*mcp.CallToolResult, jenkinstools.ReadArtifactResponse, error) {
 		out, err := jenkinstools.ReadArtifact(ctx, s.deps, in)
 		return nil, out, err
@@ -90,6 +94,10 @@ func (s *Server) register() {
 	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_issues", Description: "Fetch Warnings NG or analysis issue summary from common Jenkins plugin endpoints when available."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.IssuesResponse, error) {
 		out, err := jenkinstools.Issues(ctx, s.deps, in)
+		return nil, out, err
+	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_get_changes", Description: "Fetch SCM change sets for a Jenkins build."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.BuildRequest) (*mcp.CallToolResult, jenkinstools.ChangesResponse, error) {
+		out, err := jenkinstools.Changes(ctx, s.deps, in)
 		return nil, out, err
 	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_watch_build", Description: "Inspect build state plus a progressive log chunk and Pipeline stages for polling running builds."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.WatchBuildRequest) (*mcp.CallToolResult, jenkinstools.WatchBuildResponse, error) {
