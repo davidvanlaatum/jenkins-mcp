@@ -5,6 +5,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ## Current Tool Surface
 
 - `jenkins_get_capabilities`
+- `jenkins_resolve_build_url`
 - `jenkins_list_jobs`
 - `jenkins_get_job`
 - `jenkins_list_builds`

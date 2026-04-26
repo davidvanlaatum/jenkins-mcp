@@ -3,6 +3,7 @@
 ## Read Tools
 
 - `jenkins_get_capabilities`: checks configured controllers, response limits, installed plugins, and feature availability.
+- `jenkins_resolve_build_url`: resolves a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal.
 - `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.
 - `jenkins_list_builds`: lists recent builds for a job.

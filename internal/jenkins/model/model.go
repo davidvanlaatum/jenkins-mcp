@@ -61,6 +61,14 @@ type BuildSummary struct {
 	Timestamp int64  `json:"timestamp,omitempty"`
 	Duration  int64  `json:"duration,omitempty"`
 }
+
+type BuildReference struct {
+	Controller string `json:"controller"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+	URL        string `json:"url"`
+}
+
 type Build struct {
 	BuildSummary
 	Description     string         `json:"description,omitempty"`

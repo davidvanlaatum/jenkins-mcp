@@ -36,6 +36,10 @@ func (s *Server) register() {
 		out, err := jenkinstools.Capabilities(ctx, s.deps, in)
 		return nil, out, err
 	})
+	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_resolve_build_url", Description: "Resolve a Jenkins build URL to controller, job path, and build number."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.ResolveBuildURLRequest) (*mcp.CallToolResult, jenkinstools.ResolveBuildURLResponse, error) {
+		out, err := jenkinstools.ResolveBuildURL(ctx, s.deps, in)
+		return nil, out, err
+	})
 	mcp.AddTool(s.raw, &mcp.Tool{Name: "jenkins_list_jobs", Description: "List Jenkins jobs at the controller root or within a folder."}, func(ctx context.Context, req *mcp.CallToolRequest, in jenkinstools.ListJobsRequest) (*mcp.CallToolResult, jenkinstools.ListJobsResponse, error) {
 		out, err := jenkinstools.ListJobs(ctx, s.deps, in)
 		return nil, out, err

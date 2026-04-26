@@ -3,6 +3,8 @@ package jenkins
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +35,66 @@ type BuildRequest struct {
 	Controller string `json:"controller,omitempty"`
 	Job        string `json:"job"`
 	Build      int    `json:"build"`
+}
+
+type ResolveBuildURLRequest struct {
+	URL string `json:"url"`
+}
+
+type ResolveBuildURLResponse struct {
+	Reference model.BuildReference `json:"reference"`
+}
+
+func ResolveBuildURL(_ context.Context, deps Deps, in ResolveBuildURLRequest) (ResolveBuildURLResponse, error) {
+	ref, err := resolveBuildURL(deps.Config, in.URL)
+	return ResolveBuildURLResponse{Reference: ref}, err
+}
+
+func resolveBuildURL(cfg config.Config, rawURL string) (model.BuildReference, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return model.BuildReference{}, apperrors.New(apperrors.CodeInvalidRequest, "invalid Jenkins build URL")
+	}
+	for _, controller := range cfg.Controllers {
+		base, err := url.Parse(controller.URL)
+		if err != nil || !sameURLHost(base, parsed) {
+			continue
+		}
+		job, build, ok := parseBuildPath(strings.TrimPrefix(parsed.EscapedPath(), strings.TrimRight(base.EscapedPath(), "/")))
+		if !ok {
+			continue
+		}
+		return model.BuildReference{Controller: controller.ID, Job: job, Build: build, URL: rawURL}, nil
+	}
+	return model.BuildReference{}, apperrors.New(apperrors.CodeInvalidRequest, "URL does not match a configured Jenkins build")
+}
+
+func sameURLHost(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func parseBuildPath(path string) (string, int, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	var jobParts []string
+	for i := 0; i < len(parts); i++ {
+		if parts[i] == "" {
+			continue
+		}
+		if parts[i] == "job" && i+1 < len(parts) {
+			name, err := url.PathUnescape(parts[i+1])
+			if err != nil {
+				return "", 0, false
+			}
+			jobParts = append(jobParts, name)
+			i++
+			continue
+		}
+		build, err := strconv.Atoi(parts[i])
+		if err == nil && build > 0 && len(jobParts) > 0 {
+			return strings.Join(jobParts, "/"), build, true
+		}
+	}
+	return "", 0, false
 }
 
 type CapabilitiesResponse struct {
