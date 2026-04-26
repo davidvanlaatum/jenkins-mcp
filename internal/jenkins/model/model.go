@@ -1,0 +1,111 @@
+package model
+
+type ControllerInfo struct {
+	ID          string `json:"id"`
+	URL         string `json:"url,omitempty"`
+	Version     string `json:"version,omitempty"`
+	UseSecurity bool   `json:"useSecurity"`
+	NodeName    string `json:"nodeName,omitempty"`
+	Available   bool   `json:"available"`
+	Error       string `json:"error,omitempty"`
+}
+type Job struct {
+	Name     string `json:"name"`
+	FullName string `json:"fullName,omitempty"`
+	URL      string `json:"url"`
+	Color    string `json:"color,omitempty"`
+	Class    string `json:"class,omitempty"`
+}
+type BuildSummary struct {
+	Number    int    `json:"number"`
+	URL       string `json:"url"`
+	Result    string `json:"result,omitempty"`
+	Building  bool   `json:"building"`
+	Timestamp int64  `json:"timestamp,omitempty"`
+	Duration  int64  `json:"duration,omitempty"`
+}
+type Build struct {
+	BuildSummary
+	Description     string         `json:"description,omitempty"`
+	DisplayName     string         `json:"displayName,omitempty"`
+	FullDisplayName string         `json:"fullDisplayName,omitempty"`
+	Causes          []Cause        `json:"causes,omitempty"`
+	Parameters      map[string]any `json:"parameters,omitempty"`
+	Artifacts       []Artifact     `json:"artifacts,omitempty"`
+	ChangeSets      []ChangeSet    `json:"changeSets,omitempty"`
+}
+type Cause struct {
+	ShortDescription string `json:"shortDescription"`
+	UserID           string `json:"userId,omitempty"`
+	UserName         string `json:"userName,omitempty"`
+}
+type Artifact struct {
+	DisplayPath  string `json:"displayPath"`
+	FileName     string `json:"fileName"`
+	RelativePath string `json:"relativePath"`
+	Size         int64  `json:"size,omitempty"`
+}
+type ChangeSet struct {
+	Kind  string   `json:"kind,omitempty"`
+	Items []Change `json:"items,omitempty"`
+}
+type Change struct {
+	CommitID      string   `json:"commitId,omitempty"`
+	Author        string   `json:"author,omitempty"`
+	Message       string   `json:"message,omitempty"`
+	Timestamp     int64    `json:"timestamp,omitempty"`
+	AffectedPaths []string `json:"affectedPaths,omitempty"`
+}
+type LogChunk struct {
+	Text      string `json:"text"`
+	Start     int64  `json:"start"`
+	NextStart int64  `json:"nextStart"`
+	More      bool   `json:"more"`
+	Truncated bool   `json:"truncated"`
+}
+type TestReport struct {
+	TotalCount int         `json:"totalCount"`
+	FailCount  int         `json:"failCount"`
+	SkipCount  int         `json:"skipCount"`
+	PassCount  int         `json:"passCount"`
+	Suites     []TestSuite `json:"suites,omitempty"`
+	Truncated  bool        `json:"truncated"`
+}
+type TestSuite struct {
+	Name  string     `json:"name"`
+	Cases []TestCase `json:"cases,omitempty"`
+}
+type TestCase struct {
+	ClassName       string  `json:"className"`
+	Name            string  `json:"name"`
+	Status          string  `json:"status"`
+	Duration        float64 `json:"duration,omitempty"`
+	ErrorDetails    string  `json:"errorDetails,omitempty"`
+	ErrorStackTrace string  `json:"errorStackTrace,omitempty"`
+}
+type QueueItem struct {
+	ID         int64         `json:"id"`
+	URL        string        `json:"url,omitempty"`
+	Why        string        `json:"why,omitempty"`
+	Cancelled  bool          `json:"cancelled"`
+	Executable *BuildSummary `json:"executable,omitempty"`
+}
+
+type PipelineRun struct {
+	ID         string          `json:"id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	StartTime  int64           `json:"startTimeMillis,omitempty"`
+	EndTime    int64           `json:"endTimeMillis,omitempty"`
+	DurationMS int64           `json:"durationMillis,omitempty"`
+	Stages     []PipelineStage `json:"stages,omitempty"`
+}
+
+type PipelineStage struct {
+	ID         string `json:"id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Status     string `json:"status,omitempty"`
+	StartTime  int64  `json:"startTimeMillis,omitempty"`
+	DurationMS int64  `json:"durationMillis,omitempty"`
+	PauseMS    int64  `json:"pauseMillis,omitempty"`
+}

@@ -1,0 +1,155 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/david/jenkins-mcp/internal/config"
+	apperrors "github.com/david/jenkins-mcp/internal/errors"
+)
+
+type Client struct {
+	base      *url.URL
+	username  string
+	token     string
+	http      *http.Client
+	logger    *slog.Logger
+	crumb     *Crumb
+	crumbLock sync.Mutex
+}
+type Crumb struct {
+	RequestField string `json:"crumbRequestField"`
+	Crumb        string `json:"crumb"`
+}
+
+func New(cfg config.ControllerConfig, logger *slog.Logger) (*Client, error) {
+	parsed, err := url.Parse(strings.TrimRight(cfg.URL, "/"))
+	if err != nil {
+		return nil, err
+	}
+	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}, logger: logger}, nil
+}
+func (c *Client) BaseURL() string { return c.base.String() }
+
+func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, out any) error {
+	status, body, headers, err := c.Do(ctx, http.MethodGet, path, query, nil, nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status > 299 {
+		return classify(status, string(body))
+	}
+	if version := headers.Get("X-Jenkins"); version != "" {
+		if m, ok := out.(interface{ SetVersion(string) }); ok {
+			m.SetVersion(version)
+		}
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return apperrors.Wrap(apperrors.CodeJenkins, "invalid Jenkins JSON response", err.Error())
+	}
+	return nil
+}
+
+func (c *Client) GetText(ctx context.Context, path string, query url.Values) (int, []byte, http.Header, error) {
+	return c.Do(ctx, http.MethodGet, path, query, nil, nil)
+}
+
+func (c *Client) Post(ctx context.Context, path string, query url.Values, form url.Values) (int, []byte, http.Header, error) {
+	headers := http.Header{}
+	if err := c.addCrumb(ctx, headers); err != nil {
+		return 0, nil, nil, err
+	}
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+		headers.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	return c.Do(ctx, http.MethodPost, path, query, body, headers)
+}
+
+func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body io.Reader, headers http.Header) (int, []byte, http.Header, error) {
+	u := *c.base
+	u.Path = strings.TrimRight(c.base.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	u.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if c.username != "" || c.token != "" {
+		req.SetBasicAuth(c.username, c.token)
+	}
+	for k, vals := range headers {
+		for _, v := range vals {
+			req.Header.Add(k, v)
+		}
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, nil, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
+	}
+	defer res.Body.Close()
+	b, err := readBounded(res.Body, 8*1024*1024)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return res.StatusCode, b, res.Header, nil
+}
+
+func (c *Client) addCrumb(ctx context.Context, headers http.Header) error {
+	c.crumbLock.Lock()
+	defer c.crumbLock.Unlock()
+
+	if c.crumb == nil {
+		var crumb Crumb
+		status, body, _, err := c.Do(ctx, http.MethodGet, "crumbIssuer/api/json", nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		if status == http.StatusNotFound || status == http.StatusForbidden {
+			return nil
+		}
+		if status < 200 || status > 299 {
+			return classify(status, string(body))
+		}
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&crumb); err != nil {
+			return err
+		}
+		c.crumb = &crumb
+	}
+	if c.crumb.RequestField != "" && c.crumb.Crumb != "" {
+		headers.Set(c.crumb.RequestField, c.crumb.Crumb)
+	}
+	return nil
+}
+
+func readBounded(reader io.Reader, maxBytes int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxBytes {
+		return nil, apperrors.Wrap(apperrors.CodeJenkins, "Jenkins response exceeded maximum body size", map[string]any{"maxBytes": maxBytes})
+	}
+	return b, nil
+}
+
+func classify(status int, body string) error {
+	msg := fmt.Sprintf("Jenkins returned HTTP %d", status)
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return apperrors.Wrap(apperrors.CodePermissionDenied, msg, body)
+	case http.StatusNotFound:
+		return apperrors.Wrap(apperrors.CodeNotFound, msg, body)
+	default:
+		return apperrors.Wrap(apperrors.CodeJenkins, msg, body)
+	}
+}

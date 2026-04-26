@@ -1,0 +1,26 @@
+{
+  "defaultController": "default",
+  "controllers": [
+    {
+      "id": "default",
+      "url": "https://jenkins.example.com",
+      "username": "your-user",
+      "token": "your-api-token"
+    }
+  ],
+  "mutations": {
+    "enabled": false
+  },
+  "limits": {
+    "maxResponseBytes": 65536,
+    "logChunkBytes": 65536,
+    "inlineBytes": 32768
+  },
+  "artifacts": {
+    "downloadDir": "/tmp/jenkins-mcp-artifacts"
+  },
+  "audit": {
+    "path": ""
+  }
+}
+

@@ -1,0 +1,219 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+type Config struct {
+	Controllers       []ControllerConfig `json:"controllers"`
+	DefaultController string             `json:"defaultController"`
+	Mutations         MutationConfig     `json:"mutations"`
+	Limits            LimitsConfig       `json:"limits"`
+	Artifacts         ArtifactConfig     `json:"artifacts"`
+	Audit             AuditConfig        `json:"audit"`
+}
+
+type ControllerConfig struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Username string `json:"username,omitempty"`
+	Token    string `json:"token,omitempty"`
+}
+
+type MutationConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+type LimitsConfig struct {
+	MaxResponseBytes int64 `json:"maxResponseBytes"`
+	LogChunkBytes    int64 `json:"logChunkBytes"`
+	InlineBytes      int64 `json:"inlineBytes"`
+}
+
+type ArtifactConfig struct {
+	DownloadDir string `json:"downloadDir"`
+}
+
+type AuditConfig struct {
+	Path string `json:"path,omitempty"`
+}
+
+func Load(args []string, environ []string) (Config, error) {
+	cfg := Defaults()
+	env := envMap(environ)
+
+	fs := flag.NewFlagSet("jenkins-mcp-server", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", env["JENKINS_MCP_CONFIG"], "config file")
+	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
+
+	if *configPath != "" {
+		fileCfg, err := loadFile(*configPath)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg = merge(cfg, fileCfg)
+	}
+
+	applyEnv(&cfg, env)
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func Defaults() Config {
+	return Config{
+		DefaultController: "default",
+		Limits:            LimitsConfig{MaxResponseBytes: 64 * 1024, LogChunkBytes: 64 * 1024, InlineBytes: 32 * 1024},
+		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
+	}
+}
+
+func (c Config) Validate() error {
+	if len(c.Controllers) == 0 {
+		return errors.New("at least one Jenkins controller is required")
+	}
+	seen := map[string]bool{}
+	hasDefault := false
+	for _, controller := range c.Controllers {
+		if strings.TrimSpace(controller.ID) == "" {
+			return errors.New("controller id is required")
+		}
+		if seen[controller.ID] {
+			return fmt.Errorf("duplicate controller id %q", controller.ID)
+		}
+		seen[controller.ID] = true
+		if controller.ID == c.DefaultController {
+			hasDefault = true
+		}
+		parsed, err := url.Parse(controller.URL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("controller %q has invalid url", controller.ID)
+		}
+	}
+	if c.DefaultController == "" || !hasDefault {
+		return fmt.Errorf("default controller %q is not configured", c.DefaultController)
+	}
+	if c.Limits.MaxResponseBytes <= 0 || c.Limits.LogChunkBytes <= 0 || c.Limits.InlineBytes <= 0 {
+		return errors.New("limits must be positive")
+	}
+	if c.Artifacts.DownloadDir == "" {
+		return errors.New("artifact downloadDir is required")
+	}
+	return nil
+}
+
+func (c Config) Controller(id string) (ControllerConfig, bool) {
+	if id == "" {
+		id = c.DefaultController
+	}
+	for _, controller := range c.Controllers {
+		if controller.ID == id {
+			return controller, true
+		}
+	}
+	return ControllerConfig{}, false
+}
+
+func (c Config) Redacted() Config {
+	out := c
+	out.Controllers = append([]ControllerConfig(nil), c.Controllers...)
+	for i := range out.Controllers {
+		if out.Controllers[i].Token != "" {
+			out.Controllers[i].Token = "<redacted>"
+		}
+	}
+	return out
+}
+
+func loadFile(path string) (Config, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	var cfg Config
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func merge(base, override Config) Config {
+	if len(override.Controllers) > 0 {
+		base.Controllers = override.Controllers
+	}
+	if override.DefaultController != "" {
+		base.DefaultController = override.DefaultController
+	}
+	if override.Mutations.Enabled {
+		base.Mutations.Enabled = true
+	}
+	if override.Limits.MaxResponseBytes != 0 {
+		base.Limits.MaxResponseBytes = override.Limits.MaxResponseBytes
+	}
+	if override.Limits.LogChunkBytes != 0 {
+		base.Limits.LogChunkBytes = override.Limits.LogChunkBytes
+	}
+	if override.Limits.InlineBytes != 0 {
+		base.Limits.InlineBytes = override.Limits.InlineBytes
+	}
+	if override.Artifacts.DownloadDir != "" {
+		base.Artifacts.DownloadDir = override.Artifacts.DownloadDir
+	}
+	if override.Audit.Path != "" {
+		base.Audit.Path = override.Audit.Path
+	}
+	return base
+}
+
+func applyEnv(cfg *Config, env map[string]string) {
+	if env["JENKINS_URL"] != "" {
+		id := env["JENKINS_ID"]
+		if id == "" {
+			id = "default"
+		}
+		cfg.Controllers = []ControllerConfig{{ID: id, URL: env["JENKINS_URL"], Username: env["JENKINS_USER"], Token: env["JENKINS_TOKEN"]}}
+		cfg.DefaultController = id
+	}
+	if v := env["JENKINS_MUTATIONS"]; v != "" {
+		cfg.Mutations.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := env["JENKINS_ARTIFACT_DIR"]; v != "" {
+		cfg.Artifacts.DownloadDir = v
+	}
+	if v := env["JENKINS_AUDIT_PATH"]; v != "" {
+		cfg.Audit.Path = v
+	}
+	if v := env["JENKINS_MAX_RESPONSE_BYTES"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Limits.MaxResponseBytes = n
+		}
+	}
+	if v := env["JENKINS_LOG_CHUNK_BYTES"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Limits.LogChunkBytes = n
+		}
+	}
+}
+
+func envMap(environ []string) map[string]string {
+	out := map[string]string{}
+	for _, pair := range environ {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok {
+			out[k] = v
+		}
+	}
+	return out
+}

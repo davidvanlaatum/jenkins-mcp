@@ -1,0 +1,5 @@
+/jenkins-mcp-server
+/dist/
+/coverage.out
+*.test
+examples/config/test-config.local.json
