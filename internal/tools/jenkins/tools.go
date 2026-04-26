@@ -3,6 +3,7 @@ package jenkins
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/david/jenkins-mcp/internal/artifacts"
@@ -57,6 +58,7 @@ type ListJobsRequest struct {
 	Controller string `json:"controller,omitempty"`
 	Folder     string `json:"folder,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
+	Recursive  bool   `json:"recursive,omitempty"`
 }
 type ListJobsResponse struct {
 	Jobs      []model.Job `json:"jobs"`
@@ -68,16 +70,58 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 	if err != nil {
 		return ListJobsResponse{}, err
 	}
-	jobs, err := api.ListJobs(ctx, in.Folder)
+	limit := pagination.BoundLimit(in.Limit, 100, 500)
+	var jobs []model.Job
+	if in.Recursive {
+		jobs, err = listJobsRecursive(ctx, api, in.Folder, limit)
+	} else {
+		jobs, err = api.ListJobs(ctx, in.Folder)
+	}
 	if err != nil {
 		return ListJobsResponse{}, err
 	}
-	limit := pagination.BoundLimit(in.Limit, 100, 500)
 	truncated := len(jobs) > limit
 	if truncated {
 		jobs = jobs[:limit]
 	}
 	return ListJobsResponse{Jobs: jobs, Truncated: truncated}, nil
+}
+
+func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, limit int) ([]model.Job, error) {
+	seen := map[string]bool{}
+	var out []model.Job
+	var walk func(string) error
+	walk = func(current string) error {
+		if len(out) > limit {
+			return nil
+		}
+		jobs, err := api.ListJobs(ctx, current)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			if seen[job.FullName] {
+				continue
+			}
+			seen[job.FullName] = true
+			out = append(out, job)
+			if len(out) > limit {
+				return nil
+			}
+			if isFolderLike(job.Class) {
+				if err := walk(job.FullName); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return out, walk(folder)
+}
+
+func isFolderLike(class string) bool {
+	class = strings.ToLower(class)
+	return strings.Contains(class, "folder") || strings.Contains(class, "multibranch")
 }
 
 type ListBuildsRequest struct {
