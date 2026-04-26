@@ -39,6 +39,53 @@ func (a *API) ControllerInfo(ctx context.Context) (model.ControllerInfo, error) 
 	return model.ControllerInfo{ID: a.id, URL: a.BaseURL(), Version: out.version, UseSecurity: out.UseSecurity, NodeName: out.NodeName, Available: err == nil}, err
 }
 
+func (a *API) InstalledPlugins(ctx context.Context) ([]model.PluginInfo, error) {
+	var raw struct {
+		Plugins []model.PluginInfo `json:"plugins"`
+	}
+	err := a.client.GetJSON(ctx, "pluginManager/api/json", url.Values{"tree": {"plugins[shortName,version,active,enabled]"}}, &raw)
+	return raw.Plugins, err
+}
+
+func (a *API) Capabilities(ctx context.Context) model.ControllerCapabilities {
+	info, err := a.ControllerInfo(ctx)
+	if err != nil {
+		return model.ControllerCapabilities{
+			Controller: model.ControllerInfo{ID: a.id, URL: a.BaseURL(), Available: false, Error: err.Error()},
+			Features:   defaultFeatureMap(nil),
+			Error:      err.Error(),
+		}
+	}
+	plugins, pluginErr := a.InstalledPlugins(ctx)
+	caps := model.ControllerCapabilities{
+		Controller: info,
+		Features:   defaultFeatureMap(plugins),
+		Plugins:    plugins,
+	}
+	if pluginErr != nil {
+		caps.Error = pluginErr.Error()
+	}
+	return caps
+}
+
+func defaultFeatureMap(plugins []model.PluginInfo) map[string]bool {
+	active := map[string]bool{}
+	for _, plugin := range plugins {
+		active[plugin.ShortName] = plugin.Active && plugin.Enabled
+	}
+	return map[string]bool{
+		"jobs":         true,
+		"builds":       true,
+		"logs":         true,
+		"artifacts":    true,
+		"queue":        true,
+		"junit":        len(plugins) == 0 || active["junit"],
+		"pipeline":     len(plugins) == 0 || active["workflow-job"] || active["pipeline-rest-api"],
+		"coverage":     active["coverage"] || active["jacoco"],
+		"recordIssues": active["warnings-ng"],
+	}
+}
+
 type jobJSON struct {
 	Name  string `json:"name"`
 	URL   string `json:"url"`

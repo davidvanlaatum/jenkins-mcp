@@ -35,22 +35,22 @@ type BuildRequest struct {
 }
 
 type CapabilitiesResponse struct {
-	Controllers      []model.ControllerInfo `json:"controllers"`
-	MutationsEnabled bool                   `json:"mutationsEnabled"`
-	Limits           config.LimitsConfig    `json:"limits"`
+	Controllers      []model.ControllerInfo         `json:"controllers"`
+	Capabilities     []model.ControllerCapabilities `json:"capabilities"`
+	MutationsEnabled bool                           `json:"mutationsEnabled"`
+	Limits           config.LimitsConfig            `json:"limits"`
 }
 
 func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesResponse, error) {
 	infos := []model.ControllerInfo{}
+	capabilities := []model.ControllerCapabilities{}
 	for _, c := range deps.Config.Controllers {
 		api := deps.Jenkins[c.ID]
-		info, err := api.ControllerInfo(ctx)
-		if err != nil {
-			info = model.ControllerInfo{ID: c.ID, URL: api.BaseURL(), Available: false, Error: err.Error()}
-		}
-		infos = append(infos, info)
+		caps := api.Capabilities(ctx)
+		infos = append(infos, caps.Controller)
+		capabilities = append(capabilities, caps)
 	}
-	return CapabilitiesResponse{Controllers: infos, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits}, nil
+	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits}, nil
 }
 
 type ListJobsRequest struct {

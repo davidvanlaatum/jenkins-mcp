@@ -9,6 +9,21 @@ type ControllerInfo struct {
 	Available   bool   `json:"available"`
 	Error       string `json:"error,omitempty"`
 }
+
+type PluginInfo struct {
+	ShortName string `json:"shortName"`
+	Version   string `json:"version,omitempty"`
+	Active    bool   `json:"active"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type ControllerCapabilities struct {
+	Controller ControllerInfo  `json:"controller"`
+	Features   map[string]bool `json:"features"`
+	Plugins    []PluginInfo    `json:"plugins,omitempty"`
+	Error      string          `json:"error,omitempty"`
+}
+
 type Job struct {
 	Name     string `json:"name"`
 	FullName string `json:"fullName,omitempty"`

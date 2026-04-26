@@ -2,7 +2,7 @@
 
 ## Read Tools
 
-- `jenkins_get_capabilities`: checks configured controllers and response limits.
+- `jenkins_get_capabilities`: checks configured controllers, response limits, installed plugins, and feature availability.
 - `jenkins_list_jobs`: lists jobs at root or inside a folder.
 - `jenkins_list_builds`: lists recent builds for a job.
 - `jenkins_get_build`: returns build metadata, causes, parameters, artifacts, and changes.
