@@ -69,6 +69,7 @@ go build ./cmd/jenkins-mcp-server
 See also:
 
 - `docs/operations.md`
+- `docs/release.md`
 - `docs/security.md`
 - `docs/tools/jenkins.md`
 - `examples/mcp-client/`
