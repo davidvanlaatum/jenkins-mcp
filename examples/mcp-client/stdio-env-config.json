@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "/path/to/jenkins-mcp-server",
+      "env": {
+        "JENKINS_URL": "https://jenkins.example.com",
+        "JENKINS_USER": "your-user",
+        "JENKINS_TOKEN": "your-api-token",
+        "JENKINS_MUTATIONS": "false"
+      }
+    }
+  }
+}

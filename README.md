@@ -65,3 +65,10 @@ Use `--config examples/config/config.json` for file-based configuration.
 go test ./...
 go build ./cmd/jenkins-mcp-server
 ```
+
+See also:
+
+- `docs/operations.md`
+- `docs/security.md`
+- `docs/tools/jenkins.md`
+- `examples/mcp-client/`

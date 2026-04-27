@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "/path/to/jenkins-mcp-server",
+      "args": [
+        "--config",
+        "/path/to/jenkins-mcp-config.json"
+      ]
+    }
+  }
+}
