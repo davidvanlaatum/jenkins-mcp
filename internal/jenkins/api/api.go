@@ -549,25 +549,27 @@ func (a *API) CoverageReport(ctx context.Context, job string, number int) (model
 	for _, candidate := range candidates {
 		var raw map[string]any
 		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
-			return model.CoverageReport{Available: true, Endpoint: candidate, Summary: raw}, nil
+			return model.CoverageReport{Available: true, Endpoint: candidate, CheckedEndpoints: candidates, Summary: raw}, nil
 		}
 	}
-	return model.CoverageReport{Available: false}, nil
+	return model.CoverageReport{Available: false, CheckedEndpoints: candidates}, nil
 }
 
 func (a *API) IssuesReport(ctx context.Context, job string, number int) (model.IssuesReport, error) {
 	candidates := []string{
 		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ngResult/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ngResult/analysis/api/json",
 		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/analysisResult/api/json",
+		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/recordIssues/api/json",
 		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings/api/json",
 	}
 	for _, candidate := range candidates {
 		var raw map[string]any
 		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
-			return model.IssuesReport{Available: true, Endpoint: candidate, Summary: raw}, nil
+			return model.IssuesReport{Available: true, Endpoint: candidate, CheckedEndpoints: candidates, Summary: raw}, nil
 		}
 	}
-	return model.IssuesReport{Available: false}, nil
+	return model.IssuesReport{Available: false, CheckedEndpoints: candidates}, nil
 }
 
 func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]string) (string, error) {

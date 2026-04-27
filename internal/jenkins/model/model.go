@@ -207,15 +207,17 @@ type ArtifactContent struct {
 }
 
 type CoverageReport struct {
-	Available bool           `json:"available"`
-	Endpoint  string         `json:"endpoint,omitempty"`
-	Summary   map[string]any `json:"summary,omitempty"`
+	Available        bool           `json:"available"`
+	Endpoint         string         `json:"endpoint,omitempty"`
+	CheckedEndpoints []string       `json:"checkedEndpoints,omitempty"`
+	Summary          map[string]any `json:"summary,omitempty"`
 }
 
 type IssuesReport struct {
-	Available bool           `json:"available"`
-	Endpoint  string         `json:"endpoint,omitempty"`
-	Summary   map[string]any `json:"summary,omitempty"`
+	Available        bool           `json:"available"`
+	Endpoint         string         `json:"endpoint,omitempty"`
+	CheckedEndpoints []string       `json:"checkedEndpoints,omitempty"`
+	Summary          map[string]any `json:"summary,omitempty"`
 }
 
 type BuildWatch struct {
