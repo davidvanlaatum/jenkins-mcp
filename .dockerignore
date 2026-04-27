@@ -1,0 +1,8 @@
+.git
+.gitignore
+.pre-commit-config.yaml
+dist/
+coverage.out
+*.test
+jenkins-mcp-server
+examples/config/test-config.local.json
