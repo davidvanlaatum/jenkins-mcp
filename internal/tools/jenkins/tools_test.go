@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/config"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 )
 
 func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
@@ -37,5 +38,26 @@ func TestResolveBuildURLRejectsUnknownController(t *testing.T) {
 	}, "https://other.example.com/job/app/1/")
 	if err == nil {
 		t.Fatal("resolveBuildURL() accepted unknown controller")
+	}
+}
+
+func TestValidateTriggerParametersRejectsUnknown(t *testing.T) {
+	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH"}}, map[string]string{"UNKNOWN": "main"})
+	if err == nil {
+		t.Fatal("validateTriggerParameters() accepted unknown parameter")
+	}
+}
+
+func TestValidateTriggerParametersRequiresRequired(t *testing.T) {
+	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH", Required: true}}, nil)
+	if err == nil {
+		t.Fatal("validateTriggerParameters() accepted missing required parameter")
+	}
+}
+
+func TestValidateTriggerParametersAcceptsKnown(t *testing.T) {
+	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH", Required: true}}, map[string]string{"BRANCH": "main"})
+	if err != nil {
+		t.Fatalf("validateTriggerParameters() error = %v", err)
 	}
 }

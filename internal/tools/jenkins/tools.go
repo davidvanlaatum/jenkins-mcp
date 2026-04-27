@@ -587,9 +587,40 @@ func TriggerBuild(ctx context.Context, deps Deps, in TriggerBuildRequest) (Trigg
 	if err != nil {
 		return TriggerBuildResponse{}, err
 	}
+	job, err := api.GetJob(ctx, in.Job)
+	if err != nil {
+		return TriggerBuildResponse{}, err
+	}
+	if err := validateTriggerParameters(job.Parameters, in.Parameters); err != nil {
+		return TriggerBuildResponse{}, err
+	}
 	location, err := api.TriggerBuild(ctx, in.Job, in.Parameters)
 	emit(deps, in.Controller, "trigger_build", in.Job, err)
 	return TriggerBuildResponse{QueueURL: location, Triggered: err == nil}, err
+}
+
+func validateTriggerParameters(definitions []model.ParameterDefinition, parameters map[string]string) error {
+	if len(definitions) == 0 {
+		return nil
+	}
+	allowed := map[string]model.ParameterDefinition{}
+	for _, definition := range definitions {
+		allowed[definition.Name] = definition
+	}
+	for name := range parameters {
+		if _, ok := allowed[name]; !ok {
+			return apperrors.Wrap(apperrors.CodeInvalidRequest, "unknown build parameter", map[string]any{"parameter": name})
+		}
+	}
+	for _, definition := range definitions {
+		if !definition.Required {
+			continue
+		}
+		if _, ok := parameters[definition.Name]; !ok {
+			return apperrors.Wrap(apperrors.CodeInvalidRequest, "missing required build parameter", map[string]any{"parameter": definition.Name})
+		}
+	}
+	return nil
 }
 
 type QueueItemRequest struct {
