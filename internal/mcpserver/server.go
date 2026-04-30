@@ -127,7 +127,7 @@ func (s *Server) register() {
 	addTool(s.raw, &mcp.Tool{Name: "jenkins_get_changes", Description: "Fetch SCM change sets for a Jenkins build."}, func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.ChangesResponse, error) {
 		return jenkinstools.Changes(ctx, s.deps, in)
 	})
-	addTool(s.raw, &mcp.Tool{Name: "jenkins_watch_build", Description: "Inspect build state plus a progressive log chunk and Pipeline stages for polling running builds."}, func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
+	addTool(s.raw, &mcp.Tool{Name: "jenkins_watch_build", Description: "Bootstrap or long-poll a Jenkins build watcher. The first call without lastState returns immediately with watch.state; pass that state back as lastState on later calls to wait until completion or Pipeline stage-status changes. Invalid or expired lastState values return an error and must be re-bootstrapped. Prefer this over jenkins_get_build when waiting for progress."}, func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
 		return jenkinstools.WatchBuild(ctx, s.deps, in)
 	})
 	addTool(s.raw, &mcp.Tool{Name: "jenkins_trigger_build", Description: "Trigger a Jenkins build. Disabled unless mutations.enabled is true."}, func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {

@@ -32,6 +32,8 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 
 Mutating tools are disabled unless explicitly enabled in configuration.
 
+`jenkins_watch_build` is a status-only long-poll watcher. Use `jenkins_get_log` or `jenkins_tail_log` separately for console output.
+
 ## Quick Start
 
 ```bash

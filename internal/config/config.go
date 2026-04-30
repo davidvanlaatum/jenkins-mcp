@@ -17,6 +17,7 @@ type Config struct {
 	DefaultController string             `json:"defaultController"`
 	Mutations         MutationConfig     `json:"mutations"`
 	Limits            LimitsConfig       `json:"limits"`
+	Watch             WatchConfig        `json:"watch"`
 	Artifacts         ArtifactConfig     `json:"artifacts"`
 	Audit             AuditConfig        `json:"audit"`
 }
@@ -36,6 +37,13 @@ type LimitsConfig struct {
 	MaxResponseBytes int64 `json:"maxResponseBytes"`
 	LogChunkBytes    int64 `json:"logChunkBytes"`
 	InlineBytes      int64 `json:"inlineBytes"`
+}
+
+type WatchConfig struct {
+	PollIntervalMs         int64 `json:"pollIntervalMs"`
+	DefaultWaitTimeoutMs   int64 `json:"defaultWaitTimeoutMs"`
+	MaxWaitTimeoutMs       int64 `json:"maxWaitTimeoutMs"`
+	MaxConsecutiveFailures int   `json:"maxConsecutiveFailures"`
 }
 
 type ArtifactConfig struct {
@@ -76,6 +84,7 @@ func Defaults() Config {
 	return Config{
 		DefaultController: "default",
 		Limits:            LimitsConfig{MaxResponseBytes: 64 * 1024, LogChunkBytes: 64 * 1024, InlineBytes: 32 * 1024},
+		Watch:             WatchConfig{PollIntervalMs: 3000, DefaultWaitTimeoutMs: 120000, MaxWaitTimeoutMs: 900000, MaxConsecutiveFailures: 3},
 		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
 	}
 }
@@ -107,6 +116,12 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.MaxResponseBytes <= 0 || c.Limits.LogChunkBytes <= 0 || c.Limits.InlineBytes <= 0 {
 		return errors.New("limits must be positive")
+	}
+	if c.Watch.PollIntervalMs <= 0 || c.Watch.DefaultWaitTimeoutMs <= 0 || c.Watch.MaxWaitTimeoutMs <= 0 || c.Watch.MaxConsecutiveFailures <= 0 {
+		return errors.New("watch settings must be positive")
+	}
+	if c.Watch.DefaultWaitTimeoutMs > c.Watch.MaxWaitTimeoutMs {
+		return errors.New("watch.defaultWaitTimeoutMs must not exceed watch.maxWaitTimeoutMs")
 	}
 	if c.Artifacts.DownloadDir == "" {
 		return errors.New("artifact downloadDir is required")
@@ -168,6 +183,18 @@ func merge(base, override Config) Config {
 	if override.Limits.InlineBytes != 0 {
 		base.Limits.InlineBytes = override.Limits.InlineBytes
 	}
+	if override.Watch.PollIntervalMs != 0 {
+		base.Watch.PollIntervalMs = override.Watch.PollIntervalMs
+	}
+	if override.Watch.DefaultWaitTimeoutMs != 0 {
+		base.Watch.DefaultWaitTimeoutMs = override.Watch.DefaultWaitTimeoutMs
+	}
+	if override.Watch.MaxWaitTimeoutMs != 0 {
+		base.Watch.MaxWaitTimeoutMs = override.Watch.MaxWaitTimeoutMs
+	}
+	if override.Watch.MaxConsecutiveFailures != 0 {
+		base.Watch.MaxConsecutiveFailures = override.Watch.MaxConsecutiveFailures
+	}
 	if override.Artifacts.DownloadDir != "" {
 		base.Artifacts.DownloadDir = override.Artifacts.DownloadDir
 	}
@@ -203,6 +230,26 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v := env["JENKINS_LOG_CHUNK_BYTES"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Limits.LogChunkBytes = n
+		}
+	}
+	if v := env["JENKINS_WATCH_POLL_INTERVAL_MS"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Watch.PollIntervalMs = n
+		}
+	}
+	if v := env["JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Watch.DefaultWaitTimeoutMs = n
+		}
+	}
+	if v := env["JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Watch.MaxWaitTimeoutMs = n
+		}
+	}
+	if v := env["JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES"]; v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Watch.MaxConsecutiveFailures = n
 		}
 	}
 }

@@ -221,8 +221,9 @@ type IssuesReport struct {
 }
 
 type BuildWatch struct {
+	State    string       `json:"state,omitempty"`
 	Build    BuildSummary `json:"build"`
-	Log      LogChunk     `json:"log"`
 	Pipeline *PipelineRun `json:"pipeline,omitempty"`
 	Complete bool         `json:"complete"`
+	TimedOut bool         `json:"timedOut"`
 }

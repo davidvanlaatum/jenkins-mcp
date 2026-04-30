@@ -52,6 +52,10 @@ Useful environment variables:
 - `JENKINS_MUTATIONS`: set to `true` to enable mutating tools.
 - `JENKINS_ARTIFACT_DIR`: local artifact download directory.
 - `JENKINS_AUDIT_PATH`: JSONL audit path for mutating actions.
+- `JENKINS_WATCH_POLL_INTERVAL_MS`: Jenkins polling interval during `jenkins_watch_build` long-polls in milliseconds. Default `3000`.
+- `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS`: default maximum duration for a `jenkins_watch_build` call in milliseconds when the request omits `waitTimeoutMs`. Default `120000`.
+- `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for `jenkins_watch_build` in milliseconds. Default `900000`.
+- `JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES`: consecutive Jenkins poll failures tolerated before `jenkins_watch_build` returns an error. Default `3`.
 
 ## Mutations
 
@@ -78,4 +82,4 @@ Large responses are bounded to keep MCP payloads useful:
 - `limits.logChunkBytes`: progressive log chunk budget.
 - `limits.inlineBytes`: inline artifact budget.
 
-Use `jenkins_get_log`, `jenkins_tail_log`, and `jenkins_watch_build` with cursors rather than requesting complete logs.
+Use `jenkins_get_log` and `jenkins_tail_log` with cursors rather than requesting complete logs. Use `jenkins_watch_build` for status-only long-polling on build completion or Pipeline stage-state changes.

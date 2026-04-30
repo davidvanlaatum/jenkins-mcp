@@ -15,7 +15,7 @@
 - `jenkins_get_pipeline_run`: returns Pipeline stages through Jenkins `wfapi` when the plugin endpoint is available.
 - `jenkins_get_pipeline_stage`: returns a Pipeline stage and its child flow nodes.
 - `jenkins_get_pipeline_node_log`: returns bounded log output for a Pipeline flow node.
-- `jenkins_watch_build`: returns build state, a progressive log chunk, and Pipeline stages for polling running builds.
+- `jenkins_watch_build`: bootstraps or long-polls for build completion or Pipeline stage-status changes, returning an opaque watch state token plus current build and Pipeline status. The first call without `lastState` returns immediately to establish `watch.state`; callers should pass that token back as `lastState` on the next request, and can use `waitTimeoutMs` to bound how long a single subsequent long-poll call stays open. Invalid or expired `lastState` values return `invalid_request`; callers should restart from a fresh bootstrap call without `lastState`. Watch-state tokens are signed with an in-memory per-process key, so any server restart or rollout invalidates previously issued tokens and requires re-bootstrap. Prefer this over `jenkins_get_build` when waiting for a running build to progress; use `jenkins_get_build` for one-off snapshots.
 - `jenkins_get_coverage`: probes common coverage plugin endpoints and returns a summary when available.
 - `jenkins_get_issues`: probes common Warnings NG / analysis endpoints and returns a summary when available.
 - `jenkins_get_changes`: returns SCM change sets exposed on the build.

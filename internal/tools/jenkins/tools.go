@@ -1,11 +1,20 @@
 package jenkins
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/david/jenkins-mcp/internal/artifacts"
@@ -23,6 +32,17 @@ type Deps struct {
 	Jenkins map[string]*jenkinsapi.API
 	Audit   *audit.Logger
 }
+
+const (
+	maxWatchStateTokenBytes        = 8 * 1024
+	maxWatchStateUncompressedBytes = 512 * 1024
+)
+
+var (
+	watchStateSigningKey     []byte
+	watchStateSigningKeyErr  error
+	watchStateSigningKeyOnce sync.Once
+)
 
 type BaseRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
@@ -529,41 +549,416 @@ func Changes(ctx context.Context, deps Deps, in BuildRequest) (ChangesResponse, 
 }
 
 type WatchBuildRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	LogStart   int64  `json:"logStart,omitempty"`
-	MaxBytes   int64  `json:"maxBytes,omitempty"`
+	Controller    string `json:"controller,omitempty"`
+	Job           string `json:"job"`
+	Build         int    `json:"build"`
+	LastState     string `json:"lastState,omitempty"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty"`
 }
 type WatchBuildResponse struct {
 	Watch model.BuildWatch `json:"watch"`
+}
+
+type watchState struct {
+	Version int                `json:"v"`
+	Target  watchTargetState   `json:"target"`
+	Summary model.BuildSummary `json:"summary"`
+	Build   watchBuildState    `json:"build"`
+	Run     watchRunState      `json:"run"`
+	Stages  []watchStageState  `json:"stages,omitempty"`
+}
+
+type watchTargetState struct {
+	Controller string `json:"controller"`
+	Job        string `json:"job"`
+	Build      int    `json:"build"`
+}
+
+type watchBuildState struct {
+	Building bool   `json:"building"`
+	Result   string `json:"result,omitempty"`
+}
+
+type watchRunState struct {
+	Status string `json:"status,omitempty"`
+}
+
+type watchStageState struct {
+	ID     string `json:"id,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 func WatchBuild(ctx context.Context, deps Deps, in WatchBuildRequest) (WatchBuildResponse, error) {
 	if err := validateBuild(in.Job, in.Build); err != nil {
 		return WatchBuildResponse{}, err
 	}
+	controllerID := in.Controller
+	if controllerID == "" {
+		controllerID = deps.Config.DefaultController
+	}
 	api, err := apiFor(deps, in.Controller)
 	if err != nil {
 		return WatchBuildResponse{}, err
 	}
-	build, err := api.GetBuild(ctx, in.Job, in.Build)
+	previous, err := decodeWatchState(in.LastState)
 	if err != nil {
 		return WatchBuildResponse{}, err
 	}
-	maxBytes := in.MaxBytes
-	if maxBytes <= 0 || maxBytes > deps.Config.Limits.LogChunkBytes {
-		maxBytes = deps.Config.Limits.LogChunkBytes
+	if previous != nil && !watchTargetMatches(previous.Target, controllerID, in.Job, in.Build) {
+		return WatchBuildResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "watch state does not match requested build", map[string]any{
+			"controller": controllerID,
+			"job":        in.Job,
+			"build":      in.Build,
+		})
 	}
-	log, err := api.GetLog(ctx, in.Job, in.Build, in.LogStart, maxBytes)
+	waitTimeout := deps.Config.Watch.DefaultWaitTimeoutMs
+	if in.WaitTimeoutMs > 0 {
+		waitTimeout = in.WaitTimeoutMs
+	}
+	if waitTimeout > deps.Config.Watch.MaxWaitTimeoutMs {
+		waitTimeout = deps.Config.Watch.MaxWaitTimeoutMs
+	}
+	deadline := time.Now().Add(time.Duration(waitTimeout) * time.Millisecond)
+	consecutiveFailures := 0
+
+	for {
+		build, pipelinePtr, current, pipelineDegraded, fatal, err := fetchWatchState(ctx, api, controllerID, in.Job, in.Build)
+		if fatal && err != nil {
+			return WatchBuildResponse{}, err
+		}
+		if err == nil {
+			consecutiveFailures = 0
+			if pipelineDegraded && previous != nil {
+				current.Run = previous.Run
+				current.Stages = previous.Stages
+				pipelinePtr = pipelineRunFromState(previous)
+			}
+			changed := previous == nil || !watchStatesEqual(*previous, current)
+			complete := !build.Building
+			if changed || complete || !time.Now().Before(deadline) {
+				stateToken, err := encodeWatchState(current)
+				if err != nil {
+					return WatchBuildResponse{}, err
+				}
+				return WatchBuildResponse{Watch: model.BuildWatch{
+					State:    stateToken,
+					Build:    build.BuildSummary,
+					Pipeline: pipelinePtr,
+					Complete: complete,
+					TimedOut: !changed && !complete,
+				}}, nil
+			}
+		} else {
+			if previous == nil && !time.Now().Before(deadline) {
+				return WatchBuildResponse{}, apperrors.Wrap(apperrors.CodeUnavailable, "jenkins watch bootstrap timed out", map[string]any{
+					"waitTimeoutMs": waitTimeout,
+					"lastError":     err.Error(),
+				})
+			}
+			if previous != nil && !time.Now().Before(deadline) {
+				return WatchBuildResponse{Watch: model.BuildWatch{
+					State:    in.LastState,
+					Build:    previous.Summary,
+					Pipeline: pipelineRunFromState(previous),
+					Complete: !previous.Build.Building,
+					TimedOut: true,
+				}}, nil
+			}
+			consecutiveFailures++
+			if consecutiveFailures >= deps.Config.Watch.MaxConsecutiveFailures {
+				return WatchBuildResponse{}, apperrors.Wrap(apperrors.CodeUnavailable, "jenkins watch polling failed repeatedly", map[string]any{
+					"consecutiveFailures": consecutiveFailures,
+					"lastError":           err.Error(),
+				})
+			}
+		}
+
+		if err := sleepWithContext(ctx, watchSleepDuration(time.Until(deadline), deps.Config.Watch.PollIntervalMs)); err != nil {
+			return WatchBuildResponse{}, err
+		}
+	}
+}
+
+func fetchWatchState(ctx context.Context, api *jenkinsapi.API, controllerID, job string, buildNumber int) (model.Build, *model.PipelineRun, watchState, bool, bool, error) {
+	build, err := api.GetBuild(ctx, job, buildNumber)
 	if err != nil {
-		return WatchBuildResponse{}, err
+		return model.Build{}, nil, watchState{}, false, false, err
 	}
-	var pipelinePtr *model.PipelineRun
-	if pipeline, err := api.PipelineRun(ctx, in.Job, in.Build); err == nil {
-		pipelinePtr = &pipeline
+	pipeline, err := api.PipelineRun(ctx, job, buildNumber)
+	if err != nil {
+		if isDegradablePipelineError(err) {
+			state := watchState{
+				Version: 1,
+				Target: watchTargetState{
+					Controller: controllerID,
+					Job:        job,
+					Build:      buildNumber,
+				},
+				Summary: stableWatchSummary(build.BuildSummary),
+				Build: watchBuildState{
+					Building: build.Building,
+					Result:   build.Result,
+				},
+				Run: watchRunState{},
+			}
+			return build, nil, state, true, false, nil
+		}
+		return model.Build{}, nil, watchState{}, false, true, err
 	}
-	return WatchBuildResponse{Watch: model.BuildWatch{Build: build.BuildSummary, Log: log, Pipeline: pipelinePtr, Complete: !build.Building}}, nil
+	pipelineCopy := pipeline
+	return build, &pipelineCopy, newWatchState(controllerID, job, build, &pipeline), false, false, nil
+}
+
+func newWatchState(controllerID, job string, build model.Build, pipeline *model.PipelineRun) watchState {
+	state := watchState{
+		Version: 1,
+		Target: watchTargetState{
+			Controller: controllerID,
+			Job:        job,
+			Build:      build.Number,
+		},
+		Summary: stableWatchSummary(build.BuildSummary),
+		Build: watchBuildState{
+			Building: build.Building,
+			Result:   build.Result,
+		},
+	}
+	if pipeline == nil {
+		return state
+	}
+	state.Run = watchRunState{
+		Status: pipeline.Status,
+	}
+	stages := make([]watchStageState, 0, len(pipeline.Stages))
+	for _, stage := range pipeline.Stages {
+		stages = append(stages, watchStageState{
+			ID:     stage.ID,
+			Name:   stage.Name,
+			Status: stage.Status,
+		})
+	}
+	state.Stages = stages
+	return state
+}
+
+func encodeWatchState(state watchState) (string, error) {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.CodeJenkins, "failed to encode watch state", err.Error())
+	}
+	compressed, err := compressWatchState(payload)
+	if err != nil {
+		return "", err
+	}
+	key, err := getWatchStateSigningKey()
+	if err != nil {
+		return "", err
+	}
+	payloadToken := base64.RawURLEncoding.EncodeToString(compressed)
+	signature := signWatchStateToken(key, payloadToken)
+	token := payloadToken + "." + signature
+	if len(token) > maxWatchStateTokenBytes {
+		return "", apperrors.Wrap(apperrors.CodeJenkins, "watch state too large to encode", map[string]any{"maxBytes": maxWatchStateTokenBytes})
+	}
+	return token, nil
+}
+
+func decodeWatchState(raw string) (*watchState, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	if len(raw) > maxWatchStateTokenBytes {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "watch state too large", map[string]any{"maxBytes": maxWatchStateTokenBytes})
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	key, err := getWatchStateSigningKey()
+	if err != nil {
+		return nil, err
+	}
+	if !verifyWatchStateToken(key, parts[0], parts[1]) {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "watch state expired; you need to re-bootstrap")
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	payload, err := decompressWatchState(compressed)
+	if err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	var state watchState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	if state.Version != 1 {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "unsupported watch state version", state.Version)
+	}
+	return &state, nil
+}
+
+func getWatchStateSigningKey() ([]byte, error) {
+	watchStateSigningKeyOnce.Do(func() {
+		watchStateSigningKey = make([]byte, 32)
+		if _, err := rand.Read(watchStateSigningKey); err != nil {
+			watchStateSigningKeyErr = apperrors.Wrap(apperrors.CodeUnavailable, "failed to initialize watch state signing key", err.Error())
+		}
+	})
+	if watchStateSigningKeyErr != nil {
+		return nil, watchStateSigningKeyErr
+	}
+	return watchStateSigningKey, nil
+}
+
+func signWatchStateToken(key []byte, payload string) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func verifyWatchStateToken(key []byte, payload, signature string) bool {
+	got, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(payload))
+	return hmac.Equal(got, mac.Sum(nil))
+}
+
+func compressWatchState(payload []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	writer, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeJenkins, "failed to compress watch state", err.Error())
+	}
+	if _, err := writer.Write(payload); err != nil {
+		_ = writer.Close()
+		return nil, apperrors.Wrap(apperrors.CodeJenkins, "failed to compress watch state", err.Error())
+	}
+	if err := writer.Close(); err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeJenkins, "failed to compress watch state", err.Error())
+	}
+	return buf.Bytes(), nil
+}
+
+func decompressWatchState(payload []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	data, err := io.ReadAll(io.LimitReader(reader, maxWatchStateUncompressedBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxWatchStateUncompressedBytes {
+		return nil, fmt.Errorf("watch state exceeds maximum uncompressed size")
+	}
+	return data, nil
+}
+
+func watchStatesEqual(a, b watchState) bool {
+	if a.Target != b.Target {
+		return false
+	}
+	if a.Build != b.Build {
+		return false
+	}
+	if a.Run != b.Run {
+		return false
+	}
+	if len(a.Stages) != len(b.Stages) {
+		return false
+	}
+	for i := range a.Stages {
+		if a.Stages[i] != b.Stages[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func watchTargetMatches(target watchTargetState, controllerID, job string, build int) bool {
+	return target.Controller == controllerID && target.Job == job && target.Build == build
+}
+
+func stableWatchSummary(summary model.BuildSummary) model.BuildSummary {
+	return model.BuildSummary{
+		Number:   summary.Number,
+		URL:      summary.URL,
+		Result:   summary.Result,
+		Building: summary.Building,
+	}
+}
+
+func isDegradablePipelineError(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	if !ok {
+		return false
+	}
+	switch appErr.Code {
+	case apperrors.CodeNotFound, apperrors.CodeUnavailable:
+		return true
+	case apperrors.CodeJenkins:
+		return strings.HasPrefix(appErr.Message, "Jenkins returned HTTP 5")
+	default:
+		return false
+	}
+}
+
+func pipelineRunFromState(state *watchState) *model.PipelineRun {
+	if state == nil {
+		return nil
+	}
+	if state.Run.Status == "" && len(state.Stages) == 0 {
+		return nil
+	}
+	run := &model.PipelineRun{Status: state.Run.Status}
+	if len(state.Stages) == 0 {
+		return run
+	}
+	run.Stages = make([]model.PipelineStage, 0, len(state.Stages))
+	for _, stage := range state.Stages {
+		run.Stages = append(run.Stages, model.PipelineStage{
+			ID:     stage.ID,
+			Name:   stage.Name,
+			Status: stage.Status,
+		})
+	}
+	return run
+}
+
+func watchSleepDuration(remaining time.Duration, pollIntervalMs int64) time.Duration {
+	interval := time.Duration(pollIntervalMs) * time.Millisecond
+	if remaining < interval {
+		return remaining
+	}
+	return interval
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 type TriggerBuildRequest struct {

@@ -16,6 +16,12 @@
     "logChunkBytes": 65536,
     "inlineBytes": 32768
   },
+  "watch": {
+    "pollIntervalMs": 3000,
+    "defaultWaitTimeoutMs": 120000,
+    "maxWaitTimeoutMs": 900000,
+    "maxConsecutiveFailures": 3
+  },
   "artifacts": {
     "downloadDir": "/tmp/jenkins-mcp-artifacts"
   },
