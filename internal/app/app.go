@@ -13,7 +13,7 @@ import (
 	stdiotransport "github.com/david/jenkins-mcp/internal/mcpserver/transport/stdio"
 )
 
-const Version = "0.1.0-dev"
+var Version = "0.1.0-dev"
 
 type Server struct {
 	mcp *mcpserver.Server

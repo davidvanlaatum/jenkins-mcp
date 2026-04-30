@@ -24,24 +24,29 @@ pre-commit run --all-files
 
 This runs formatting, Go imports, lint, tests, build, and package-boundary checks.
 
+GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, and GoReleaser snapshot validation for pushes to `main` and pull requests.
+
 ## Versioning
 
-The binary currently reports `0.1.0-dev`. For a release, update `internal/app.Version` or replace it through a future linker-injected version variable.
+The binary reports `0.1.0-dev` for local builds. GoReleaser injects the tag version at release time.
 
 Recommended tag format:
 
 ```bash
 git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Artifacts
 
-Release artifacts should include:
+GoReleaser publishes GitHub release artifacts for:
 
-- platform-specific binaries
-- container image
-- example config
-- MCP client configuration examples
-- tool and security documentation
+- Linux, macOS, and Windows
+- amd64 and arm64
+- checksums.txt
 
-GoReleaser can be added later if multi-platform binary publishing becomes routine.
+Run a local snapshot build before tagging if you want to inspect generated archives:
+
+```bash
+goreleaser release --snapshot --clean --skip=publish
+```

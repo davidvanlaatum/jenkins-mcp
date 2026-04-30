@@ -1,5 +1,10 @@
 # Jenkins MCP Server
 
+[![CI](https://github.com/davidvanlaatum/jenkins-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/davidvanlaatum/jenkins-mcp/actions/workflows/ci.yml)
+[![Release](https://github.com/davidvanlaatum/jenkins-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/davidvanlaatum/jenkins-mcp/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/davidvanlaatum/jenkins-mcp?sort=semver)](https://github.com/davidvanlaatum/jenkins-mcp/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/davidvanlaatum/jenkins-mcp)](https://github.com/davidvanlaatum/jenkins-mcp/blob/main/go.mod)
+
 Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs over stdio, talks to Jenkins using external APIs, and does not require a Jenkins plugin.
 
 ## Current Tool Surface
@@ -69,9 +74,12 @@ Use `--config examples/config/config.json` for file-based configuration.
 ## Development
 
 ```bash
+pre-commit run --all-files
 go test ./...
 go build ./cmd/jenkins-mcp-server
 ```
+
+GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, and GoReleaser snapshot validation. Tagged releases matching `v*` are built and published with GoReleaser.
 
 See also:
 
