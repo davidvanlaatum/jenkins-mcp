@@ -57,9 +57,9 @@ Useful environment variables:
 - `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for `jenkins_watch_build` in milliseconds. Default `900000`.
 - `JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES`: consecutive Jenkins poll failures tolerated before `jenkins_watch_build` returns an error. Default `3`.
 
-## Mutations
+## Jenkins Mutations
 
-Mutating tools are disabled by default. Enable them only for trusted deployments:
+Jenkins-mutating tools are disabled by default. Enable them only for trusted deployments:
 
 ```json
 {
@@ -73,6 +73,8 @@ Mutating tools are disabled by default. Enable them only for trusted deployments
 ```
 
 Jenkins permissions are still authoritative. The server does not bypass Jenkins authorization.
+
+`jenkins_download_artifact` is not gated by `mutations.enabled` because it does not change Jenkins state. It writes downloaded artifacts to the configured local artifact directory.
 
 ## Log and Response Limits
 

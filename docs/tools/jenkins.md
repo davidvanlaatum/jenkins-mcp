@@ -8,27 +8,30 @@
 - `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.
 - `jenkins_list_builds`: lists recent builds for a job.
 - `jenkins_get_build`: returns build metadata, causes, parameters, artifacts, and changes.
-- `jenkins_get_log`: reads bounded progressive log chunks with `start` and `nextStart` offsets.
+- `jenkins_get_log`: reads bounded progressive log chunks with `start` and `nextStart` offsets. For Pipeline builds, prefer `jenkins_get_pipeline_node_log` for specific stages.
 - `jenkins_search_log`: searches a bounded log chunk and can include context lines.
 - `jenkins_tail_log`: reads the tail of the console log using Jenkins progressive log offsets.
 - `jenkins_get_test_report`: returns JUnit summary and bounded case details.
-- `jenkins_get_pipeline_run`: returns Pipeline stages through Jenkins `wfapi` when the plugin endpoint is available.
+- `jenkins_get_pipeline_run`: returns Pipeline stages through Jenkins `wfapi` when the endpoint is available.
 - `jenkins_get_pipeline_stage`: returns a Pipeline stage and its child flow nodes.
-- `jenkins_get_pipeline_node_log`: returns bounded log output for a Pipeline flow node.
+- `jenkins_get_pipeline_node_log`: returns bounded log output for a Pipeline flow node. Prefer this over `jenkins_get_log` for Pipeline builds.
 - `jenkins_watch_build`: bootstraps or long-polls for build completion or Pipeline stage-status changes, returning an opaque watch state token plus current build and Pipeline status. The first call without `lastState` returns immediately to establish `watch.state`; callers should pass that token back as `lastState` on the next request, and can use `waitTimeoutMs` to bound how long a single subsequent long-poll call stays open. Invalid or expired `lastState` values return `invalid_request`; callers should restart from a fresh bootstrap call without `lastState`. Watch-state tokens are signed with an in-memory per-process key, so any server restart or rollout invalidates previously issued tokens and requires re-bootstrap. Prefer this over `jenkins_get_build` when waiting for a running build to progress; use `jenkins_get_build` for one-off snapshots.
 - `jenkins_get_coverage`: probes common coverage plugin endpoints and returns a summary when available.
 - `jenkins_get_issues`: probes common Warnings NG / analysis endpoints and returns a summary when available.
 - `jenkins_get_changes`: returns SCM change sets exposed on the build.
 - `jenkins_list_artifacts`: lists build artifacts without fetching content.
 - `jenkins_read_artifact`: returns small UTF-8 text artifacts inline within configured size limits.
-- `jenkins_download_artifact`: writes an artifact into the configured safe local directory.
 - `jenkins_list_queue`: lists current Jenkins queue items.
 - `jenkins_get_queue_item`: inspects a queue item by id.
 
-## Mutating Tools
+## Local File Tools
+
+- `jenkins_download_artifact`: writes an artifact into the configured safe local directory. This does not change Jenkins state.
+
+## Jenkins-Mutating Tools
 
 - `jenkins_trigger_build`: triggers a build or parameterized build.
 - `jenkins_cancel_queue_item`: cancels a queued Jenkins item.
 - `jenkins_cancel_build`: stops a running build.
 
-Mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.
+Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.

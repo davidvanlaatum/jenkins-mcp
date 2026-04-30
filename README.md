@@ -4,35 +4,40 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 
 ## Current Tool Surface
 
-- `jenkins_get_capabilities`
-- `jenkins_resolve_build_url`
-- `jenkins_list_jobs`
-- `jenkins_get_job`
-- `jenkins_list_builds`
-- `jenkins_get_build`
-- `jenkins_get_log`
-- `jenkins_search_log`
-- `jenkins_tail_log`
-- `jenkins_get_test_report`
-- `jenkins_get_pipeline_run`
-- `jenkins_get_pipeline_stage`
-- `jenkins_get_pipeline_node_log`
-- `jenkins_watch_build`
-- `jenkins_get_coverage`
-- `jenkins_get_issues`
-- `jenkins_get_changes`
-- `jenkins_list_artifacts`
-- `jenkins_read_artifact`
-- `jenkins_download_artifact`
-- `jenkins_trigger_build`
-- `jenkins_list_queue`
-- `jenkins_get_queue_item`
-- `jenkins_cancel_queue_item`
-- `jenkins_cancel_build`
+### Read Tools
+- `jenkins_get_capabilities`: Discover configured Jenkins controllers, response limits, and whether mutating tools are enabled.
+- `jenkins_resolve_build_url`: Resolve a Jenkins build URL to controller, job path, and build number.
+- `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder.
+- `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
+- `jenkins_list_builds`: List recent builds for a Jenkins job.
+- `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, and changes.
+- `jenkins_get_log`: Read a bounded progressive console log chunk. For Pipeline builds, prefer `jenkins_get_pipeline_node_log`.
+- `jenkins_search_log`: Search a bounded console log chunk for text and return matching lines.
+- `jenkins_tail_log`: Read the tail of a Jenkins console log using progressive log offsets.
+- `jenkins_get_test_report`: Fetch JUnit test summary and bounded test case details when available.
+- `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence using the Jenkins Pipeline REST wfapi endpoint.
+- `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
+- `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
+- `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion or stage-status changes.
+- `jenkins_get_coverage`: Fetch coverage summary from common Jenkins coverage plugin endpoints.
+- `jenkins_get_issues`: Fetch Warnings NG or analysis issue summary from common Jenkins plugins.
+- `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.
+- `jenkins_list_artifacts`: List artifacts for a Jenkins build.
+- `jenkins_read_artifact`: Read a small text Jenkins artifact inline.
+- `jenkins_list_queue`: List current Jenkins queue items.
+- `jenkins_get_queue_item`: Inspect a Jenkins queue item by id.
 
-Mutating tools are disabled unless explicitly enabled in configuration.
+### Local File Tools
+- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory.
 
-`jenkins_watch_build` is a status-only long-poll watcher. Use `jenkins_get_log` or `jenkins_tail_log` separately for console output.
+### Jenkins-Mutating Tools
+- `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
+- `jenkins_cancel_queue_item`: Cancel a queued Jenkins item.
+- `jenkins_cancel_build`: Cancel a running Jenkins build.
+
+Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state, but it does write to the configured local artifact directory.
+
+> **Note:** When adding or modifying tools, ensure the tool definitions in `internal/mcpserver/server.go`, documentation in `docs/tools/jenkins.md`, and this list in `README.md` are all kept in sync.
 
 ## Quick Start
 
@@ -43,7 +48,7 @@ export JENKINS_TOKEN="your-api-token"
 go run ./cmd/jenkins-mcp-server
 ```
 
-For mutating actions:
+For Jenkins-mutating actions:
 
 ```bash
 export JENKINS_MUTATIONS=true

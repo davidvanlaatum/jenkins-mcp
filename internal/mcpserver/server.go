@@ -111,7 +111,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_get_build", "Get Build", "Get build details including result, causes, parameters, artifacts, and changes."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.GetBuildResponse, error) {
 		return jenkinstools.GetBuild(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_get_log", "Get Log", "Read a bounded progressive console log chunk using Jenkins log cursor offsets."), func(ctx context.Context, in jenkinstools.GetLogRequest) (jenkinstools.GetLogResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_get_log", "Get Log", "Read a bounded progressive console log chunk. For Pipeline builds, prefer jenkins_get_pipeline_node_log to fetch logs for specific stages."), func(ctx context.Context, in jenkinstools.GetLogRequest) (jenkinstools.GetLogResponse, error) {
 		return jenkinstools.GetLog(ctx, s.deps, in)
 	})
 	addTool(s.raw, readOnlyTool("jenkins_search_log", "Search Log", "Search a bounded console log chunk for text and return matching lines with optional context."), func(ctx context.Context, in jenkinstools.SearchLogRequest) (jenkinstools.SearchLogResponse, error) {
@@ -129,7 +129,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_stage", "Get Pipeline Stage", "Fetch Pipeline stage details and child flow nodes for a stage id."), func(ctx context.Context, in jenkinstools.PipelineStageRequest) (jenkinstools.PipelineStageResponse, error) {
 		return jenkinstools.PipelineStage(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_node_log", "Get Pipeline Node Log", "Fetch bounded log output for a Pipeline flow node id."), func(ctx context.Context, in jenkinstools.PipelineNodeLogRequest) (jenkinstools.PipelineNodeLogResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_node_log", "Get Pipeline Node Log", "Fetch bounded log output for a Pipeline flow node id. Prefer this over jenkins_get_log for Pipeline builds to reduce noise and context size."), func(ctx context.Context, in jenkinstools.PipelineNodeLogRequest) (jenkinstools.PipelineNodeLogResponse, error) {
 		return jenkinstools.PipelineNodeLog(ctx, s.deps, in)
 	})
 	addTool(s.raw, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe local artifact directory."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
