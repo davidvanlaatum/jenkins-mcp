@@ -102,7 +102,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: '~> v2'
+          version: latest
 
   test:
     name: Go test
