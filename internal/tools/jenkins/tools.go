@@ -75,22 +75,56 @@ func resolveBuildURL(cfg config.Config, rawURL string) (model.BuildReference, er
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return model.BuildReference{}, apperrors.New(apperrors.CodeInvalidRequest, "invalid Jenkins build URL")
 	}
+	bestMatchLen := -1
+	var bestRef model.BuildReference
 	for _, controller := range cfg.Controllers {
 		base, err := url.Parse(controller.URL)
 		if err != nil || !sameURLHost(base, parsed) {
 			continue
 		}
-		job, build, ok := parseBuildPath(strings.TrimPrefix(parsed.EscapedPath(), strings.TrimRight(base.EscapedPath(), "/")))
+		relativePath, matchLen, ok := trimControllerPathPrefix(parsed.EscapedPath(), base.EscapedPath())
 		if !ok {
 			continue
 		}
-		return model.BuildReference{Controller: controller.ID, Job: job, Build: build, URL: rawURL}, nil
+		job, build, ok := parseBuildPath(relativePath)
+		if !ok {
+			continue
+		}
+		if matchLen > bestMatchLen {
+			bestMatchLen = matchLen
+			bestRef = model.BuildReference{Controller: controller.ID, Job: job, Build: build, URL: rawURL}
+		}
+	}
+	if bestMatchLen >= 0 {
+		return bestRef, nil
 	}
 	return model.BuildReference{}, apperrors.New(apperrors.CodeInvalidRequest, "URL does not match a configured Jenkins build")
 }
 
 func sameURLHost(a, b *url.URL) bool {
 	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func trimControllerPathPrefix(buildPath, controllerPath string) (string, int, bool) {
+	normalizedControllerPath := normalizeURLPath(controllerPath)
+	if normalizedControllerPath == "/" {
+		return buildPath, 1, strings.HasPrefix(buildPath, "/")
+	}
+	if buildPath == normalizedControllerPath {
+		return "/", len(normalizedControllerPath), true
+	}
+	prefix := normalizedControllerPath + "/"
+	if strings.HasPrefix(buildPath, prefix) {
+		return strings.TrimPrefix(buildPath, normalizedControllerPath), len(normalizedControllerPath), true
+	}
+	return "", 0, false
+}
+
+func normalizeURLPath(path string) string {
+	if path == "" || path == "/" {
+		return "/"
+	}
+	return strings.TrimRight(path, "/")
 }
 
 func parseBuildPath(path string) (string, int, bool) {

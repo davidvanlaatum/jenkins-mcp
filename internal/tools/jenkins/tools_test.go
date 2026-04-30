@@ -52,6 +52,48 @@ func TestResolveBuildURLRejectsUnknownController(t *testing.T) {
 	}
 }
 
+func TestResolveBuildURLPrefersMostSpecificControllerPath(t *testing.T) {
+	cfg := config.Config{
+		Controllers: []config.ControllerConfig{
+			{ID: "root", URL: "https://ci.example.com"},
+			{ID: "jenkins", URL: "https://ci.example.com/jenkins"},
+			{ID: "jenkins-alt", URL: "https://ci.example.com/jenkins-alt"},
+		},
+	}
+
+	ref, err := resolveBuildURL(cfg, "https://ci.example.com/jenkins/job/app/42/")
+	if err != nil {
+		t.Fatalf("resolveBuildURL() error = %v", err)
+	}
+	if ref.Controller != "jenkins" || ref.Job != "app" || ref.Build != 42 {
+		t.Fatalf("reference = %+v", ref)
+	}
+
+	ref, err = resolveBuildURL(cfg, "https://ci.example.com/jenkins-alt/job/api/7/")
+	if err != nil {
+		t.Fatalf("resolveBuildURL() error = %v", err)
+	}
+	if ref.Controller != "jenkins-alt" || ref.Job != "api" || ref.Build != 7 {
+		t.Fatalf("reference = %+v", ref)
+	}
+}
+
+func TestResolveBuildURLMatchesControllerPathWithTrailingSlash(t *testing.T) {
+	cfg := config.Config{
+		Controllers: []config.ControllerConfig{
+			{ID: "jenkins", URL: "https://ci.example.com/jenkins/"},
+		},
+	}
+
+	ref, err := resolveBuildURL(cfg, "https://ci.example.com/jenkins/job/app/42/")
+	if err != nil {
+		t.Fatalf("resolveBuildURL() error = %v", err)
+	}
+	if ref.Controller != "jenkins" || ref.Job != "app" || ref.Build != 42 {
+		t.Fatalf("reference = %+v", ref)
+	}
+}
+
 func TestValidateTriggerParametersRejectsUnknown(t *testing.T) {
 	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH"}}, map[string]string{"UNKNOWN": "main"})
 	if err == nil {
