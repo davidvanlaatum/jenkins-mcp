@@ -66,5 +66,6 @@ Environment quick start:
   JENKINS_TOKEN     Jenkins API token
   JENKINS_ID        Optional controller id, defaults to "default"
   JENKINS_MUTATIONS Set to "true" to enable trigger/cancel tools
+  JENKINS_MCP_UPDATE_CHECK Set to "false" to disable GitHub release checks
 `, app.Version)
 }

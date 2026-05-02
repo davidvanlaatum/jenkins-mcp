@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
+
+const maxUpdateCheckIntervalHours int64 = 24 * 30
 
 type Config struct {
 	Controllers       []ControllerConfig `json:"controllers"`
@@ -20,6 +23,7 @@ type Config struct {
 	Watch             WatchConfig        `json:"watch"`
 	Artifacts         ArtifactConfig     `json:"artifacts"`
 	Audit             AuditConfig        `json:"audit"`
+	Updates           UpdateCheckConfig  `json:"updates"`
 }
 
 type ControllerConfig struct {
@@ -54,6 +58,35 @@ type AuditConfig struct {
 	Path string `json:"path,omitempty"`
 }
 
+type UpdateCheckConfig struct {
+	Enabled            bool   `json:"enabled"`
+	Repository         string `json:"repository"`
+	CheckIntervalHours int64  `json:"checkIntervalHours"`
+
+	enabledSet bool
+}
+
+func (c *UpdateCheckConfig) UnmarshalJSON(b []byte) error {
+	type updateCheckConfig UpdateCheckConfig
+	var raw struct {
+		updateCheckConfig
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*c = UpdateCheckConfig(raw.updateCheckConfig)
+	if raw.Enabled != nil {
+		c.Enabled = *raw.Enabled
+		c.enabledSet = true
+	}
+	return nil
+}
+
+func (c UpdateCheckConfig) ReleaseURL() string {
+	return "https://api.github.com/repos/" + c.Repository + "/releases/latest"
+}
+
 func Load(args []string, environ []string) (Config, error) {
 	cfg := Defaults()
 	env := envMap(environ)
@@ -86,6 +119,7 @@ func Defaults() Config {
 		Limits:            LimitsConfig{MaxResponseBytes: 64 * 1024, LogChunkBytes: 64 * 1024, InlineBytes: 32 * 1024},
 		Watch:             WatchConfig{PollIntervalMs: 3000, DefaultWaitTimeoutMs: 120000, MaxWaitTimeoutMs: 900000, MaxConsecutiveFailures: 3},
 		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
+		Updates:           UpdateCheckConfig{Enabled: true, Repository: "davidvanlaatum/jenkins-mcp", CheckIntervalHours: 24},
 	}
 }
 
@@ -126,7 +160,34 @@ func (c Config) Validate() error {
 	if c.Artifacts.DownloadDir == "" {
 		return errors.New("artifact downloadDir is required")
 	}
+	if !validGitHubRepository(c.Updates.Repository) {
+		return errors.New("updates.repository must be in owner/repo format")
+	}
+	if c.Updates.CheckIntervalHours <= 0 {
+		return errors.New("updates.checkIntervalHours must be positive")
+	}
+	if c.Updates.CheckIntervalHours > maxUpdateCheckIntervalHours {
+		return fmt.Errorf("updates.checkIntervalHours must not exceed %d", maxUpdateCheckIntervalHours)
+	}
 	return nil
+}
+
+func validGitHubRepository(repository string) bool {
+	if repository != strings.TrimSpace(repository) {
+		return false
+	}
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if unicode.IsSpace(r) || r == '?' || r == '#' || r == '&' || r == '=' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c Config) Controller(id string) (ControllerConfig, bool) {
@@ -201,6 +262,15 @@ func merge(base, override Config) Config {
 	if override.Audit.Path != "" {
 		base.Audit.Path = override.Audit.Path
 	}
+	if override.Updates.enabledSet {
+		base.Updates.Enabled = override.Updates.Enabled
+	}
+	if override.Updates.Repository != "" {
+		base.Updates.Repository = override.Updates.Repository
+	}
+	if override.Updates.CheckIntervalHours != 0 {
+		base.Updates.CheckIntervalHours = override.Updates.CheckIntervalHours
+	}
 	return base
 }
 
@@ -221,6 +291,17 @@ func applyEnv(cfg *Config, env map[string]string) {
 	}
 	if v := env["JENKINS_AUDIT_PATH"]; v != "" {
 		cfg.Audit.Path = v
+	}
+	if v := env["JENKINS_MCP_UPDATE_CHECK"]; v != "" {
+		cfg.Updates.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := env["JENKINS_MCP_UPDATE_REPOSITORY"]; v != "" {
+		cfg.Updates.Repository = v
+	}
+	if v := env["JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Updates.CheckIntervalHours = n
+		}
 	}
 	if v := env["JENKINS_MAX_RESPONSE_BYTES"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {

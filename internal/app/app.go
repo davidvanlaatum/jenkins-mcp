@@ -11,12 +11,14 @@ import (
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/mcpserver"
 	stdiotransport "github.com/david/jenkins-mcp/internal/mcpserver/transport/stdio"
+	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
 
 var Version = "0.1.0-dev"
 
 type Server struct {
-	mcp *mcpserver.Server
+	mcp           *mcpserver.Server
+	updateChecker *updatecheck.Checker
 }
 
 func LoadConfigFromProcess(args []string, environ []string) (config.Config, error) {
@@ -37,15 +39,21 @@ func New(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{mcp: mcpserver.New(mcpserver.Dependencies{
-		Config:  cfg,
-		Jenkins: clients,
-		Audit:   auditer,
-		Logger:  logger,
-		Version: Version,
-	})}, nil
+	updateChecker := updatecheck.New(cfg.Updates, Version, logger)
+	return &Server{
+		mcp: mcpserver.New(mcpserver.Dependencies{
+			Config:       cfg,
+			Jenkins:      clients,
+			Audit:        auditer,
+			Logger:       logger,
+			Version:      Version,
+			UpdateStatus: updateChecker.Status,
+		}),
+		updateChecker: updateChecker,
+	}, nil
 }
 
 func (s *Server) RunStdio(ctx context.Context) error {
+	s.updateChecker.Start(ctx)
 	return stdiotransport.Run(ctx, s.mcp.Raw())
 }

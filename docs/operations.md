@@ -56,6 +56,19 @@ Useful environment variables:
 - `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS`: default maximum duration for a `jenkins_watch_build` call in milliseconds when the request omits `waitTimeoutMs`. Default `120000`.
 - `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for `jenkins_watch_build` in milliseconds. Default `900000`.
 - `JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES`: consecutive Jenkins poll failures tolerated before `jenkins_watch_build` returns an error. Default `3`.
+- `JENKINS_MCP_UPDATE_CHECK`: set to `false` to disable periodic GitHub release checks. Default `true`.
+- `JENKINS_MCP_UPDATE_REPOSITORY`: GitHub `owner/repo` used for release checks. Default `davidvanlaatum/jenkins-mcp`.
+- `JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS`: hours between release checks after startup. Default `24`.
+
+The server checks the GitHub releases API at startup and periodically logs a warning when a newer release is available. The cached result is also returned by `jenkins_get_capabilities` under `updates`, so MCP clients and agents can surface it without reading process logs. When `updates.updateAvailable` is `true`, the response includes `updates.notificationHint` instructing agents to notify the user with the current version, latest version, and release URL. Release checks are best-effort: failures are logged at debug level and do not affect MCP requests. Disable this in network-restricted deployments:
+
+```json
+{
+  "updates": {
+    "enabled": false
+  }
+}
+```
 
 ## Jenkins Mutations
 

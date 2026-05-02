@@ -24,13 +24,15 @@ import (
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/pagination"
+	"github.com/david/jenkins-mcp/internal/updatecheck"
 	"github.com/david/jenkins-mcp/internal/validation"
 )
 
 type Deps struct {
-	Config  config.Config
-	Jenkins map[string]*jenkinsapi.API
-	Audit   *audit.Logger
+	Config       config.Config
+	Jenkins      map[string]*jenkinsapi.API
+	Audit        *audit.Logger
+	UpdateStatus func() updatecheck.Status
 }
 
 const (
@@ -156,6 +158,7 @@ type CapabilitiesResponse struct {
 	Capabilities     []model.ControllerCapabilities `json:"capabilities"`
 	MutationsEnabled bool                           `json:"mutationsEnabled"`
 	Limits           config.LimitsConfig            `json:"limits"`
+	Updates          updatecheck.Status             `json:"updates"`
 }
 
 func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesResponse, error) {
@@ -167,7 +170,11 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 		infos = append(infos, caps.Controller)
 		capabilities = append(capabilities, caps)
 	}
-	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits}, nil
+	var updates updatecheck.Status
+	if deps.UpdateStatus != nil {
+		updates = deps.UpdateStatus()
+	}
+	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, Updates: updates}, nil
 }
 
 type ListJobsRequest struct {

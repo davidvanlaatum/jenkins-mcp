@@ -27,5 +27,10 @@
   },
   "audit": {
     "path": ""
+  },
+  "updates": {
+    "enabled": true,
+    "repository": "davidvanlaatum/jenkins-mcp",
+    "checkIntervalHours": 24
   }
 }

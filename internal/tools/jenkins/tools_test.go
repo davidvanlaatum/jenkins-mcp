@@ -17,7 +17,36 @@ import (
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
+	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
+
+func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
+	got, err := Capabilities(context.Background(), Deps{
+		Config: config.Config{},
+		UpdateStatus: func() updatecheck.Status {
+			return updatecheck.Status{
+				Enabled:          true,
+				CurrentVersion:   "1.2.3",
+				LatestVersion:    "v1.2.4",
+				ReleaseURL:       "https://github.com/example/project/releases/tag/v1.2.4",
+				UpdateAvailable:  true,
+				NotificationHint: "Notify the user that a newer jenkins-mcp release is available.",
+			}
+		},
+	}, BaseRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities() error = %v", err)
+	}
+	if !got.Updates.UpdateAvailable {
+		t.Fatal("updates.updateAvailable should be true")
+	}
+	if got.Updates.LatestVersion != "v1.2.4" {
+		t.Fatalf("updates.latestVersion = %q", got.Updates.LatestVersion)
+	}
+	if got.Updates.NotificationHint == "" {
+		t.Fatal("updates.notificationHint should be populated")
+	}
+}
 
 func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
 	_, err := TriggerBuild(context.Background(), Deps{

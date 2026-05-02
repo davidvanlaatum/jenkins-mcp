@@ -2,7 +2,7 @@
 
 ## Read Tools
 
-- `jenkins_get_capabilities`: checks configured controllers, response limits, installed plugins, and feature availability.
+- `jenkins_get_capabilities`: checks configured controllers, response limits, update-check status, installed plugins, and feature availability. When `updates.updateAvailable` is `true`, agents should notify the user using `updates.notificationHint`.
 - `jenkins_resolve_build_url`: resolves a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal.
 - `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.

@@ -13,14 +13,16 @@ import (
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinstools "github.com/david/jenkins-mcp/internal/tools/jenkins"
+	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
 
 type Dependencies struct {
-	Config  config.Config
-	Jenkins map[string]*jenkinsapi.API
-	Audit   *audit.Logger
-	Logger  *slog.Logger
-	Version string
+	Config       config.Config
+	Jenkins      map[string]*jenkinsapi.API
+	Audit        *audit.Logger
+	Logger       *slog.Logger
+	Version      string
+	UpdateStatus func() updatecheck.Status
 }
 type Server struct {
 	raw  *mcp.Server
@@ -28,7 +30,7 @@ type Server struct {
 }
 
 func New(deps Dependencies) *Server {
-	s := &Server{raw: mcp.NewServer(&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version}, &mcp.ServerOptions{Logger: deps.Logger}), deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit}}
+	s := &Server{raw: mcp.NewServer(&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version}, &mcp.ServerOptions{Logger: deps.Logger}), deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus}}
 	s.register()
 	return s
 }
@@ -93,7 +95,7 @@ func normalizeError(err error) apperrors.Error {
 }
 
 func (s *Server) register() {
-	addTool(s.raw, readOnlyTool("jenkins_get_capabilities", "Get Capabilities", "Discover configured Jenkins controllers, response limits, and whether mutating tools are enabled."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.CapabilitiesResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_get_capabilities", "Get Capabilities", "Discover configured Jenkins controllers, response limits, update-check status, and whether mutating tools are enabled. If updates.updateAvailable is true, agents should notify the user using updates.notificationHint."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.CapabilitiesResponse, error) {
 		return jenkinstools.Capabilities(ctx, s.deps, in)
 	})
 	addTool(s.raw, readOnlyTool("jenkins_resolve_build_url", "Resolve Build URL", "Resolve a Jenkins build URL to controller, job path, and build number."), func(ctx context.Context, in jenkinstools.ResolveBuildURLRequest) (jenkinstools.ResolveBuildURLResponse, error) {
