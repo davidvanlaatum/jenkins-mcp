@@ -10,6 +10,16 @@
 - **`internal/jenkins/model`**: Shared data structures used across the API and tool layers.
 - **`internal/jenkins/urlx`**: Helpers for constructing Jenkins-specific URL paths safely.
 
+### Branching, Reviews, and CI
+- All code changes must be made on a feature branch using the pattern `feature/<short-name-or-issue-number>`.
+- Code changes should be delivered through a merge request/pull request; do not merge directly into the default branch unless explicitly instructed.
+- Do not push branches, create merge requests, merge, or close merge requests unless explicitly asked.
+- Keep changes scoped to the requested task and avoid unrelated refactors or drive-by fixes.
+- When committing code changes, run relevant local validation first when practical.
+- After committing code changes, check the triggered pipeline if possible unless explicitly asked not to.
+- Documentation-only changes may skip pipeline checks unless the repository requires them.
+- If validation or pipeline checks cannot be run, clearly state what was skipped and why.
+
 ### Workflow: Adding a New Tool
 1.  **Define Models:** Add request/response types and data structures in `internal/jenkins/model/model.go`.
 2.  **Implement API Call:** Add the corresponding method to `internal/jenkins/api/api.go`. Use tree queries (`?tree=...`) whenever possible to minimize data transfer.
