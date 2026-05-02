@@ -69,7 +69,9 @@ Configuration precedence is:
 3. JSON config file
 4. Defaults
 
-Use `--config examples/config/config.json` for file-based configuration.
+Use `--config examples/config/config.json` for file-based configuration, or run `jenkins-mcp-server --init` to create a starter config file at the default location.
+
+If `--config` and `JENKINS_MCP_CONFIG` are not set, the server tries default config paths in order and loads the first one that exists. Unix-like systems use `$XDG_CONFIG_HOME/jenkins-mcp/config.json`, then `~/.config/jenkins-mcp/config.json`; Windows uses `%APPDATA%\jenkins-mcp\config.json`, then `%USERPROFILE%\AppData\Roaming\jenkins-mcp\config.json`. Missing optional default files are ignored; normal validation still requires a configured Jenkins controller from a file or environment variables.
 
 The server checks GitHub releases once at startup and then every 24 hours by default. Disable or retarget the check with:
 

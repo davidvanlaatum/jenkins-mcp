@@ -25,6 +25,10 @@ func LoadConfigFromProcess(args []string, environ []string) (config.Config, erro
 	return config.Load(args, environ)
 }
 
+func InitConfigFromProcess(args []string, environ []string) (string, error) {
+	return config.Init(args, environ)
+}
+
 func New(cfg config.Config) (*Server, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	clients := make(map[string]*jenkinsapi.API, len(cfg.Controllers))

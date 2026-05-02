@@ -12,8 +12,10 @@
 
 ### Branching, Reviews, and CI
 - All code changes must be made on a feature branch using the pattern `feature/<short-name-or-issue-number>`.
+- Before editing files, verify the current branch. If it is not already a task-specific feature branch for the requested work, create or switch to one; do not silently reuse an unrelated or generic feature branch.
 - Code changes should be delivered through a merge request/pull request; do not merge directly into the default branch unless explicitly instructed.
 - Do not push branches, create merge requests, merge, or close merge requests unless explicitly asked.
+- Do not commit, amend commits, or force-push unless explicitly asked. Treat amending and force-pushing as exceptional; prefer new follow-up commits after a pull request exists unless the user specifically asks to amend/squash. For follow-up changes on an existing pull request, ask before updating the commit or branch unless the user has clearly requested that update.
 - Keep changes scoped to the requested task and avoid unrelated refactors or drive-by fixes.
 - When committing code changes, run relevant local validation first when practical.
 - After committing code changes, check the triggered pipeline if possible unless explicitly asked not to.
