@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,6 +208,24 @@ func TestInitCreatesDefaultConfigFile(t *testing.T) {
 	}
 	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
 		t.Fatalf("controllers = %+v", cfg.Controllers)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	mutations, ok := raw["mutations"].(map[string]any)
+	if !ok {
+		t.Fatalf("mutations field = %#v, want object", raw["mutations"])
+	}
+	if mutations["enabled"] != false {
+		t.Fatalf("mutations.enabled = %#v, want false", mutations["enabled"])
+	}
+	if _, ok := raw["artifacts"]; ok {
+		t.Fatal("starter config should not include artifacts; downloadDir has an OS-specific default")
 	}
 }
 

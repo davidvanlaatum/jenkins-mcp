@@ -24,7 +24,10 @@ const starterConfig = `{
       "username": "jenkins-user",
       "token": "jenkins-api-token"
     }
-  ]
+  ],
+  "mutations": {
+    "enabled": false
+  }
 }
 `
 
