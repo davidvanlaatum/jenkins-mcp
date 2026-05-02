@@ -22,8 +22,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	args := os.Args[1:]
+	if len(args) > 0 {
+		switch args[0] {
 		case "-h", "--help", "help":
 			printHelp()
 			return nil
@@ -32,8 +33,16 @@ func run() error {
 			return nil
 		}
 	}
+	if hasInitFlag(args) {
+		path, err := app.InitConfigFromProcess(args, os.Environ())
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Created starter config at %s\n", path)
+		return nil
+	}
 
-	cfg, err := app.LoadConfigFromProcess(os.Args[1:], os.Environ())
+	cfg, err := app.LoadConfigFromProcess(args, os.Environ())
 	if err != nil {
 		return err
 	}
@@ -48,15 +57,28 @@ func run() error {
 	return nil
 }
 
+func hasInitFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--init" || arg == "-init" {
+			return true
+		}
+	}
+	return false
+}
+
 func printHelp() {
 	_, _ = fmt.Fprintf(os.Stdout, `jenkins-mcp-server %s
 
 Runs a Jenkins MCP server over stdio.
 
 Configuration precedence: flags > environment > config file > defaults.
+The first existing default config file is loaded from $XDG_CONFIG_HOME/jenkins-mcp/config.json
+or ~/.config/jenkins-mcp/config.json on Unix-like systems, and %%APPDATA%%\jenkins-mcp\config.json
+or %%USERPROFILE%%\AppData\Roaming\jenkins-mcp\config.json on Windows.
 
 Flags:
   --config PATH     JSON config file path
+  --init            Create a starter config file and exit
   --version         Print version
   --help            Print help
 

@@ -43,6 +43,10 @@ Configuration precedence is:
 3. config file
 4. defaults
 
+When `--config` and `JENKINS_MCP_CONFIG` are unset, the server tries default config paths in order and loads the first one that exists. Unix-like systems use `$XDG_CONFIG_HOME/jenkins-mcp/config.json`, then `~/.config/jenkins-mcp/config.json`; Windows uses `%APPDATA%\jenkins-mcp\config.json`, then `%USERPROFILE%\AppData\Roaming\jenkins-mcp\config.json`. Missing optional default files are ignored; normal validation still requires a configured Jenkins controller from a file or environment variables.
+
+Run `jenkins-mcp-server --init` to create a starter config file at the default location, or `jenkins-mcp-server --init --config /path/to/config.json` to choose the path. Existing files are not overwritten.
+
 Useful environment variables:
 
 - `JENKINS_MCP_CONFIG`: JSON config file path.

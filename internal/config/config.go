@@ -8,12 +8,25 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode"
 )
 
 const maxUpdateCheckIntervalHours int64 = 24 * 30
+const starterConfig = `{
+  "defaultController": "default",
+  "controllers": [
+    {
+      "id": "default",
+      "url": "https://jenkins.example.com",
+      "username": "jenkins-user",
+      "token": "jenkins-api-token"
+    }
+  ]
+}
+`
 
 type Config struct {
 	Controllers       []ControllerConfig `json:"controllers"`
@@ -104,6 +117,14 @@ func Load(args []string, environ []string) (Config, error) {
 			return Config{}, err
 		}
 		cfg = merge(cfg, fileCfg)
+	} else {
+		fileCfg, found, err := loadDefaultConfig(defaultConfigPaths(env))
+		if err != nil {
+			return Config{}, err
+		}
+		if found {
+			cfg = merge(cfg, fileCfg)
+		}
 	}
 
 	applyEnv(&cfg, env)
@@ -111,6 +132,90 @@ func Load(args []string, environ []string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func Init(args []string, environ []string) (string, error) {
+	env := envMap(environ)
+
+	fs := flag.NewFlagSet("jenkins-mcp-server", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", env["JENKINS_MCP_CONFIG"], "config file")
+	initConfig := fs.Bool("init", false, "create a starter config file")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if !*initConfig {
+		return "", errors.New("--init is required")
+	}
+
+	path := *configPath
+	if path == "" {
+		paths := defaultConfigPaths(env)
+		if len(paths) == 0 {
+			return "", errors.New("could not determine default config path; use --config PATH with --init")
+		}
+		path = paths[0]
+	}
+
+	if err := writeStarterConfig(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func writeStarterConfig(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("config file already exists at %s", path)
+		}
+		return err
+	}
+	if _, err := f.WriteString(starterConfig); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func loadDefaultConfig(paths []string) (Config, bool, error) {
+	for _, path := range paths {
+		fileCfg, err := loadFile(path)
+		if err == nil {
+			return fileCfg, true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return Config{}, false, err
+		}
+	}
+	return Config{}, false, nil
+}
+
+func defaultConfigPaths(env map[string]string) []string {
+	return defaultConfigPathsForOS(env, runtime.GOOS)
+}
+
+func defaultConfigPathsForOS(env map[string]string, goos string) []string {
+	var paths []string
+	if goos == "windows" {
+		if env["APPDATA"] != "" {
+			paths = append(paths, filepath.Join(env["APPDATA"], "jenkins-mcp", "config.json"))
+		}
+		if env["USERPROFILE"] != "" {
+			paths = append(paths, filepath.Join(env["USERPROFILE"], "AppData", "Roaming", "jenkins-mcp", "config.json"))
+		}
+		return paths
+	}
+	if env["XDG_CONFIG_HOME"] != "" {
+		paths = append(paths, filepath.Join(env["XDG_CONFIG_HOME"], "jenkins-mcp", "config.json"))
+	}
+	if env["HOME"] != "" {
+		paths = append(paths, filepath.Join(env["HOME"], ".config", "jenkins-mcp", "config.json"))
+	}
+	return paths
 }
 
 func Defaults() Config {
@@ -125,7 +230,7 @@ func Defaults() Config {
 
 func (c Config) Validate() error {
 	if len(c.Controllers) == 0 {
-		return errors.New("at least one Jenkins controller is required")
+		return errors.New("at least one Jenkins controller is required; set JENKINS_URL or run jenkins-mcp-server --init to create a starter config file")
 	}
 	seen := map[string]bool{}
 	hasDefault := false
