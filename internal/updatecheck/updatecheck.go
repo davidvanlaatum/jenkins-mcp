@@ -28,16 +28,16 @@ type Result struct {
 }
 
 type Status struct {
-	Enabled            bool   `json:"enabled"`
-	Repository         string `json:"repository"`
-	CheckIntervalHours int64  `json:"checkIntervalHours"`
-	CurrentVersion     string `json:"currentVersion"`
-	LatestVersion      string `json:"latestVersion,omitempty"`
-	ReleaseURL         string `json:"releaseUrl,omitempty"`
-	UpdateAvailable    bool   `json:"updateAvailable"`
-	NotificationHint   string `json:"notificationHint,omitempty"`
-	CheckedAt          string `json:"checkedAt,omitempty"`
-	LastError          string `json:"lastError,omitempty"`
+	Enabled            bool   `json:"enabled" jsonschema:"Whether update checks are enabled"`
+	Repository         string `json:"repository" jsonschema:"GitHub repository checked for releases"`
+	CheckIntervalHours int64  `json:"checkIntervalHours" jsonschema:"Minimum interval between update checks in hours"`
+	CurrentVersion     string `json:"currentVersion" jsonschema:"Current server version"`
+	LatestVersion      string `json:"latestVersion,omitempty" jsonschema:"Latest available release version, when known"`
+	ReleaseURL         string `json:"releaseUrl,omitempty" jsonschema:"URL for the latest available release"`
+	UpdateAvailable    bool   `json:"updateAvailable" jsonschema:"Whether a newer release is available"`
+	NotificationHint   string `json:"notificationHint,omitempty" jsonschema:"User-facing hint agents should show when an update is available"`
+	CheckedAt          string `json:"checkedAt,omitempty" jsonschema:"Time the latest update check completed"`
+	LastError          string `json:"lastError,omitempty" jsonschema:"Most recent update check error, when present"`
 }
 
 type Checker struct {

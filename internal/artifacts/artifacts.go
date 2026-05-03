@@ -12,8 +12,8 @@ type Fetcher interface {
 	DownloadArtifact(ctx context.Context, job string, number int, relativePath string) ([]byte, error)
 }
 type DownloadResult struct {
-	Path  string `json:"path"`
-	Bytes int    `json:"bytes"`
+	Path  string `json:"path" jsonschema:"Local filesystem path where the artifact was written"`
+	Bytes int    `json:"bytes" jsonschema:"Number of artifact bytes written"`
 }
 
 func Download(ctx context.Context, root string, fetcher Fetcher, job string, number int, relativePath string) (DownloadResult, error) {

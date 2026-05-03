@@ -51,21 +51,21 @@ type BaseRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 }
 type JobRequest struct {
-	Controller string `json:"controller,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 }
 type BuildRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
 }
 
 type ResolveBuildURLRequest struct {
-	URL string `json:"url"`
+	URL string `json:"url" jsonschema:"Full Jenkins build URL to resolve against configured controllers"`
 }
 
 type ResolveBuildURLResponse struct {
-	Reference model.BuildReference `json:"reference"`
+	Reference model.BuildReference `json:"reference" jsonschema:"Resolved Jenkins controller, job path, build number, and original URL"`
 }
 
 func ResolveBuildURL(_ context.Context, deps Deps, in ResolveBuildURLRequest) (ResolveBuildURLResponse, error) {
@@ -155,11 +155,11 @@ func parseBuildPath(path string) (string, int, bool) {
 }
 
 type CapabilitiesResponse struct {
-	Controllers      []model.ControllerInfo         `json:"controllers"`
-	Capabilities     []model.ControllerCapabilities `json:"capabilities"`
-	MutationsEnabled bool                           `json:"mutationsEnabled"`
-	Limits           config.LimitsConfig            `json:"limits"`
-	Updates          updatecheck.Status             `json:"updates"`
+	Controllers      []model.ControllerInfo         `json:"controllers" jsonschema:"Configured Jenkins controllers and availability information"`
+	Capabilities     []model.ControllerCapabilities `json:"capabilities" jsonschema:"Detected Jenkins controller capabilities and plugin information"`
+	MutationsEnabled bool                           `json:"mutationsEnabled" jsonschema:"Whether Jenkins-mutating tools are enabled by configuration"`
+	Limits           config.LimitsConfig            `json:"limits" jsonschema:"Configured response and inline content limits"`
+	Updates          updatecheck.Status             `json:"updates" jsonschema:"Update-check status for this MCP server"`
 }
 
 func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesResponse, error) {
@@ -190,8 +190,8 @@ type ListJobsRequest struct {
 	Building     *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
 }
 type ListJobsResponse struct {
-	Jobs      []model.Job `json:"jobs"`
-	Truncated bool        `json:"truncated"`
+	Jobs      []model.Job `json:"jobs" jsonschema:"Matching Jenkins jobs"`
+	Truncated bool        `json:"truncated" jsonschema:"Whether additional matching jobs were omitted due to the requested or configured limit"`
 }
 
 func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsResponse, error) {
@@ -356,12 +356,12 @@ func isFolderLike(class string) bool {
 }
 
 type ListBuildsRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Limit      int    `json:"limit,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of recent builds to return; defaults to 20 and is capped at 100"`
 }
 type ListBuildsResponse struct {
-	Builds []model.BuildSummary `json:"builds"`
+	Builds []model.BuildSummary `json:"builds" jsonschema:"Recent Jenkins builds for the requested job"`
 }
 
 func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuildsResponse, error) {
@@ -377,11 +377,11 @@ func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuild
 }
 
 type GetBuildResponse struct {
-	Build model.Build `json:"build"`
+	Build model.Build `json:"build" jsonschema:"Detailed Jenkins build information"`
 }
 
 type GetJobResponse struct {
-	Job model.JobDetail `json:"job"`
+	Job model.JobDetail `json:"job" jsonschema:"Detailed Jenkins job metadata"`
 }
 
 func GetJob(ctx context.Context, deps Deps, in JobRequest) (GetJobResponse, error) {
@@ -409,14 +409,14 @@ func GetBuild(ctx context.Context, deps Deps, in BuildRequest) (GetBuildResponse
 }
 
 type GetLogRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	Start      int64  `json:"start,omitempty"`
-	MaxBytes   int64  `json:"maxBytes,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	Start      int64  `json:"start,omitempty" jsonschema:"Progressive log byte offset to start reading from"`
+	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum log bytes to return; defaults to the configured log chunk limit"`
 }
 type GetLogResponse struct {
-	Log model.LogChunk `json:"log"`
+	Log model.LogChunk `json:"log" jsonschema:"Bounded Jenkins console log chunk"`
 }
 
 func GetLog(ctx context.Context, deps Deps, in GetLogRequest) (GetLogResponse, error) {
@@ -436,17 +436,17 @@ func GetLog(ctx context.Context, deps Deps, in GetLogRequest) (GetLogResponse, e
 }
 
 type SearchLogRequest struct {
-	Controller   string `json:"controller,omitempty"`
-	Job          string `json:"job"`
-	Build        int    `json:"build"`
-	Query        string `json:"query"`
-	Start        int64  `json:"start,omitempty"`
-	MaxBytes     int64  `json:"maxBytes,omitempty"`
-	MaxMatches   int    `json:"maxMatches,omitempty"`
-	ContextLines int    `json:"contextLines,omitempty"`
+	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job          string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build        int    `json:"build" jsonschema:"Jenkins build number"`
+	Query        string `json:"query" jsonschema:"Text to search for in the console log"`
+	Start        int64  `json:"start,omitempty" jsonschema:"Progressive log byte offset to start searching from"`
+	MaxBytes     int64  `json:"maxBytes,omitempty" jsonschema:"Maximum log bytes to search; defaults to the configured response limit"`
+	MaxMatches   int    `json:"maxMatches,omitempty" jsonschema:"Maximum matching log lines to return; defaults to 20 and is capped at 200"`
+	ContextLines int    `json:"contextLines,omitempty" jsonschema:"Number of surrounding context lines to include per match; capped at 10"`
 }
 type SearchLogResponse struct {
-	Result model.LogSearchResult `json:"result"`
+	Result model.LogSearchResult `json:"result" jsonschema:"Console log search matches and pagination state"`
 }
 
 func SearchLog(ctx context.Context, deps Deps, in SearchLogRequest) (SearchLogResponse, error) {
@@ -466,13 +466,13 @@ func SearchLog(ctx context.Context, deps Deps, in SearchLogRequest) (SearchLogRe
 }
 
 type TailLogRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	Bytes      int64  `json:"bytes,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	Bytes      int64  `json:"bytes,omitempty" jsonschema:"Maximum tail bytes to return; defaults to the configured log chunk limit"`
 }
 type TailLogResponse struct {
-	Log model.LogChunk `json:"log"`
+	Log model.LogChunk `json:"log" jsonschema:"Tail chunk from the Jenkins console log"`
 }
 
 func TailLog(ctx context.Context, deps Deps, in TailLogRequest) (TailLogResponse, error) {
@@ -492,14 +492,14 @@ func TailLog(ctx context.Context, deps Deps, in TailLogRequest) (TailLogResponse
 }
 
 type TestReportRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	FailedOnly bool   `json:"failedOnly,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	FailedOnly bool   `json:"failedOnly,omitempty" jsonschema:"When true, return only failed test cases"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of test cases to return; defaults to 50 and is capped at 500"`
 }
 type TestReportResponse struct {
-	Report model.TestReport `json:"report"`
+	Report model.TestReport `json:"report" jsonschema:"JUnit test summary and bounded test case details"`
 }
 
 func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestReportResponse, error) {
@@ -515,7 +515,7 @@ func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestRepor
 }
 
 type PipelineRunResponse struct {
-	Run model.PipelineRun `json:"run"`
+	Run model.PipelineRun `json:"run" jsonschema:"Pipeline run status and stage summary"`
 }
 
 func PipelineRun(ctx context.Context, deps Deps, in BuildRequest) (PipelineRunResponse, error) {
@@ -531,13 +531,13 @@ func PipelineRun(ctx context.Context, deps Deps, in BuildRequest) (PipelineRunRe
 }
 
 type PipelineStageRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	StageID    string `json:"stageId"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	StageID    string `json:"stageId" jsonschema:"Pipeline stage id from jenkins_get_pipeline_run"`
 }
 type PipelineStageResponse struct {
-	Stage model.PipelineStageDetail `json:"stage"`
+	Stage model.PipelineStageDetail `json:"stage" jsonschema:"Pipeline stage detail and child flow nodes"`
 }
 
 func PipelineStage(ctx context.Context, deps Deps, in PipelineStageRequest) (PipelineStageResponse, error) {
@@ -553,14 +553,14 @@ func PipelineStage(ctx context.Context, deps Deps, in PipelineStageRequest) (Pip
 }
 
 type PipelineNodeLogRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Job        string `json:"job"`
-	Build      int    `json:"build"`
-	NodeID     string `json:"nodeId"`
-	MaxBytes   int64  `json:"maxBytes,omitempty"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	NodeID     string `json:"nodeId" jsonschema:"Pipeline node id from stage or run details"`
+	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum node log bytes to return; defaults to the configured log chunk limit"`
 }
 type PipelineNodeLogResponse struct {
-	Log model.PipelineNodeLog `json:"log"`
+	Log model.PipelineNodeLog `json:"log" jsonschema:"Bounded Pipeline node log output"`
 }
 
 func PipelineNodeLog(ctx context.Context, deps Deps, in PipelineNodeLogRequest) (PipelineNodeLogResponse, error) {
@@ -580,14 +580,14 @@ func PipelineNodeLog(ctx context.Context, deps Deps, in PipelineNodeLogRequest) 
 }
 
 type DownloadArtifactRequest struct {
-	Controller   string `json:"controller,omitempty"`
-	Job          string `json:"job"`
-	Build        int    `json:"build"`
-	RelativePath string `json:"relativePath"`
+	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job          string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build        int    `json:"build" jsonschema:"Jenkins build number"`
+	RelativePath string `json:"relativePath" jsonschema:"Artifact relative path from the Jenkins build artifacts list"`
 }
 
 type ListArtifactsResponse struct {
-	Artifacts []model.Artifact `json:"artifacts"`
+	Artifacts []model.Artifact `json:"artifacts" jsonschema:"Artifacts published by the Jenkins build"`
 }
 
 func ListArtifacts(ctx context.Context, deps Deps, in BuildRequest) (ListArtifactsResponse, error) {
@@ -603,7 +603,7 @@ func ListArtifacts(ctx context.Context, deps Deps, in BuildRequest) (ListArtifac
 }
 
 type DownloadArtifactResponse struct {
-	Download artifacts.DownloadResult `json:"download"`
+	Download artifacts.DownloadResult `json:"download" jsonschema:"Local artifact download result"`
 }
 
 func DownloadArtifact(ctx context.Context, deps Deps, in DownloadArtifactRequest) (DownloadArtifactResponse, error) {
@@ -619,14 +619,14 @@ func DownloadArtifact(ctx context.Context, deps Deps, in DownloadArtifactRequest
 }
 
 type ReadArtifactRequest struct {
-	Controller   string `json:"controller,omitempty"`
-	Job          string `json:"job"`
-	Build        int    `json:"build"`
-	RelativePath string `json:"relativePath"`
-	MaxBytes     int64  `json:"maxBytes,omitempty"`
+	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job          string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build        int    `json:"build" jsonschema:"Jenkins build number"`
+	RelativePath string `json:"relativePath" jsonschema:"Artifact relative path from the Jenkins build artifacts list"`
+	MaxBytes     int64  `json:"maxBytes,omitempty" jsonschema:"Maximum artifact bytes to read inline; defaults to the configured inline artifact limit"`
 }
 type ReadArtifactResponse struct {
-	Artifact model.ArtifactContent `json:"artifact"`
+	Artifact model.ArtifactContent `json:"artifact" jsonschema:"Inline artifact content and truncation state"`
 }
 
 func ReadArtifact(ctx context.Context, deps Deps, in ReadArtifactRequest) (ReadArtifactResponse, error) {
@@ -646,7 +646,7 @@ func ReadArtifact(ctx context.Context, deps Deps, in ReadArtifactRequest) (ReadA
 }
 
 type CoverageResponse struct {
-	Report model.CoverageReport `json:"report"`
+	Report model.CoverageReport `json:"report" jsonschema:"Coverage plugin availability and summary data"`
 }
 
 func Coverage(ctx context.Context, deps Deps, in BuildRequest) (CoverageResponse, error) {
@@ -662,7 +662,7 @@ func Coverage(ctx context.Context, deps Deps, in BuildRequest) (CoverageResponse
 }
 
 type IssuesResponse struct {
-	Report model.IssuesReport `json:"report"`
+	Report model.IssuesReport `json:"report" jsonschema:"Static analysis or warnings plugin availability and summary data"`
 }
 
 func Issues(ctx context.Context, deps Deps, in BuildRequest) (IssuesResponse, error) {
@@ -678,8 +678,8 @@ func Issues(ctx context.Context, deps Deps, in BuildRequest) (IssuesResponse, er
 }
 
 type ChangesResponse struct {
-	ChangeSets []model.ChangeSet `json:"changeSets"`
-	Truncated  bool              `json:"truncated"`
+	ChangeSets []model.ChangeSet `json:"changeSets" jsonschema:"SCM change sets associated with the Jenkins build"`
+	Truncated  bool              `json:"truncated" jsonschema:"Whether additional change data was omitted"`
 }
 
 func Changes(ctx context.Context, deps Deps, in BuildRequest) (ChangesResponse, error) {
@@ -698,14 +698,14 @@ func Changes(ctx context.Context, deps Deps, in BuildRequest) (ChangesResponse, 
 }
 
 type WatchBuildRequest struct {
-	Controller    string `json:"controller,omitempty"`
-	Job           string `json:"job"`
-	Build         int    `json:"build"`
-	LastState     string `json:"lastState,omitempty"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty"`
+	Controller    string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job           string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build         int    `json:"build" jsonschema:"Jenkins build number"`
+	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque watch state token returned by a previous jenkins_watch_build call"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build or Pipeline stage-status changes"`
 }
 type WatchBuildResponse struct {
-	Watch model.BuildWatch `json:"watch"`
+	Watch model.BuildWatch `json:"watch" jsonschema:"Current build watch state, progress, and completion status"`
 }
 
 type watchState struct {
@@ -1111,13 +1111,13 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 }
 
 type TriggerBuildRequest struct {
-	Controller string            `json:"controller,omitempty"`
-	Job        string            `json:"job"`
-	Parameters map[string]string `json:"parameters,omitempty"`
+	Controller string            `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string            `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Parameters map[string]string `json:"parameters,omitempty" jsonschema:"Build parameters keyed by Jenkins parameter name"`
 }
 type TriggerBuildResponse struct {
-	QueueURL  string `json:"queueUrl,omitempty"`
-	Triggered bool   `json:"triggered"`
+	QueueURL  string `json:"queueUrl,omitempty" jsonschema:"Jenkins queue item URL returned after triggering the build"`
+	Triggered bool   `json:"triggered" jsonschema:"Whether Jenkins accepted the build trigger request"`
 }
 
 func TriggerBuild(ctx context.Context, deps Deps, in TriggerBuildRequest) (TriggerBuildResponse, error) {
@@ -1168,15 +1168,15 @@ func validateTriggerParameters(definitions []model.ParameterDefinition, paramete
 }
 
 type QueueItemRequest struct {
-	Controller string `json:"controller,omitempty"`
-	ID         int64  `json:"id"`
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	ID         int64  `json:"id" jsonschema:"Jenkins queue item id"`
 }
 type QueueItemResponse struct {
-	Item model.QueueItem `json:"item"`
+	Item model.QueueItem `json:"item" jsonschema:"Jenkins queue item detail"`
 }
 
 type ListQueueResponse struct {
-	Items []model.QueueItem `json:"items"`
+	Items []model.QueueItem `json:"items" jsonschema:"Current Jenkins queue items"`
 }
 
 func ListQueue(ctx context.Context, deps Deps, in BaseRequest) (ListQueueResponse, error) {
@@ -1198,7 +1198,7 @@ func QueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (QueueItemRe
 }
 
 type CancelQueueItemResponse struct {
-	Cancelled bool `json:"cancelled"`
+	Cancelled bool `json:"cancelled" jsonschema:"Whether Jenkins accepted the queue item cancellation request"`
 }
 
 func CancelQueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (CancelQueueItemResponse, error) {
@@ -1215,7 +1215,7 @@ func CancelQueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (Cance
 }
 
 type CancelBuildResponse struct {
-	Cancelled bool `json:"cancelled"`
+	Cancelled bool `json:"cancelled" jsonschema:"Whether Jenkins accepted the build cancellation request"`
 }
 
 func CancelBuild(ctx context.Context, deps Deps, in BuildRequest) (CancelBuildResponse, error) {

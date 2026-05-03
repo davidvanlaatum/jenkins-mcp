@@ -52,11 +52,21 @@ func TestToolErrorsAreStructured(t *testing.T) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
+	if len(result.Content) != 1 {
+		t.Fatalf("CallTool() content length = %d, want 1", len(result.Content))
+	}
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("CallTool() content type = %T, want *mcp.TextContent", result.Content[0])
+	}
 	content, err := json.Marshal(result.StructuredContent)
 	if err != nil {
 		t.Fatalf("structured error marshal: %v", err)
 	}
-	if err := json.Unmarshal(content, &payload); err != nil {
+	if string(content) != textContent.Text {
+		t.Fatalf("structured error content = %s, want %s", content, textContent.Text)
+	}
+	if err := json.Unmarshal([]byte(textContent.Text), &payload); err != nil {
 		t.Fatalf("structured error unmarshal: %v", err)
 	}
 	if payload.Error.Code != "mutation_disabled" {
@@ -350,4 +360,144 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		return
 	}
 	t.Fatal("jenkins_list_jobs tool not found")
+}
+
+func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	var checked int
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatalf("Tools() error = %v", err)
+		}
+		if tool.InputSchema == nil {
+			t.Fatalf("tool %q has nil input schema", tool.Name)
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal input schema for %q: %v", tool.Name, err)
+		}
+		var schema any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("unmarshal input schema for %q: %v", tool.Name, err)
+		}
+		object, ok := schema.(map[string]any)
+		if !ok {
+			t.Fatalf("tool %q input schema is not an object", tool.Name)
+		}
+		properties, ok := object["properties"].(map[string]any)
+		if !ok || len(properties) == 0 {
+			t.Fatalf("tool %q input schema has no properties", tool.Name)
+		}
+		assertSchemaPropertyDescriptions(t, tool.Name, "input", schema)
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no tools checked")
+	}
+}
+
+func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	var checked int
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatalf("Tools() error = %v", err)
+		}
+		if tool.OutputSchema == nil {
+			t.Fatalf("tool %q has nil output schema", tool.Name)
+		}
+		raw, err := json.Marshal(tool.OutputSchema)
+		if err != nil {
+			t.Fatalf("marshal output schema for %q: %v", tool.Name, err)
+		}
+		var schema any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("unmarshal output schema for %q: %v", tool.Name, err)
+		}
+		object, ok := schema.(map[string]any)
+		if !ok {
+			t.Fatalf("tool %q output schema is not an object", tool.Name)
+		}
+		properties, ok := object["properties"].(map[string]any)
+		if !ok || len(properties) == 0 {
+			t.Fatalf("tool %q output schema has no properties", tool.Name)
+		}
+		assertSchemaPropertyDescriptions(t, tool.Name, "output", schema)
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no tools checked")
+	}
+}
+
+func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string, schema any) {
+	t.Helper()
+	object, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+	if properties, ok := object["properties"].(map[string]any); ok {
+		for propertyName, propertySchema := range properties {
+			propertyObject, ok := propertySchema.(map[string]any)
+			if !ok {
+				t.Fatalf("tool %q %s schema property %q is not an object", toolName, schemaName, propertyName)
+			}
+			description, _ := propertyObject["description"].(string)
+			if description == "" {
+				t.Fatalf("tool %q %s schema property %q has empty description", toolName, schemaName, propertyName)
+			}
+		}
+	}
+	for _, value := range object {
+		switch value := value.(type) {
+		case map[string]any:
+			assertSchemaPropertyDescriptions(t, toolName, schemaName, value)
+		case []any:
+			for _, item := range value {
+				assertSchemaPropertyDescriptions(t, toolName, schemaName, item)
+			}
+		}
+	}
 }

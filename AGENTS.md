@@ -27,8 +27,9 @@
 2.  **Implement API Call:** Add the corresponding method to `internal/jenkins/api/api.go`. Use tree queries (`?tree=...`) whenever possible to minimize data transfer.
 3.  **Implement Handler:** Add the tool handler and request/response types to `internal/tools/jenkins/tools.go`.
 4.  **Register Tool:** Register the new tool in `internal/mcpserver/server.go`. Ensure you use the appropriate `readOnlyTool`, `additiveMutationTool`, or `destructiveMutationTool` helper.
-5.  **Update Documentation:** Update `docs/tools/jenkins.md` with the new tool details.
-6.  **Update README:** Update the tool list and descriptions in `README.md`. **IMPORTANT:** All three locations (code, `docs/`, and `README.md`) must be kept in sync.
+5.  **Maintain Schemas:** Add `jsonschema` descriptions to every new or changed tool input and output field, including nested public response models. Keep schema descriptions accurate when behavior changes, and add/update contract tests for schema coverage when practical.
+6.  **Update Documentation:** Update `docs/tools/jenkins.md` with the new tool details.
+7.  **Update README:** Update the tool list and descriptions in `README.md`. **IMPORTANT:** All three locations (code, `docs/`, and `README.md`) must be kept in sync.
 
 ### Error Handling
 - Use the `internal/errors` package for all domain-specific errors.
@@ -48,6 +49,8 @@
 ### Coding Standards
 - **Logging:** Use `log/slog`.
 - **Validation:** Use the `internal/validation` package for common Jenkins inputs like job paths and build numbers.
+- **Schemas:** Treat MCP input and output schemas as part of the public contract. Tool request/response structs and shared models exposed through tool responses should include useful `jsonschema` descriptions for all JSON fields. Schema contract tests should assert schemas exist, are objects with properties, and describe their fields rather than only accepting whatever schema shape is present. Preserve the documented structured JSON error contract when changing tool schema or registration code.
+- **Agent Instruction Feedback:** When a user correction, bug, regression, or review comment reveals a reusable project-specific expectation that was missing or unclear in `AGENTS.md`, update `AGENTS.md` as part of the same change when the instruction is stable and broadly useful for future agents. Keep the new instruction scoped and actionable; do not add one-off preferences, transient task details, or overly broad rules.
 - **Efficiency:**
     - For Pipeline builds, ALWAYS prefer stage-specific logs via `jenkins_get_pipeline_node_log`.
     - Use bounded readers (`readBounded`) and response limits from `config.LimitsConfig`.
