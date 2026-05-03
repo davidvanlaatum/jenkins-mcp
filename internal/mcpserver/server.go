@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"log/slog"
+	"reflect"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/david/jenkins-mcp/internal/audit"
@@ -64,13 +66,35 @@ func destructiveMutationTool(name, title, description string) *mcp.Tool {
 }
 
 func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler func(context.Context, In) (Out, error)) {
-	mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+	toolWithOutputSchema := *tool
+	if toolWithOutputSchema.OutputSchema == nil {
+		// The SDK only infers output schemas when the handler returns typed Out.
+		// This wrapper returns any so error results can preserve the project's
+		// structured JSON error contract instead of being overwritten by zero Out.
+		toolWithOutputSchema.OutputSchema = inferOutputSchema[Out](tool.Name)
+	}
+	mcp.AddTool(server, &toolWithOutputSchema, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		out, err := handler(ctx, in)
 		if err != nil {
 			return errorResult(err), nil, nil
 		}
 		return nil, out, nil
 	})
+}
+
+func inferOutputSchema[Out any](toolName string) any {
+	outputType := reflect.TypeFor[Out]()
+	if outputType == reflect.TypeFor[any]() {
+		return nil
+	}
+	if outputType.Kind() == reflect.Pointer {
+		outputType = outputType.Elem()
+	}
+	outputSchema, err := jsonschema.ForType(outputType, nil)
+	if err != nil {
+		panic("infer output schema for " + toolName + ": " + err.Error())
+	}
+	return outputSchema
 }
 
 func errorResult(err error) *mcp.CallToolResult {

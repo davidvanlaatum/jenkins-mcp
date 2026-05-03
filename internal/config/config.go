@@ -54,9 +54,9 @@ type MutationConfig struct {
 }
 
 type LimitsConfig struct {
-	MaxResponseBytes int64 `json:"maxResponseBytes"`
-	LogChunkBytes    int64 `json:"logChunkBytes"`
-	InlineBytes      int64 `json:"inlineBytes"`
+	MaxResponseBytes int64 `json:"maxResponseBytes" jsonschema:"Maximum bytes allowed in a bounded MCP response"`
+	LogChunkBytes    int64 `json:"logChunkBytes" jsonschema:"Maximum console log bytes returned per log chunk"`
+	InlineBytes      int64 `json:"inlineBytes" jsonschema:"Maximum artifact or inline content bytes returned directly in a tool response"`
 }
 
 type WatchConfig struct {
