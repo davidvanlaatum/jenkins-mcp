@@ -12,7 +12,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ### Read Tools
 - `jenkins_get_capabilities`: Discover configured Jenkins controllers, response limits, update-check status, and whether mutating tools are enabled. Agents should notify the user when `updates.updateAvailable` is `true`.
 - `jenkins_resolve_build_url`: Resolve a Jenkins build URL to controller, job path, and build number.
-- `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder.
+- `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder, with optional recursive traversal and filters for name, type, status, and building state.
 - `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
 - `jenkins_list_builds`: List recent builds for a Jenkins job.
 - `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, and changes.

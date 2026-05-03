@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,10 +179,15 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 }
 
 type ListJobsRequest struct {
-	Controller string `json:"controller,omitempty"`
-	Folder     string `json:"folder,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	Recursive  bool   `json:"recursive,omitempty"`
+	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Folder       string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
+	Recursive    bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
+	NameContains string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
+	NameRegex    string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
+	Type         string `json:"type,omitempty" jsonschema:"Job type filter; accepts friendly names such as folder, pipeline, multibranch, freestyle, or raw Jenkins class names"`
+	Status       string `json:"status,omitempty" jsonschema:"Derived job status filter such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
+	Building     *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
 }
 type ListJobsResponse struct {
 	Jobs      []model.Job `json:"jobs"`
@@ -189,6 +195,10 @@ type ListJobsResponse struct {
 }
 
 func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsResponse, error) {
+	filter, err := newJobFilter(in)
+	if err != nil {
+		return ListJobsResponse{}, err
+	}
 	api, err := apiFor(deps, in.Controller)
 	if err != nil {
 		return ListJobsResponse{}, err
@@ -196,12 +206,15 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 	limit := pagination.BoundLimit(in.Limit, 100, 500)
 	var jobs []model.Job
 	if in.Recursive {
-		jobs, err = listJobsRecursive(ctx, api, in.Folder, limit)
+		jobs, err = listJobsRecursive(ctx, api, in.Folder, limit, filter)
 	} else {
 		jobs, err = api.ListJobs(ctx, in.Folder)
 	}
 	if err != nil {
 		return ListJobsResponse{}, err
+	}
+	if !in.Recursive {
+		jobs = filterJobs(jobs, filter)
 	}
 	truncated := len(jobs) > limit
 	if truncated {
@@ -210,7 +223,100 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 	return ListJobsResponse{Jobs: jobs, Truncated: truncated}, nil
 }
 
-func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, limit int) ([]model.Job, error) {
+type jobFilter struct {
+	nameContains string
+	nameRegex    *regexp.Regexp
+	jobType      string
+	status       string
+	building     *bool
+}
+
+func newJobFilter(in ListJobsRequest) (jobFilter, error) {
+	var filter jobFilter
+	filter.nameContains = strings.ToLower(strings.TrimSpace(in.NameContains))
+	filter.jobType = strings.ToLower(strings.TrimSpace(in.Type))
+	filter.status = normalizeStatusFilter(in.Status)
+	filter.building = in.Building
+	if strings.TrimSpace(in.NameRegex) != "" {
+		expr, err := regexp.Compile(in.NameRegex)
+		if err != nil {
+			return jobFilter{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid job name regex", map[string]any{
+				"regex": in.NameRegex,
+				"error": err.Error(),
+			})
+		}
+		filter.nameRegex = expr
+	}
+	return filter, nil
+}
+
+func filterJobs(jobs []model.Job, filter jobFilter) []model.Job {
+	if filter == (jobFilter{}) {
+		return jobs
+	}
+	out := make([]model.Job, 0, len(jobs))
+	for _, job := range jobs {
+		if jobMatchesFilter(job, filter) {
+			out = append(out, job)
+		}
+	}
+	return out
+}
+
+func jobMatchesFilter(job model.Job, filter jobFilter) bool {
+	if filter.nameContains != "" && !strings.Contains(strings.ToLower(job.Name), filter.nameContains) && !strings.Contains(strings.ToLower(job.FullName), filter.nameContains) {
+		return false
+	}
+	if filter.nameRegex != nil && !filter.nameRegex.MatchString(job.Name) && !filter.nameRegex.MatchString(job.FullName) {
+		return false
+	}
+	if filter.jobType != "" && !jobMatchesType(job.Class, filter.jobType) {
+		return false
+	}
+	if filter.status != "" && normalizeStatusFilter(job.Status) != filter.status {
+		return false
+	}
+	if filter.building != nil && job.Building != *filter.building {
+		return false
+	}
+	return true
+}
+
+func normalizeStatusFilter(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failure":
+		return "failed"
+	case "notbuilt", "not-built":
+		return "not_built"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func jobMatchesType(class string, typ string) bool {
+	class = strings.ToLower(strings.TrimSpace(class))
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	if class == "" || typ == "" {
+		return false
+	}
+	if class == typ || strings.HasSuffix(class, "."+typ) {
+		return true
+	}
+	switch typ {
+	case "folder":
+		return strings.Contains(class, "folder") && !strings.Contains(class, "multibranch")
+	case "pipeline", "workflow":
+		return strings.Contains(class, "workflowjob")
+	case "multibranch", "multi-branch", "multi_branch":
+		return strings.Contains(class, "multibranch")
+	case "freestyle", "free-style", "free_style":
+		return strings.Contains(class, "freestyleproject")
+	default:
+		return false
+	}
+}
+
+func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, limit int, filter jobFilter) ([]model.Job, error) {
 	seen := map[string]bool{}
 	var out []model.Job
 	var walk func(string) error
@@ -227,9 +333,11 @@ func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, 
 				continue
 			}
 			seen[job.FullName] = true
-			out = append(out, job)
-			if len(out) > limit {
-				return nil
+			if jobMatchesFilter(job, filter) {
+				out = append(out, job)
+				if len(out) > limit {
+					return nil
+				}
 			}
 			if isFolderLike(job.Class) {
 				if err := walk(job.FullName); err != nil {

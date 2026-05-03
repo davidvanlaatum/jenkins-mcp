@@ -87,10 +87,13 @@ func defaultFeatureMap(plugins []model.PluginInfo) map[string]bool {
 }
 
 type jobJSON struct {
-	Name  string `json:"name"`
-	URL   string `json:"url"`
-	Color string `json:"color"`
-	Class string `json:"_class"`
+	Name               string     `json:"name"`
+	URL                string     `json:"url"`
+	Color              string     `json:"color"`
+	Class              string     `json:"_class"`
+	Disabled           *bool      `json:"disabled"`
+	LastBuild          *buildJSON `json:"lastBuild"`
+	LastCompletedBuild *buildJSON `json:"lastCompletedBuild"`
 }
 type jobsEnvelope struct {
 	Jobs []jobJSON `json:"jobs"`
@@ -103,7 +106,7 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 		prefix = strings.Trim(folder, "/")
 		path = urlx.JobPath(folder) + "/api/json"
 	}
-	q := url.Values{"tree": {"jobs[name,url,color,_class]"}}
+	q := url.Values{"tree": {"jobs[name,url,color,_class,disabled,lastBuild[number,result,building],lastCompletedBuild[number,result,building]]"}}
 	var env jobsEnvelope
 	if err := a.client.GetJSON(ctx, path, q, &env); err != nil {
 		return nil, err
@@ -114,25 +117,110 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 		if prefix != "" {
 			full = prefix + "/" + j.Name
 		}
-		jobs = append(jobs, model.Job{Name: j.Name, FullName: full, URL: j.URL, Color: j.Color, Class: j.Class})
+		jobs = append(jobs, model.Job{
+			Name:     j.Name,
+			FullName: full,
+			URL:      j.URL,
+			Color:    j.Color,
+			Class:    j.Class,
+			Disabled: j.Disabled,
+			Status:   jobStatus(j),
+			Building: j.LastBuild != nil && j.LastBuild.Building,
+		})
 	}
 	return jobs, nil
 }
 
+func jobStatus(j jobJSON) string {
+	if j.Disabled != nil && *j.Disabled {
+		return "disabled"
+	}
+	if status := jobStateFromColor(j.Color); status != "" {
+		return status
+	}
+	if j.LastCompletedBuild != nil && j.LastCompletedBuild.Result != "" {
+		return normalizeBuildResult(j.LastCompletedBuild.Result)
+	}
+	if j.LastBuild != nil && !j.LastBuild.Building && j.LastBuild.Result != "" {
+		return normalizeBuildResult(j.LastBuild.Result)
+	}
+	if status := statusFromColor(j.Color); status != "" {
+		return status
+	}
+	return "unknown"
+}
+
+func jobStateFromColor(color string) string {
+	color = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(color)), "_anime")
+	switch color {
+	case "disabled":
+		return "disabled"
+	case "notbuilt", "not_built":
+		return "not_built"
+	default:
+		return ""
+	}
+}
+
+func normalizeBuildResult(result string) string {
+	switch strings.ToUpper(strings.TrimSpace(result)) {
+	case "SUCCESS":
+		return "success"
+	case "FAILURE":
+		return "failed"
+	case "UNSTABLE":
+		return "unstable"
+	case "ABORTED":
+		return "aborted"
+	case "NOT_BUILT":
+		return "not_built"
+	case "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(result))
+	}
+}
+
+func statusFromColor(color string) string {
+	color = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(color)), "_anime")
+	switch color {
+	case "blue":
+		return "success"
+	case "red":
+		return "failed"
+	case "yellow":
+		return "unstable"
+	case "aborted":
+		return "aborted"
+	case "notbuilt", "not_built":
+		return "not_built"
+	case "disabled":
+		return "disabled"
+	case "grey", "gray":
+		return "unknown"
+	case "":
+		return ""
+	default:
+		return color
+	}
+}
+
 func (a *API) GetJob(ctx context.Context, job string) (model.JobDetail, error) {
 	path := urlx.JobPath(job) + "/api/json"
-	tree := "name,fullName,url,color,_class,description,buildable,inQueue,nextBuildNumber,lastBuild[number,url,result,building,timestamp,duration],lastSuccessfulBuild[number,url,result,building,timestamp,duration],lastFailedBuild[number,url,result,building,timestamp,duration],property[parameterDefinitions[*]]"
+	tree := "name,fullName,url,color,_class,disabled,description,buildable,inQueue,nextBuildNumber,lastBuild[number,url,result,building,timestamp,duration],lastCompletedBuild[number,url,result,building,timestamp,duration],lastSuccessfulBuild[number,url,result,building,timestamp,duration],lastFailedBuild[number,url,result,building,timestamp,duration],property[parameterDefinitions[*]]"
 	var raw struct {
 		Name                string        `json:"name"`
 		FullName            string        `json:"fullName"`
 		URL                 string        `json:"url"`
 		Color               string        `json:"color"`
 		Class               string        `json:"_class"`
+		Disabled            *bool         `json:"disabled"`
 		Description         string        `json:"description"`
 		Buildable           bool          `json:"buildable"`
 		InQueue             bool          `json:"inQueue"`
 		NextBuildNumber     int           `json:"nextBuildNumber"`
 		LastBuild           *buildJSON    `json:"lastBuild"`
+		LastCompletedBuild  *buildJSON    `json:"lastCompletedBuild"`
 		LastSuccessfulBuild *buildJSON    `json:"lastSuccessfulBuild"`
 		LastFailedBuild     *buildJSON    `json:"lastFailedBuild"`
 		Properties          []jobProperty `json:"property"`
@@ -140,8 +228,26 @@ func (a *API) GetJob(ctx context.Context, job string) (model.JobDetail, error) {
 	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
 		return model.JobDetail{}, err
 	}
+	jobJSON := jobJSON{
+		Name:               raw.Name,
+		URL:                raw.URL,
+		Color:              raw.Color,
+		Class:              raw.Class,
+		Disabled:           raw.Disabled,
+		LastBuild:          raw.LastBuild,
+		LastCompletedBuild: raw.LastCompletedBuild,
+	}
 	detail := model.JobDetail{
-		Job:             model.Job{Name: raw.Name, FullName: raw.FullName, URL: raw.URL, Color: raw.Color, Class: raw.Class},
+		Job: model.Job{
+			Name:     raw.Name,
+			FullName: raw.FullName,
+			URL:      raw.URL,
+			Color:    raw.Color,
+			Class:    raw.Class,
+			Disabled: raw.Disabled,
+			Status:   jobStatus(jobJSON),
+			Building: raw.LastBuild != nil && raw.LastBuild.Building,
+		},
 		Description:     raw.Description,
 		Buildable:       raw.Buildable,
 		InQueue:         raw.InQueue,

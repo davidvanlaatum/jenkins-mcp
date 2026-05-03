@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -287,4 +288,66 @@ func TestRegisteredToolTitles(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("missing tools from title check: %#v", want)
 	}
+}
+
+func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatalf("Tools() error = %v", err)
+		}
+		if tool.Name != "jenkins_list_jobs" {
+			continue
+		}
+		for _, want := range []string{"nameContains", "nameRegex", "type", "status", "building"} {
+			if !strings.Contains(tool.Description, want) {
+				t.Fatalf("description = %q, want mention of %q", tool.Description, want)
+			}
+		}
+
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal input schema: %v", err)
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("unmarshal input schema: %v", err)
+		}
+		for _, want := range []string{"nameContains", "nameRegex", "type", "status", "building"} {
+			property, ok := schema.Properties[want]
+			if !ok {
+				t.Fatalf("input schema missing property %q", want)
+			}
+			if property.Description == "" {
+				t.Fatalf("input schema property %q has empty description", want)
+			}
+		}
+		return
+	}
+	t.Fatal("jenkins_list_jobs tool not found")
 }

@@ -30,6 +30,9 @@ type Job struct {
 	URL      string `json:"url"`
 	Color    string `json:"color,omitempty"`
 	Class    string `json:"class,omitempty"`
+	Disabled *bool  `json:"disabled,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Building bool   `json:"building"`
 }
 
 type JobDetail struct {

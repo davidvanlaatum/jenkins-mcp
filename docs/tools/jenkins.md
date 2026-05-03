@@ -4,7 +4,7 @@
 
 - `jenkins_get_capabilities`: checks configured controllers, response limits, update-check status, installed plugins, and feature availability. When `updates.updateAvailable` is `true`, agents should notify the user using `updates.notificationHint`.
 - `jenkins_resolve_build_url`: resolves a Jenkins build URL to controller, job path, and build number.
-- `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal.
+- `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal and filters for name, type, status, and building state. Name filters support case-insensitive `nameContains` matching and `nameRegex` matching against both `name` and `fullName`. Type filters accept friendly names such as `folder`, `pipeline`, `multibranch`, and `freestyle`, or raw Jenkins class names. Status filters use the derived `status` field, which treats Jenkins `disabled` and not-built `color` state first, then falls back to `lastCompletedBuild.result`, non-building `lastBuild.result`, and other Jenkins `color` values; `building` is derived from `lastBuild.building`.
 - `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.
 - `jenkins_list_builds`: lists recent builds for a job.
 - `jenkins_get_build`: returns build metadata, causes, parameters, artifacts, and changes.

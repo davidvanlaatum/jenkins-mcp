@@ -144,6 +144,140 @@ func TestValidateTriggerParametersAcceptsKnown(t *testing.T) {
 	}
 }
 
+func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree := r.URL.Query().Get("tree")
+		if !strings.Contains(tree, "lastBuild[number,result,building]") || !strings.Contains(tree, "lastCompletedBuild[number,result,building]") {
+			t.Fatalf("tree query = %q, want build status fields", tree)
+		}
+		if !strings.Contains(tree, "disabled") {
+			t.Fatalf("tree query = %q, want disabled field", tree)
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"deploy-main","url":"https://jenkins.example.com/job/deploy-main/","color":"red_anime","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastBuild":{"number":12,"result":"","building":true},"lastCompletedBuild":{"number":11,"result":"FAILURE","building":false}},
+			{"name":"deploy-old","url":"https://jenkins.example.com/job/deploy-old/","color":"blue","_class":"hudson.model.FreeStyleProject","lastBuild":{"number":3,"result":"SUCCESS","building":false}},
+			{"name":"tests","url":"https://jenkins.example.com/job/tests/","color":"yellow","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob"}
+		]}`)
+	})
+
+	building := true
+	got, err := ListJobs(context.Background(), deps, ListJobsRequest{
+		NameContains: "DEPLOY",
+		Type:         "pipeline",
+		Status:       "failure",
+		Building:     &building,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(got.Jobs) != 1 {
+		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Jobs), got.Jobs)
+	}
+	job := got.Jobs[0]
+	if job.Name != "deploy-main" || job.Status != "failed" || !job.Building {
+		t.Fatalf("job = %+v, want deploy-main failed building", job)
+	}
+}
+
+func TestListJobsRegexMatchesFullName(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/team/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"api-main","url":"https://jenkins.example.com/job/team/job/api-main/","color":"blue","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastCompletedBuild":{"number":5,"result":"SUCCESS","building":false}},
+			{"name":"web-main","url":"https://jenkins.example.com/job/team/job/web-main/","color":"red","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastCompletedBuild":{"number":4,"result":"FAILURE","building":false}}
+		]}`)
+	})
+
+	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Folder: "team", NameRegex: "^team/api"})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(got.Jobs) != 1 || got.Jobs[0].FullName != "team/api-main" {
+		t.Fatalf("ListJobs() jobs = %+v, want team/api-main", got.Jobs)
+	}
+}
+
+func TestListJobsDisabledStatusWinsOverCompletedBuildResult(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"disabled-job","url":"https://jenkins.example.com/job/disabled-job/","color":"blue","disabled":true,"_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastCompletedBuild":{"number":2,"result":"SUCCESS","building":false}},
+			{"name":"active-job","url":"https://jenkins.example.com/job/active-job/","color":"blue","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastCompletedBuild":{"number":3,"result":"SUCCESS","building":false}}
+		]}`)
+	})
+
+	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Status: "disabled"})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(got.Jobs) != 1 {
+		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Jobs), got.Jobs)
+	}
+	if got.Jobs[0].Name != "disabled-job" || got.Jobs[0].Status != "disabled" {
+		t.Fatalf("job = %+v, want disabled-job with disabled status", got.Jobs[0])
+	}
+	if got.Jobs[0].Disabled == nil || !*got.Jobs[0].Disabled {
+		t.Fatalf("job disabled = %v, want true", got.Jobs[0].Disabled)
+	}
+}
+
+func TestListJobsRejectsInvalidNameRegex(t *testing.T) {
+	_, err := ListJobs(context.Background(), Deps{}, ListJobsRequest{NameRegex: "["})
+	if err == nil {
+		t.Fatal("ListJobs() accepted invalid regex")
+	}
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestGetJobReturnsDerivedStatusAndDisabledState(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree := r.URL.Query().Get("tree")
+		if !strings.Contains(tree, "disabled") || !strings.Contains(tree, "lastCompletedBuild[number,url,result,building,timestamp,duration]") {
+			t.Fatalf("tree query = %q, want disabled and lastCompletedBuild fields", tree)
+		}
+		writeJSON(w, `{
+			"name":"app",
+			"fullName":"folder/app",
+			"url":"https://jenkins.example.com/job/folder/job/app/",
+			"color":"blue",
+			"_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob",
+			"disabled":true,
+			"description":"disabled app",
+			"buildable":false,
+			"inQueue":false,
+			"nextBuildNumber":4,
+			"lastBuild":{"number":3,"url":"https://jenkins.example.com/job/folder/job/app/3/","result":"","building":true,"timestamp":1,"duration":20},
+			"lastCompletedBuild":{"number":2,"url":"https://jenkins.example.com/job/folder/job/app/2/","result":"SUCCESS","building":false,"timestamp":1,"duration":10},
+			"property":[]
+		}`)
+	})
+
+	got, err := GetJob(context.Background(), deps, JobRequest{Job: "app"})
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if got.Job.Status != "disabled" || !got.Job.Building {
+		t.Fatalf("job = %+v, want disabled status and building=true", got.Job.Job)
+	}
+	if got.Job.Disabled == nil || !*got.Job.Disabled {
+		t.Fatalf("job disabled = %v, want true", got.Job.Disabled)
+	}
+}
+
 func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -710,6 +844,26 @@ func newWatchTestDeps(t *testing.T, handler http.HandlerFunc, watchCfg config.Wa
 	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}
 	cfg.DefaultController = "default"
 	cfg.Watch = watchCfg
+
+	return Deps{
+		Config:  cfg,
+		Jenkins: map[string]*jenkinsapi.API{"default": jenkinsapi.New("default", client)},
+	}
+}
+
+func newJenkinsTestDeps(t *testing.T, handler http.HandlerFunc) Deps {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("client.New() error = %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}
+	cfg.DefaultController = "default"
 
 	return Deps{
 		Config:  cfg,
