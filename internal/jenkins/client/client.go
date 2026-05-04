@@ -36,6 +36,9 @@ func New(cfg config.ControllerConfig, logger *slog.Logger) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if logger != nil {
+		logger.Debug("configured Jenkins controller", "controller", cfg.ID, "base_url", parsed.Redacted(), "base_path", parsed.EscapedPath())
+	}
 	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}, logger: logger}, nil
 }
 func (c *Client) BaseURL() string { return c.base.String() }
@@ -92,14 +95,24 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 			req.Header.Add(k, v)
 		}
 	}
+	started := time.Now()
+	if c.logger != nil {
+		c.logger.Debug("sending Jenkins request", "method", method, "url", req.URL.Redacted(), "base_url", c.base.Redacted(), "request_path", path, "has_body", body != nil)
+	}
 	res, err := c.http.Do(req)
 	if err != nil {
+		if c.logger != nil {
+			c.logger.Warn("Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
+		}
 		return 0, nil, nil, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
 	}
 	defer func() { _ = res.Body.Close() }()
 	b, err := readBounded(res.Body, 8*1024*1024)
 	if err != nil {
 		return 0, nil, nil, err
+	}
+	if c.logger != nil {
+		c.logger.Debug("completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "jenkins_version", res.Header.Get("X-Jenkins"))
 	}
 	return res.StatusCode, b, res.Header, nil
 }
