@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
@@ -30,7 +31,7 @@ func InitConfigFromProcess(args []string, environ []string) (string, error) {
 }
 
 func New(cfg config.Config) (*Server, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevelFromEnv()}))
 	clients := make(map[string]*jenkinsapi.API, len(cfg.Controllers))
 	for _, controller := range cfg.Controllers {
 		httpClient, err := jenkinsclient.New(controller, logger)
@@ -55,6 +56,19 @@ func New(cfg config.Config) (*Server, error) {
 		}),
 		updateChecker: updateChecker,
 	}, nil
+}
+
+func logLevelFromEnv() slog.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("JENKINS_MCP_LOG_LEVEL"))) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func (s *Server) RunStdio(ctx context.Context) error {

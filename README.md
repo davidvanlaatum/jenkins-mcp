@@ -53,6 +53,12 @@ export JENKINS_TOKEN="your-api-token"
 go run ./cmd/jenkins-mcp-server
 ```
 
+For request URL troubleshooting, enable debug logs:
+
+```bash
+export JENKINS_MCP_LOG_LEVEL=debug
+```
+
 For Jenkins-mutating actions:
 
 ```bash
