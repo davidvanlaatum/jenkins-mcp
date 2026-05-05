@@ -157,6 +157,7 @@ func parseBuildPath(path string) (string, int, bool) {
 type CapabilitiesResponse struct {
 	Controllers      []model.ControllerInfo         `json:"controllers" jsonschema:"Configured Jenkins controllers and availability information"`
 	Capabilities     []model.ControllerCapabilities `json:"capabilities" jsonschema:"Detected Jenkins controller capabilities and plugin information"`
+	CapabilityConfig config.CapabilityConfig        `json:"capabilityConfig" jsonschema:"Configuration that controls optional capability discovery behavior"`
 	MutationsEnabled bool                           `json:"mutationsEnabled" jsonschema:"Whether Jenkins-mutating tools are enabled by configuration"`
 	Limits           config.LimitsConfig            `json:"limits" jsonschema:"Configured response and inline content limits"`
 	Updates          updatecheck.Status             `json:"updates" jsonschema:"Update-check status for this MCP server"`
@@ -167,7 +168,7 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 	capabilities := []model.ControllerCapabilities{}
 	for _, c := range deps.Config.Controllers {
 		api := deps.Jenkins[c.ID]
-		caps := api.Capabilities(ctx)
+		caps := api.Capabilities(ctx, deps.Config.Capabilities.PluginDiscoveryEnabled)
 		infos = append(infos, caps.Controller)
 		capabilities = append(capabilities, caps)
 	}
@@ -175,7 +176,7 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 	if deps.UpdateStatus != nil {
 		updates = deps.UpdateStatus()
 	}
-	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, Updates: updates}, nil
+	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, CapabilityConfig: deps.Config.Capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, Updates: updates}, nil
 }
 
 type ListJobsRequest struct {

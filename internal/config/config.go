@@ -40,6 +40,7 @@ type Config struct {
 	Artifacts         ArtifactConfig     `json:"artifacts"`
 	Audit             AuditConfig        `json:"audit"`
 	Updates           UpdateCheckConfig  `json:"updates"`
+	Capabilities      CapabilityConfig   `json:"capabilities"`
 }
 
 type ControllerConfig struct {
@@ -72,6 +73,29 @@ type ArtifactConfig struct {
 
 type AuditConfig struct {
 	Path string `json:"path,omitempty"`
+}
+
+type CapabilityConfig struct {
+	PluginDiscoveryEnabled bool `json:"pluginDiscoveryEnabled" jsonschema:"Whether jenkins_get_capabilities should query Jenkins pluginManager for installed plugins and plugin-derived feature flags"`
+
+	pluginDiscoveryEnabledSet bool
+}
+
+func (c *CapabilityConfig) UnmarshalJSON(b []byte) error {
+	type capabilityConfig CapabilityConfig
+	var raw struct {
+		capabilityConfig
+		PluginDiscoveryEnabled *bool `json:"pluginDiscoveryEnabled"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*c = CapabilityConfig(raw.capabilityConfig)
+	if raw.PluginDiscoveryEnabled != nil {
+		c.PluginDiscoveryEnabled = *raw.PluginDiscoveryEnabled
+		c.pluginDiscoveryEnabledSet = true
+	}
+	return nil
 }
 
 type UpdateCheckConfig struct {
@@ -228,6 +252,7 @@ func Defaults() Config {
 		Watch:             WatchConfig{PollIntervalMs: 3000, DefaultWaitTimeoutMs: 120000, MaxWaitTimeoutMs: 900000, MaxConsecutiveFailures: 3},
 		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
 		Updates:           UpdateCheckConfig{Enabled: true, Repository: "davidvanlaatum/jenkins-mcp", CheckIntervalHours: 24},
+		Capabilities:      CapabilityConfig{PluginDiscoveryEnabled: true},
 	}
 }
 
@@ -379,6 +404,9 @@ func merge(base, override Config) Config {
 	if override.Updates.CheckIntervalHours != 0 {
 		base.Updates.CheckIntervalHours = override.Updates.CheckIntervalHours
 	}
+	if override.Capabilities.pluginDiscoveryEnabledSet {
+		base.Capabilities.PluginDiscoveryEnabled = override.Capabilities.PluginDiscoveryEnabled
+	}
 	return base
 }
 
@@ -410,6 +438,9 @@ func applyEnv(cfg *Config, env map[string]string) {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Updates.CheckIntervalHours = n
 		}
+	}
+	if v := env["JENKINS_MCP_PLUGIN_DISCOVERY"]; v != "" {
+		cfg.Capabilities.PluginDiscoveryEnabled = strings.EqualFold(v, "true") || v == "1"
 	}
 	if v := env["JENKINS_MAX_RESPONSE_BYTES"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {

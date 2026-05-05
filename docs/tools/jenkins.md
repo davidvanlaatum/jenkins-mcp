@@ -2,7 +2,7 @@
 
 ## Read Tools
 
-- `jenkins_get_capabilities`: checks configured controllers, response limits, update-check status, installed plugins, and feature availability. When `updates.updateAvailable` is `true`, agents should notify the user using `updates.notificationHint`.
+- `jenkins_get_capabilities`: checks configured controllers, response limits, update-check status, installed plugins, optional capability warnings, and feature availability. When `updates.updateAvailable` is `true`, agents should notify the user using `updates.notificationHint`.
 - `jenkins_resolve_build_url`: resolves a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: lists jobs at root or inside a folder, with optional recursive traversal, opaque cursor pagination, and filters for name, type, status, and building state. Responses use the shared paginated shape: `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`; pass `nextCursor` back as `cursor` to continue with the same request filters. Cursors are signed with an in-memory key, so a server restart invalidates previously issued cursors. Name filters support case-insensitive `nameContains` matching and `nameRegex` matching against both `name` and `fullName`. Type filters accept friendly names such as `folder`, `pipeline`, `multibranch`, and `freestyle`, or raw Jenkins class names. Status filters use the derived `status` field, which treats Jenkins `disabled` and not-built `color` state first, then falls back to `lastCompletedBuild.result`, non-building `lastBuild.result`, and other Jenkins `color` values; `building` is derived from `lastBuild.building`. Recursive traversal scans until it either finds one additional matching job beyond the requested page or completes traversal, so `truncated` is accurate across folder boundaries when Jenkins can be scanned successfully.
 - `jenkins_get_job`: returns job metadata, recent build references, and parameter definitions.
@@ -35,3 +35,17 @@
 - `jenkins_cancel_build`: stops a running build.
 
 Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.
+
+## Capability Discovery
+
+`jenkins_get_capabilities` treats Jenkins plugin metadata as optional. If the configured Jenkins user cannot access `pluginManager`, the controller remains available and the response includes a structured `warnings` entry with `optional: true`; the legacy `error` field remains populated for compatibility.
+
+Disable optional plugin discovery in restricted Jenkins deployments with `JENKINS_MCP_PLUGIN_DISCOVERY=false` or:
+
+```json
+{
+  "capabilities": {
+    "pluginDiscoveryEnabled": false
+  }
+}
+```

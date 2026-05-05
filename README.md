@@ -10,7 +10,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ## Current Tool Surface
 
 ### Read Tools
-- `jenkins_get_capabilities`: Discover configured Jenkins controllers, response limits, update-check status, and whether mutating tools are enabled. Agents should notify the user when `updates.updateAvailable` is `true`.
+- `jenkins_get_capabilities`: Discover configured Jenkins controllers, response limits, update-check status, optional capability warnings, and whether mutating tools are enabled. Agents should notify the user when `updates.updateAvailable` is `true`.
 - `jenkins_resolve_build_url`: Resolve a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder, with cursor pagination, optional recursive traversal, and filters for name, type, status, and building state. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
 - `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
@@ -85,6 +85,22 @@ The server checks GitHub releases once at startup and then every 24 hours by def
 export JENKINS_MCP_UPDATE_CHECK=false
 export JENKINS_MCP_UPDATE_REPOSITORY=your-org/jenkins-mcp
 export JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS=24
+```
+
+`jenkins_get_capabilities` normally queries Jenkins `pluginManager` to derive plugin-backed feature flags. In restricted Jenkins deployments where normal users cannot access plugin metadata, disable this optional discovery with:
+
+```bash
+export JENKINS_MCP_PLUGIN_DISCOVERY=false
+```
+
+or:
+
+```json
+{
+  "capabilities": {
+    "pluginDiscoveryEnabled": false
+  }
+}
 ```
 
 ## Development
