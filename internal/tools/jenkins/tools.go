@@ -424,9 +424,14 @@ type ListBuildsRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of recent builds to return; defaults to 20 and is capped at 100"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_builds response"`
 }
 type ListBuildsResponse struct {
-	Builds []model.BuildSummary `json:"builds" jsonschema:"Recent Jenkins builds for the requested job"`
+	Items      []model.BuildSummary `json:"items" jsonschema:"Recent Jenkins builds for this page"`
+	NextCursor string               `json:"nextCursor,omitempty" jsonschema:"Opaque cursor to request the next page when hasMore is true"`
+	HasMore    bool                 `json:"hasMore" jsonschema:"Whether additional builds are available after this page"`
+	Truncated  bool                 `json:"truncated" jsonschema:"Whether additional builds were omitted from this page due to the requested or configured limit"`
+	Limit      int                  `json:"limit" jsonschema:"Maximum number of builds requested for this page after applying server caps"`
 }
 
 func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuildsResponse, error) {
@@ -437,8 +442,56 @@ func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuild
 	if err != nil {
 		return ListBuildsResponse{}, err
 	}
-	builds, err := api.ListBuilds(ctx, in.Job, pagination.BoundLimit(in.Limit, 20, 100))
-	return ListBuildsResponse{Builds: builds}, err
+	limit := pagination.BoundLimit(in.Limit, 20, 100)
+	cursorSignature, err := listBuildsCursorSignature(in)
+	if err != nil {
+		return ListBuildsResponse{}, err
+	}
+	offset, gotSignature, err := pagination.DecodeCursor(in.Cursor, listBuildsCursorKind)
+	if err != nil {
+		return ListBuildsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid list builds cursor", map[string]any{"cursor": in.Cursor, "reason": err.Error()})
+	}
+	if gotSignature != "" && gotSignature != cursorSignature {
+		return ListBuildsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "list builds cursor does not match request", map[string]any{"cursor": in.Cursor})
+	}
+	builds, err := api.ListBuilds(ctx, in.Job, offset, limit+1)
+	if err != nil {
+		return ListBuildsResponse{}, err
+	}
+	return listBuildsPage(builds, offset, limit, cursorSignature)
+}
+
+const listBuildsCursorKind = "jenkins_list_builds"
+
+func listBuildsPage(builds []model.BuildSummary, offset int, limit int, signature string) (ListBuildsResponse, error) {
+	hasMore := len(builds) > limit
+	if hasMore {
+		builds = builds[:limit]
+	}
+	nextCursor := ""
+	if hasMore {
+		var err error
+		nextCursor, err = pagination.EncodeCursor(listBuildsCursorKind, offset+limit, signature)
+		if err != nil {
+			return ListBuildsResponse{}, err
+		}
+	}
+	return ListBuildsResponse{Items: builds, NextCursor: nextCursor, HasMore: hasMore, Truncated: hasMore, Limit: limit}, nil
+}
+
+func listBuildsCursorSignature(in ListBuildsRequest) (string, error) {
+	body, err := json.Marshal(struct {
+		Controller string `json:"controller,omitempty"`
+		Job        string `json:"job"`
+	}{
+		Controller: in.Controller,
+		Job:        in.Job,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
 type GetBuildResponse struct {

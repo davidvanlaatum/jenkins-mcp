@@ -368,6 +368,128 @@ func TestListJobsRecursiveUsesCursorForNextPage(t *testing.T) {
 	}
 }
 
+func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
+	var trees []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree := r.URL.Query().Get("tree")
+		trees = append(trees, tree)
+		switch {
+		case strings.Contains(tree, "{0,2}"):
+			writeJSON(w, `{"builds":[
+				{"id":"43","number":43,"url":"https://jenkins.example.com/job/app/43/","result":"SUCCESS","building":false,"timestamp":1000,"duration":2000,"description":"deployed prod","displayName":"v1.2.3","queueId":99,"estimatedDuration":3000,"keepLog":true},
+				{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"FAILURE","building":false,"timestamp":900,"duration":1500,"description":"failed tests","displayName":"#42","queueId":98,"estimatedDuration":2500,"keepLog":false}
+			]}`)
+		case strings.Contains(tree, "{1,3}"):
+			writeJSON(w, `{"builds":[
+				{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"FAILURE","building":false,"timestamp":900,"duration":1500,"description":"failed tests","displayName":"#42","queueId":98,"estimatedDuration":2500,"keepLog":false}
+			]}`)
+		default:
+			t.Fatalf("unexpected tree query %q", tree)
+		}
+	})
+
+	first, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListBuilds() first page error = %v", err)
+	}
+	if len(first.Items) != 1 {
+		t.Fatalf("first page items = %d, want 1", len(first.Items))
+	}
+	build := first.Items[0]
+	if build.ID != "43" || build.Description != "deployed prod" || build.DisplayName != "v1.2.3" || build.QueueID != 99 || build.EstimatedDuration != 3000 || build.KeepLog == nil || !*build.KeepLog {
+		t.Fatalf("first build summary = %+v, want extended fields populated", build)
+	}
+	if build.Result != "SUCCESS" {
+		t.Fatalf("first build result = %q, want SUCCESS", build.Result)
+	}
+	if !first.HasMore || !first.Truncated || first.NextCursor == "" || first.Limit != 1 {
+		t.Fatalf("first page pagination = %+v, want hasMore truncated with cursor and limit 1", first)
+	}
+
+	second, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("ListBuilds() second page error = %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Number != 42 {
+		t.Fatalf("second page items = %+v, want build 42", second.Items)
+	}
+	if second.HasMore || second.Truncated || second.NextCursor != "" || second.Limit != 1 {
+		t.Fatalf("second page pagination = %+v, want complete final page", second)
+	}
+	if len(trees) != 2 {
+		t.Fatalf("tree queries = %+v, want two paged requests", trees)
+	}
+}
+
+func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"builds":[
+			{"id":"43","number":43,"url":"https://jenkins.example.com/job/app/43/","result":"SUCCESS","building":false},
+			{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"FAILURE","building":false}
+		]}`)
+	})
+
+	first, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListBuilds() first page error = %v", err)
+	}
+	_, err = ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
+	if err == nil {
+		t.Fatal("ListBuilds() accepted cursor for a changed request")
+	}
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/43/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree := r.URL.Query().Get("tree")
+		for _, want := range []string{"id", "queueId", "estimatedDuration", "keepLog"} {
+			if !strings.Contains(tree, want) {
+				t.Fatalf("tree query = %q, want %q", tree, want)
+			}
+		}
+		writeJSON(w, `{
+			"id":"43",
+			"number":43,
+			"url":"https://jenkins.example.com/job/app/43/",
+			"result":"SUCCESS",
+			"building":false,
+			"timestamp":1000,
+			"duration":2000,
+			"description":"deployed prod",
+			"displayName":"v1.2.3",
+			"fullDisplayName":"app v1.2.3",
+			"queueId":99,
+			"estimatedDuration":3000,
+			"keepLog":true,
+			"artifacts":[],
+			"actions":[],
+			"changeSets":[]
+		}`)
+	})
+
+	got, err := GetBuild(context.Background(), deps, BuildRequest{Job: "app", Build: 43})
+	if err != nil {
+		t.Fatalf("GetBuild() error = %v", err)
+	}
+	build := got.Build
+	if build.ID != "43" || build.Description != "deployed prod" || build.DisplayName != "v1.2.3" || build.FullDisplayName != "app v1.2.3" || build.QueueID != 99 || build.EstimatedDuration != 3000 || build.KeepLog == nil || !*build.KeepLog {
+		t.Fatalf("build = %+v, want extended summary fields populated", build)
+	}
+}
+
 func TestListJobsRejectsInvalidNameRegex(t *testing.T) {
 	_, err := ListJobs(context.Background(), Deps{}, ListJobsRequest{NameRegex: "["})
 	if err == nil {

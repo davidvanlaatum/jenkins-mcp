@@ -131,7 +131,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_get_job", "Get Job", "Get Jenkins job metadata, recent build references, and parameter definitions."), func(ctx context.Context, in jenkinstools.JobRequest) (jenkinstools.GetJobResponse, error) {
 		return jenkinstools.GetJob(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job with cursor pagination. Build summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
 		return jenkinstools.ListBuilds(ctx, s.deps, in)
 	})
 	addTool(s.raw, readOnlyTool("jenkins_get_build", "Get Build", "Get build details including result, causes, parameters, artifacts, and changes."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.GetBuildResponse, error) {

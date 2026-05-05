@@ -14,7 +14,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_resolve_build_url`: Resolve a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder, with cursor pagination, optional recursive traversal, and filters for name, type, status, and building state. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
 - `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
-- `jenkins_list_builds`: List recent builds for a Jenkins job.
+- `jenkins_list_builds`: List recent builds for a Jenkins job, with cursor pagination and extended summaries including result, description, displayName, id, queueId, estimatedDuration, and keepLog. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
 - `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, and changes.
 - `jenkins_get_log`: Read a bounded progressive console log chunk. For Pipeline builds, prefer `jenkins_get_pipeline_node_log`.
 - `jenkins_search_log`: Search a bounded console log chunk for text and return matching lines.
