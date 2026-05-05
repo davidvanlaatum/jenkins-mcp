@@ -314,18 +314,22 @@ func parseParameterDefinitions(properties []jobProperty) []model.ParameterDefini
 }
 
 type buildJSON struct {
-	Number          int               `json:"number"`
-	URL             string            `json:"url"`
-	Result          string            `json:"result"`
-	Building        bool              `json:"building"`
-	Timestamp       int64             `json:"timestamp"`
-	Duration        int64             `json:"duration"`
-	Description     string            `json:"description"`
-	DisplayName     string            `json:"displayName"`
-	FullDisplayName string            `json:"fullDisplayName"`
-	Actions         []json.RawMessage `json:"actions"`
-	Artifacts       []model.Artifact  `json:"artifacts"`
-	ChangeSets      []changeSetJSON   `json:"changeSets"`
+	ID                string            `json:"id"`
+	Number            int               `json:"number"`
+	URL               string            `json:"url"`
+	Result            string            `json:"result"`
+	Building          bool              `json:"building"`
+	Timestamp         int64             `json:"timestamp"`
+	Duration          int64             `json:"duration"`
+	Description       string            `json:"description"`
+	DisplayName       string            `json:"displayName"`
+	FullDisplayName   string            `json:"fullDisplayName"`
+	QueueID           int64             `json:"queueId"`
+	EstimatedDuration int64             `json:"estimatedDuration"`
+	KeepLog           *bool             `json:"keepLog"`
+	Actions           []json.RawMessage `json:"actions"`
+	Artifacts         []model.Artifact  `json:"artifacts"`
+	ChangeSets        []changeSetJSON   `json:"changeSets"`
 }
 type buildsEnvelope struct {
 	Builds []buildJSON `json:"builds"`
@@ -342,9 +346,9 @@ type changeJSON struct {
 	AffectedPaths []string `json:"affectedPaths"`
 }
 
-func (a *API) ListBuilds(ctx context.Context, job string, limit int) ([]model.BuildSummary, error) {
+func (a *API) ListBuilds(ctx context.Context, job string, offset int, limit int) ([]model.BuildSummary, error) {
 	path := urlx.JobPath(job) + "/api/json"
-	tree := fmt.Sprintf("builds[number,url,result,building,timestamp,duration]{0,%d}", limit)
+	tree := fmt.Sprintf("builds[id,number,url,result,building,timestamp,duration,description,displayName,queueId,estimatedDuration,keepLog]{%d,%d}", offset, offset+limit)
 	var env buildsEnvelope
 	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &env); err != nil {
 		return nil, err
@@ -358,7 +362,7 @@ func (a *API) ListBuilds(ctx context.Context, job string, limit int) ([]model.Bu
 
 func (a *API) GetBuild(ctx context.Context, job string, number int) (model.Build, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/api/json"
-	tree := "number,url,result,building,timestamp,duration,description,displayName,fullDisplayName,artifacts[displayPath,fileName,relativePath],actions[causes[*],parameters[*]],changeSets[kind,items[commitId,author[fullName],msg,timestamp,affectedPaths]]"
+	tree := "id,number,url,result,building,timestamp,duration,description,displayName,fullDisplayName,queueId,estimatedDuration,keepLog,artifacts[displayPath,fileName,relativePath],actions[causes[*],parameters[*]],changeSets[kind,items[commitId,author[fullName],msg,timestamp,affectedPaths]]"
 	var b buildJSON
 	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &b); err != nil {
 		return model.Build{}, err
@@ -828,7 +832,20 @@ func (a *API) CancelBuild(ctx context.Context, job string, number int) error {
 }
 
 func summary(b buildJSON) model.BuildSummary {
-	return model.BuildSummary{Number: b.Number, URL: b.URL, Result: b.Result, Building: b.Building, Timestamp: b.Timestamp, Duration: b.Duration}
+	return model.BuildSummary{
+		ID:                b.ID,
+		Number:            b.Number,
+		URL:               b.URL,
+		Result:            b.Result,
+		Building:          b.Building,
+		Timestamp:         b.Timestamp,
+		Duration:          b.Duration,
+		Description:       b.Description,
+		DisplayName:       b.DisplayName,
+		QueueID:           b.QueueID,
+		EstimatedDuration: b.EstimatedDuration,
+		KeepLog:           b.KeepLog,
+	}
 }
 
 func parseActions(actions []json.RawMessage) ([]model.Cause, map[string]any) {

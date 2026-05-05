@@ -57,12 +57,18 @@ type ParameterDefinition struct {
 }
 
 type BuildSummary struct {
-	Number    int    `json:"number" jsonschema:"Jenkins build number"`
-	URL       string `json:"url" jsonschema:"Jenkins build URL"`
-	Result    string `json:"result,omitempty" jsonschema:"Jenkins build result such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or null while building"`
-	Building  bool   `json:"building" jsonschema:"Whether the build is currently running"`
-	Timestamp int64  `json:"timestamp,omitempty" jsonschema:"Build start timestamp in Unix epoch milliseconds"`
-	Duration  int64  `json:"duration,omitempty" jsonschema:"Build duration in milliseconds"`
+	ID                string `json:"id,omitempty" jsonschema:"Jenkins build id string"`
+	Number            int    `json:"number" jsonschema:"Jenkins build number"`
+	URL               string `json:"url" jsonschema:"Jenkins build URL"`
+	Result            string `json:"result,omitempty" jsonschema:"Jenkins build result such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or null while building"`
+	Building          bool   `json:"building" jsonschema:"Whether the build is currently running"`
+	Timestamp         int64  `json:"timestamp,omitempty" jsonschema:"Build start timestamp in Unix epoch milliseconds"`
+	Duration          int64  `json:"duration,omitempty" jsonschema:"Build duration in milliseconds"`
+	Description       string `json:"description,omitempty" jsonschema:"Jenkins build description"`
+	DisplayName       string `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
+	QueueID           int64  `json:"queueId,omitempty" jsonschema:"Jenkins queue item id that created this build, when available"`
+	EstimatedDuration int64  `json:"estimatedDuration,omitempty" jsonschema:"Estimated build duration in milliseconds"`
+	KeepLog           *bool  `json:"keepLog,omitempty" jsonschema:"Whether Jenkins is configured to keep this build log indefinitely"`
 }
 
 type BuildReference struct {
