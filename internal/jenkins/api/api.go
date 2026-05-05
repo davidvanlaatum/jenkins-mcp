@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/jenkins/urlx"
@@ -524,7 +525,59 @@ func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.Pi
 			PauseMS:    stage.PauseMillis,
 		})
 	}
+	pending, err := a.PipelinePendingInputActions(ctx, job, number)
+	if err != nil {
+		if !isMissingPendingInputEndpoint(err) {
+			run.PendingInputError = err.Error()
+		}
+	} else {
+		run.PendingInputActions = pending
+	}
+	run.WaitingForInput = pipelineWaitingForInput(run.Status, run.Stages, run.PendingInputActions)
 	return run, nil
+}
+
+func (a *API) PipelinePendingInputActions(ctx context.Context, job string, number int) ([]model.PendingInputAction, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/wfapi/pendingInputActions"
+	var raw []struct {
+		ID         string `json:"id"`
+		Message    string `json:"message"`
+		ProceedURL string `json:"proceedUrl"`
+		AbortURL   string `json:"abortUrl"`
+	}
+	if err := a.client.GetJSON(ctx, path, nil, &raw); err != nil {
+		return nil, err
+	}
+	actions := make([]model.PendingInputAction, 0, len(raw))
+	for _, action := range raw {
+		actions = append(actions, model.PendingInputAction{
+			ID:         action.ID,
+			Message:    action.Message,
+			ProceedURL: action.ProceedURL,
+			AbortURL:   action.AbortURL,
+		})
+	}
+	return actions, nil
+}
+
+func pipelineWaitingForInput(status string, stages []model.PipelineStage, pending []model.PendingInputAction) bool {
+	if strings.EqualFold(status, "PAUSED_PENDING_INPUT") || len(pending) > 0 {
+		return true
+	}
+	for _, stage := range stages {
+		if strings.EqualFold(stage.Status, "PAUSED_PENDING_INPUT") {
+			return true
+		}
+	}
+	return false
+}
+
+func isMissingPendingInputEndpoint(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	if !ok {
+		return false
+	}
+	return appErr.Code == apperrors.CodeNotFound
 }
 
 func (a *API) PipelineStage(ctx context.Context, job string, number int, stageID string) (model.PipelineStageDetail, error) {

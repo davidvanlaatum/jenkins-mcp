@@ -580,7 +580,7 @@ func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestRepor
 }
 
 type PipelineRunResponse struct {
-	Run model.PipelineRun `json:"run" jsonschema:"Pipeline run status and stage summary"`
+	Run model.PipelineRun `json:"run" jsonschema:"Pipeline run status, stage summary, and pending input-step state"`
 }
 
 func PipelineRun(ctx context.Context, deps Deps, in BuildRequest) (PipelineRunResponse, error) {
@@ -767,19 +767,20 @@ type WatchBuildRequest struct {
 	Job           string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Build         int    `json:"build" jsonschema:"Jenkins build number"`
 	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque watch state token returned by a previous jenkins_watch_build call"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build or Pipeline stage-status changes"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build completion, Pipeline stage-status changes, or pending input-step changes"`
 }
 type WatchBuildResponse struct {
 	Watch model.BuildWatch `json:"watch" jsonschema:"Current build watch state, progress, and completion status"`
 }
 
 type watchState struct {
-	Version int                `json:"v"`
-	Target  watchTargetState   `json:"target"`
-	Summary model.BuildSummary `json:"summary"`
-	Build   watchBuildState    `json:"build"`
-	Run     watchRunState      `json:"run"`
-	Stages  []watchStageState  `json:"stages,omitempty"`
+	Version int                      `json:"v"`
+	Target  watchTargetState         `json:"target"`
+	Summary model.BuildSummary       `json:"summary"`
+	Build   watchBuildState          `json:"build"`
+	Run     watchRunState            `json:"run"`
+	Inputs  []watchPendingInputState `json:"inputs,omitempty"`
+	Stages  []watchStageState        `json:"stages,omitempty"`
 }
 
 type watchTargetState struct {
@@ -794,7 +795,15 @@ type watchBuildState struct {
 }
 
 type watchRunState struct {
-	Status string `json:"status,omitempty"`
+	Status          string `json:"status,omitempty"`
+	WaitingForInput bool   `json:"waitingForInput,omitempty"`
+}
+
+type watchPendingInputState struct {
+	ID         string `json:"id,omitempty"`
+	Message    string `json:"message,omitempty"`
+	ProceedURL string `json:"proceedUrl,omitempty"`
+	AbortURL   string `json:"abortUrl,omitempty"`
 }
 
 type watchStageState struct {
@@ -845,6 +854,7 @@ func WatchBuild(ctx context.Context, deps Deps, in WatchBuildRequest) (WatchBuil
 			consecutiveFailures = 0
 			if pipelineDegraded && previous != nil {
 				current.Run = previous.Run
+				current.Inputs = previous.Inputs
 				current.Stages = previous.Stages
 				pipelinePtr = pipelineRunFromState(previous)
 			}
@@ -942,8 +952,19 @@ func newWatchState(controllerID, job string, build model.Build, pipeline *model.
 		return state
 	}
 	state.Run = watchRunState{
-		Status: pipeline.Status,
+		Status:          pipeline.Status,
+		WaitingForInput: pipeline.WaitingForInput,
 	}
+	inputs := make([]watchPendingInputState, 0, len(pipeline.PendingInputActions))
+	for _, input := range pipeline.PendingInputActions {
+		inputs = append(inputs, watchPendingInputState{
+			ID:         input.ID,
+			Message:    input.Message,
+			ProceedURL: input.ProceedURL,
+			AbortURL:   input.AbortURL,
+		})
+	}
+	state.Inputs = inputs
 	stages := make([]watchStageState, 0, len(pipeline.Stages))
 	for _, stage := range pipeline.Stages {
 		stages = append(stages, watchStageState{
@@ -1087,6 +1108,14 @@ func watchStatesEqual(a, b watchState) bool {
 	if a.Run != b.Run {
 		return false
 	}
+	if len(a.Inputs) != len(b.Inputs) {
+		return false
+	}
+	for i := range a.Inputs {
+		if a.Inputs[i] != b.Inputs[i] {
+			return false
+		}
+	}
 	if len(a.Stages) != len(b.Stages) {
 		return false
 	}
@@ -1130,10 +1159,30 @@ func pipelineRunFromState(state *watchState) *model.PipelineRun {
 	if state == nil {
 		return nil
 	}
-	if state.Run.Status == "" && len(state.Stages) == 0 {
+	if state.Run.Status == "" && len(state.Stages) == 0 && len(state.Inputs) == 0 {
 		return nil
 	}
-	run := &model.PipelineRun{Status: state.Run.Status}
+	run := &model.PipelineRun{
+		Status:          state.Run.Status,
+		WaitingForInput: state.Run.WaitingForInput || strings.EqualFold(state.Run.Status, "PAUSED_PENDING_INPUT") || len(state.Inputs) > 0,
+	}
+	for _, stage := range state.Stages {
+		if strings.EqualFold(stage.Status, "PAUSED_PENDING_INPUT") {
+			run.WaitingForInput = true
+			break
+		}
+	}
+	if len(state.Inputs) > 0 {
+		run.PendingInputActions = make([]model.PendingInputAction, 0, len(state.Inputs))
+		for _, input := range state.Inputs {
+			run.PendingInputActions = append(run.PendingInputActions, model.PendingInputAction{
+				ID:         input.ID,
+				Message:    input.Message,
+				ProceedURL: input.ProceedURL,
+				AbortURL:   input.AbortURL,
+			})
+		}
+	}
 	if len(state.Stages) == 0 {
 		return run
 	}
