@@ -575,6 +575,176 @@ func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
 	}
 }
 
+func TestPipelineRunReportsPendingInputActions(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"PAUSED_PENDING_INPUT","stages":[{"id":"1","name":"Deploy","status":"PAUSED_PENDING_INPUT"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			writeJSON(w, `[{"id":"approve-prod","message":"Deploy to production?","proceedUrl":"input/approve-prod/proceedEmpty","abortUrl":"input/approve-prod/abort"}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
+	if err != nil {
+		t.Fatalf("PipelineRun() error = %v", err)
+	}
+	if !got.Run.WaitingForInput {
+		t.Fatal("PipelineRun() did not report waitingForInput")
+	}
+	if len(got.Run.PendingInputActions) != 1 {
+		t.Fatalf("pendingInputActions len = %d, want 1", len(got.Run.PendingInputActions))
+	}
+	action := got.Run.PendingInputActions[0]
+	if action.ID != "approve-prod" || action.Message != "Deploy to production?" || action.ProceedURL == "" || action.AbortURL == "" {
+		t.Fatalf("pending input action = %+v", action)
+	}
+}
+
+func TestPipelineRunTreatsMissingPendingInputEndpointAsOptional(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Build","status":"IN_PROGRESS"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
+	if err != nil {
+		t.Fatalf("PipelineRun() error = %v", err)
+	}
+	if got.Run.WaitingForInput {
+		t.Fatal("PipelineRun() unexpectedly reported waitingForInput")
+	}
+}
+
+func TestPipelineRunDerivesWaitingForInputFromStageStatus(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Deploy","status":"PAUSED_PENDING_INPUT"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
+	if err != nil {
+		t.Fatalf("PipelineRun() error = %v", err)
+	}
+	if !got.Run.WaitingForInput {
+		t.Fatal("PipelineRun() did not derive waitingForInput from stage status")
+	}
+}
+
+func TestPipelineRunReturnsStagesWithPendingInputEnrichmentError(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Build","status":"IN_PROGRESS"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
+	if err != nil {
+		t.Fatalf("PipelineRun() error = %v", err)
+	}
+	if len(got.Run.Stages) != 1 {
+		t.Fatalf("stages len = %d, want 1", len(got.Run.Stages))
+	}
+	if got.Run.PendingInputError == "" {
+		t.Fatal("PipelineRun() did not report pending input enrichment error")
+	}
+}
+
+func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
+	var polls int
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/api/json":
+			writeJSON(w, `{"number":42,"url":"https://jenkins.example.com/job/app/42/","result":"","building":true,"timestamp":1,"duration":10,"artifacts":[],"actions":[],"changeSets":[]}`)
+		case "/job/app/42/wfapi/describe":
+			polls++
+			if polls < 3 {
+				writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Deploy","status":"IN_PROGRESS"}]}`)
+				return
+			}
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Deploy","status":"IN_PROGRESS"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			if polls < 3 {
+				writeJSON(w, `[]`)
+				return
+			}
+			writeJSON(w, `[{"id":"approve-prod","message":"Deploy to production?","proceedUrl":"input/approve-prod/proceedEmpty","abortUrl":"input/approve-prod/abort"}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
+
+	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	if err != nil {
+		t.Fatalf("first WatchBuild() error = %v", err)
+	}
+	if first.Watch.Pipeline == nil || first.Watch.Pipeline.WaitingForInput {
+		t.Fatalf("first WatchBuild() pipeline = %+v", first.Watch.Pipeline)
+	}
+
+	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+		Job:           "app",
+		Build:         42,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 100,
+	})
+	if err != nil {
+		t.Fatalf("second WatchBuild() error = %v", err)
+	}
+	if second.Watch.TimedOut {
+		t.Fatal("second WatchBuild() timed out despite pending input")
+	}
+	if second.Watch.Pipeline == nil || !second.Watch.Pipeline.WaitingForInput {
+		t.Fatalf("second WatchBuild() pipeline = %+v", second.Watch.Pipeline)
+	}
+	if len(second.Watch.Pipeline.PendingInputActions) != 1 || second.Watch.Pipeline.PendingInputActions[0].ID != "approve-prod" {
+		t.Fatalf("second WatchBuild() pending inputs = %+v", second.Watch.Pipeline.PendingInputActions)
+	}
+}
+
+func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStatus(t *testing.T) {
+	got := pipelineRunFromState(&watchState{
+		Run: watchRunState{Status: "PAUSED_PENDING_INPUT"},
+	})
+	if got == nil {
+		t.Fatal("pipelineRunFromState() returned nil")
+	}
+	if !got.WaitingForInput {
+		t.Fatalf("waitingForInput = false for status %q", got.Status)
+	}
+}
+
+func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStage(t *testing.T) {
+	got := pipelineRunFromState(&watchState{
+		Stages: []watchStageState{{ID: "1", Name: "Deploy", Status: "PAUSED_PENDING_INPUT"}},
+	})
+	if got == nil {
+		t.Fatal("pipelineRunFromState() returned nil")
+	}
+	if !got.WaitingForInput {
+		t.Fatalf("waitingForInput = false for stages %+v", got.Stages)
+	}
+}
+
 func TestWatchBuildLargeStageListStateRoundTrips(t *testing.T) {
 	stageItems := make([]string, 0, 700)
 	for i := 0; i < 700; i++ {

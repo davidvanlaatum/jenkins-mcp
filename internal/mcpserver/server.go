@@ -149,7 +149,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_get_test_report", "Get Test Report", "Fetch JUnit test summary and bounded test case details when available."), func(ctx context.Context, in jenkinstools.TestReportRequest) (jenkinstools.TestReportResponse, error) {
 		return jenkinstools.TestReport(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_run", "Get Pipeline Run", "Fetch Pipeline stage evidence using the Jenkins Pipeline REST wfapi endpoint when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineRunResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_run", "Get Pipeline Run", "Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineRunResponse, error) {
 		return jenkinstools.PipelineRun(ctx, s.deps, in)
 	})
 	addTool(s.raw, readOnlyTool("jenkins_get_pipeline_stage", "Get Pipeline Stage", "Fetch Pipeline stage details and child flow nodes for a stage id."), func(ctx context.Context, in jenkinstools.PipelineStageRequest) (jenkinstools.PipelineStageResponse, error) {
@@ -176,7 +176,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_get_changes", "Get Changes", "Fetch SCM change sets for a Jenkins build."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.ChangesResponse, error) {
 		return jenkinstools.Changes(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_watch_build", "Watch Build", "Bootstrap or long-poll a Jenkins build watcher. The first call without lastState returns immediately with watch.state; pass that state back as lastState on later calls to wait until completion or Pipeline stage-status changes. Invalid or expired lastState values return an error and must be re-bootstrapped. Prefer this over jenkins_get_build when waiting for progress."), func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_watch_build", "Watch Build", "Bootstrap or long-poll a Jenkins build watcher. The first call without lastState returns immediately with watch.state; pass that state back as lastState on later calls to wait until completion, Pipeline stage-status changes, or pending input-step changes. Invalid or expired lastState values return an error and must be re-bootstrapped. Prefer this over jenkins_get_build when waiting for progress."), func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
 		return jenkinstools.WatchBuild(ctx, s.deps, in)
 	})
 	addTool(s.raw, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {

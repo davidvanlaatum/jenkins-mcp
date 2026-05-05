@@ -20,10 +20,10 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_search_log`: Search a bounded console log chunk for text and return matching lines.
 - `jenkins_tail_log`: Read the tail of a Jenkins console log using progressive log offsets.
 - `jenkins_get_test_report`: Fetch JUnit test summary and bounded test case details when available.
-- `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence using the Jenkins Pipeline REST wfapi endpoint.
+- `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
-- `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion or stage-status changes.
+- `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes.
 - `jenkins_get_coverage`: Fetch coverage summary from common Jenkins coverage plugin endpoints.
 - `jenkins_get_issues`: Fetch Warnings NG or analysis issue summary from common Jenkins plugins.
 - `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.

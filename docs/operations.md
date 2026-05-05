@@ -102,4 +102,4 @@ Large responses are bounded to keep MCP payloads useful:
 - `limits.logChunkBytes`: progressive log chunk budget.
 - `limits.inlineBytes`: inline artifact budget.
 
-Use `jenkins_get_log` and `jenkins_tail_log` with cursors rather than requesting complete logs. Use `jenkins_watch_build` for status-only long-polling on build completion or Pipeline stage-state changes.
+Use `jenkins_get_log` and `jenkins_tail_log` with cursors rather than requesting complete logs. Use `jenkins_watch_build` for status-only long-polling on build completion, Pipeline stage-state changes, or pending input-step changes.

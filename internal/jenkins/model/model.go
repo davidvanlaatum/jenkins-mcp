@@ -157,13 +157,23 @@ type QueueItem struct {
 }
 
 type PipelineRun struct {
-	ID         string          `json:"id,omitempty" jsonschema:"Pipeline run id reported by Jenkins"`
-	Name       string          `json:"name,omitempty" jsonschema:"Pipeline run name"`
-	Status     string          `json:"status,omitempty" jsonschema:"Pipeline run status"`
-	StartTime  int64           `json:"startTimeMillis,omitempty" jsonschema:"Pipeline run start time in Unix epoch milliseconds"`
-	EndTime    int64           `json:"endTimeMillis,omitempty" jsonschema:"Pipeline run end time in Unix epoch milliseconds"`
-	DurationMS int64           `json:"durationMillis,omitempty" jsonschema:"Pipeline run duration in milliseconds"`
-	Stages     []PipelineStage `json:"stages,omitempty" jsonschema:"Pipeline stage summaries"`
+	ID                  string               `json:"id,omitempty" jsonschema:"Pipeline run id reported by Jenkins"`
+	Name                string               `json:"name,omitempty" jsonschema:"Pipeline run name"`
+	Status              string               `json:"status,omitempty" jsonschema:"Pipeline run status"`
+	WaitingForInput     bool                 `json:"waitingForInput" jsonschema:"Whether the Pipeline run is currently paused waiting for Jenkins input-step approval"`
+	PendingInputActions []PendingInputAction `json:"pendingInputActions,omitempty" jsonschema:"Pending Jenkins Pipeline input-step actions for this run"`
+	PendingInputError   string               `json:"pendingInputError,omitempty" jsonschema:"Error encountered while fetching optional pending input-step actions, when stage data is still available"`
+	StartTime           int64                `json:"startTimeMillis,omitempty" jsonschema:"Pipeline run start time in Unix epoch milliseconds"`
+	EndTime             int64                `json:"endTimeMillis,omitempty" jsonschema:"Pipeline run end time in Unix epoch milliseconds"`
+	DurationMS          int64                `json:"durationMillis,omitempty" jsonschema:"Pipeline run duration in milliseconds"`
+	Stages              []PipelineStage      `json:"stages,omitempty" jsonschema:"Pipeline stage summaries"`
+}
+
+type PendingInputAction struct {
+	ID         string `json:"id,omitempty" jsonschema:"Jenkins Pipeline input-step id"`
+	Message    string `json:"message,omitempty" jsonschema:"Input-step prompt message shown by Jenkins"`
+	ProceedURL string `json:"proceedUrl,omitempty" jsonschema:"Relative Jenkins URL used to proceed the input step"`
+	AbortURL   string `json:"abortUrl,omitempty" jsonschema:"Relative Jenkins URL used to abort the input step"`
 }
 
 type PipelineStage struct {
@@ -226,7 +236,7 @@ type IssuesReport struct {
 type BuildWatch struct {
 	State    string       `json:"state,omitempty" jsonschema:"Opaque state token to pass as lastState on the next watch call"`
 	Build    BuildSummary `json:"build" jsonschema:"Current build summary"`
-	Pipeline *PipelineRun `json:"pipeline,omitempty" jsonschema:"Current Pipeline run and stage state, when available"`
+	Pipeline *PipelineRun `json:"pipeline,omitempty" jsonschema:"Current Pipeline run, stage state, and pending input-step state, when available"`
 	Complete bool         `json:"complete" jsonschema:"Whether the watched build has completed"`
 	TimedOut bool         `json:"timedOut" jsonschema:"Whether the watch call returned because the wait timeout elapsed"`
 }
