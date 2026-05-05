@@ -48,13 +48,25 @@ func (a *API) InstalledPlugins(ctx context.Context) ([]model.PluginInfo, error) 
 	return raw.Plugins, err
 }
 
-func (a *API) Capabilities(ctx context.Context) model.ControllerCapabilities {
+func (a *API) Capabilities(ctx context.Context, pluginDiscoveryEnabled bool) model.ControllerCapabilities {
 	info, err := a.ControllerInfo(ctx)
 	if err != nil {
 		return model.ControllerCapabilities{
 			Controller: model.ControllerInfo{ID: a.id, URL: a.BaseURL(), Available: false, Error: err.Error()},
 			Features:   defaultFeatureMap(nil),
 			Error:      err.Error(),
+		}
+	}
+	if !pluginDiscoveryEnabled {
+		return model.ControllerCapabilities{
+			Controller: info,
+			Features:   defaultFeatureMap(nil),
+			Warnings: []model.CapabilityWarning{{
+				Code:     "optional_plugin_discovery_disabled",
+				Source:   "plugins",
+				Optional: true,
+				Message:  "Optional Jenkins plugin discovery was skipped because capabilities.pluginDiscoveryEnabled is false.",
+			}},
 		}
 	}
 	plugins, pluginErr := a.InstalledPlugins(ctx)
@@ -65,6 +77,13 @@ func (a *API) Capabilities(ctx context.Context) model.ControllerCapabilities {
 	}
 	if pluginErr != nil {
 		caps.Error = pluginErr.Error()
+		caps.Warnings = append(caps.Warnings, model.CapabilityWarning{
+			Code:     "optional_plugin_discovery_failed",
+			Source:   "plugins",
+			Optional: true,
+			Message:  "Optional Jenkins plugin discovery failed; the controller is available but plugin-derived feature detection used limited defaults.",
+			Error:    pluginErr.Error(),
+		})
 	}
 	return caps
 }

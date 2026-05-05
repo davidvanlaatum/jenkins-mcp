@@ -34,6 +34,9 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if !cfg.Updates.Enabled {
 		t.Fatal("update checks should be enabled by default")
 	}
+	if !cfg.Capabilities.PluginDiscoveryEnabled {
+		t.Fatal("plugin discovery should be enabled by default")
+	}
 	if cfg.Redacted().Controllers[0].Token != "<redacted>" {
 		t.Fatal("token was not redacted")
 	}
@@ -65,6 +68,27 @@ func TestLoadUpdateCheckFromFile(t *testing.T) {
 	}
 	if cfg.Updates.CheckIntervalHours != 6 {
 		t.Fatalf("updates.checkIntervalHours = %d", cfg.Updates.CheckIntervalHours)
+	}
+}
+
+func TestLoadCapabilityConfigFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
+		"defaultController": "default",
+		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
+		"capabilities": {
+			"pluginDiscoveryEnabled": false
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load([]string{"--config", path}, nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Capabilities.PluginDiscoveryEnabled {
+		t.Fatal("capabilities.pluginDiscoveryEnabled should be configurable to false")
 	}
 }
 
@@ -271,6 +295,19 @@ func TestLoadUpdateCheckFromEnvironment(t *testing.T) {
 	}
 	if cfg.Updates.CheckIntervalHours != 12 {
 		t.Fatalf("updates.checkIntervalHours = %d", cfg.Updates.CheckIntervalHours)
+	}
+}
+
+func TestLoadCapabilityConfigFromEnvironment(t *testing.T) {
+	cfg, err := Load(nil, []string{
+		"JENKINS_URL=https://jenkins.example.com",
+		"JENKINS_MCP_PLUGIN_DISCOVERY=false",
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Capabilities.PluginDiscoveryEnabled {
+		t.Fatal("capabilities.pluginDiscoveryEnabled should be disabled by environment")
 	}
 }
 

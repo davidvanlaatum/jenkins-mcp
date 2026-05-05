@@ -64,6 +64,7 @@ Useful environment variables:
 - `JENKINS_MCP_UPDATE_CHECK`: set to `false` to disable periodic GitHub release checks. Default `true`.
 - `JENKINS_MCP_UPDATE_REPOSITORY`: GitHub `owner/repo` used for release checks. Default `davidvanlaatum/jenkins-mcp`.
 - `JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS`: hours between release checks after startup. Default `24`.
+- `JENKINS_MCP_PLUGIN_DISCOVERY`: set to `false` to stop `jenkins_get_capabilities` from querying Jenkins `pluginManager`. Default `true`.
 
 The server checks the GitHub releases API at startup and periodically logs a warning when a newer release is available. The cached result is also returned by `jenkins_get_capabilities` under `updates`, so MCP clients and agents can surface it without reading process logs. When `updates.updateAvailable` is `true`, the response includes `updates.notificationHint` instructing agents to notify the user with the current version, latest version, and release URL. Release checks are best-effort: failures are logged at debug level and do not affect MCP requests. Disable this in network-restricted deployments:
 
@@ -71,6 +72,16 @@ The server checks the GitHub releases API at startup and periodically logs a war
 {
   "updates": {
     "enabled": false
+  }
+}
+```
+
+`jenkins_get_capabilities` normally queries Jenkins `pluginManager` to derive plugin-backed feature flags. This is optional and may be forbidden for normal Jenkins users. If plugin discovery fails, the controller remains available and the response includes a structured optional warning. Disable the query entirely in restricted deployments:
+
+```json
+{
+  "capabilities": {
+    "pluginDiscoveryEnabled": false
   }
 }
 ```

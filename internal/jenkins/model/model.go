@@ -17,11 +17,20 @@ type PluginInfo struct {
 	Enabled   bool   `json:"enabled" jsonschema:"Whether the plugin is enabled"`
 }
 
+type CapabilityWarning struct {
+	Code     string `json:"code" jsonschema:"Machine-readable warning code"`
+	Source   string `json:"source" jsonschema:"Optional capability data source associated with the warning"`
+	Optional bool   `json:"optional" jsonschema:"Whether the warning describes optional data that does not make the controller unavailable"`
+	Message  string `json:"message" jsonschema:"Human-readable warning message"`
+	Error    string `json:"error,omitempty" jsonschema:"Underlying Jenkins or network error, when available"`
+}
+
 type ControllerCapabilities struct {
-	Controller ControllerInfo  `json:"controller" jsonschema:"Jenkins controller associated with these capabilities"`
-	Features   map[string]bool `json:"features" jsonschema:"Detected feature flags keyed by capability name"`
-	Plugins    []PluginInfo    `json:"plugins,omitempty" jsonschema:"Installed Jenkins plugins relevant to MCP capabilities"`
-	Error      string          `json:"error,omitempty" jsonschema:"Capability detection error, when present"`
+	Controller ControllerInfo      `json:"controller" jsonschema:"Jenkins controller associated with these capabilities"`
+	Features   map[string]bool     `json:"features" jsonschema:"Detected feature flags keyed by capability name"`
+	Plugins    []PluginInfo        `json:"plugins,omitempty" jsonschema:"Installed Jenkins plugins relevant to MCP capabilities"`
+	Warnings   []CapabilityWarning `json:"warnings,omitempty" jsonschema:"Structured warnings for optional capability data that could not be discovered or was skipped"`
+	Error      string              `json:"error,omitempty" jsonschema:"Capability detection error, when present; optional data failures are also described in warnings"`
 }
 
 type Job struct {

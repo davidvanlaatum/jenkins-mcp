@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/config"
@@ -45,6 +46,78 @@ func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
 	}
 	if got.Updates.NotificationHint == "" {
 		t.Fatal("updates.notificationHint should be populated")
+	}
+}
+
+func TestCapabilitiesLabelsPluginDiscoveryFailureAsOptionalWarning(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"nodeName":"built-in","useSecurity":true}`)
+		case "/pluginManager/api/json":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := Capabilities(context.Background(), deps, BaseRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities() error = %v", err)
+	}
+	if len(got.Capabilities) != 1 {
+		t.Fatalf("capabilities length = %d", len(got.Capabilities))
+	}
+	caps := got.Capabilities[0]
+	if !caps.Controller.Available {
+		t.Fatal("controller should remain available when plugin discovery fails")
+	}
+	if caps.Error == "" {
+		t.Fatal("legacy error field should remain populated for compatibility")
+	}
+	if len(caps.Warnings) != 1 {
+		t.Fatalf("warnings length = %d, want 1", len(caps.Warnings))
+	}
+	warning := caps.Warnings[0]
+	if warning.Code != "optional_plugin_discovery_failed" || warning.Source != "plugins" || !warning.Optional {
+		t.Fatalf("warning = %+v", warning)
+	}
+	if warning.Error == "" {
+		t.Fatal("warning.error should include the underlying failure")
+	}
+}
+
+func TestCapabilitiesCanSkipPluginDiscovery(t *testing.T) {
+	var pluginRequests int32
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"nodeName":"built-in","useSecurity":true}`)
+		case "/pluginManager/api/json":
+			atomic.AddInt32(&pluginRequests, 1)
+			http.Error(w, "forbidden", http.StatusForbidden)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	deps.Config.Capabilities.PluginDiscoveryEnabled = false
+
+	got, err := Capabilities(context.Background(), deps, BaseRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities() error = %v", err)
+	}
+	if atomic.LoadInt32(&pluginRequests) != 0 {
+		t.Fatal("plugin discovery endpoint should not be queried when disabled")
+	}
+	if got.CapabilityConfig.PluginDiscoveryEnabled {
+		t.Fatal("response should report plugin discovery disabled")
+	}
+	if len(got.Capabilities) != 1 || len(got.Capabilities[0].Warnings) != 1 {
+		t.Fatalf("capabilities = %+v", got.Capabilities)
+	}
+	warning := got.Capabilities[0].Warnings[0]
+	if warning.Code != "optional_plugin_discovery_disabled" || !warning.Optional || warning.Error != "" {
+		t.Fatalf("warning = %+v", warning)
 	}
 }
 
