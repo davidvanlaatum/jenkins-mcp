@@ -182,6 +182,7 @@ type ListJobsRequest struct {
 	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Folder       string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
 	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
+	Cursor       string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_jobs response"`
 	Recursive    bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
 	NameContains string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
 	NameRegex    string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
@@ -190,8 +191,11 @@ type ListJobsRequest struct {
 	Building     *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
 }
 type ListJobsResponse struct {
-	Jobs      []model.Job `json:"jobs" jsonschema:"Matching Jenkins jobs"`
-	Truncated bool        `json:"truncated" jsonschema:"Whether additional matching jobs were omitted due to the requested or configured limit"`
+	Items      []model.Job `json:"items" jsonschema:"Matching Jenkins jobs for this page"`
+	NextCursor string      `json:"nextCursor,omitempty" jsonschema:"Opaque cursor to request the next page when hasMore is true"`
+	HasMore    bool        `json:"hasMore" jsonschema:"Whether additional matching jobs are available after this page"`
+	Truncated  bool        `json:"truncated" jsonschema:"Whether additional matching jobs were omitted from this page due to the requested or configured limit"`
+	Limit      int         `json:"limit" jsonschema:"Maximum number of matching jobs requested for this page after applying server caps"`
 }
 
 func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsResponse, error) {
@@ -204,9 +208,20 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 		return ListJobsResponse{}, err
 	}
 	limit := pagination.BoundLimit(in.Limit, 100, 500)
+	cursorSignature, err := listJobsCursorSignature(in)
+	if err != nil {
+		return ListJobsResponse{}, err
+	}
+	offset, gotSignature, err := pagination.DecodeCursor(in.Cursor, listJobsCursorKind)
+	if err != nil {
+		return ListJobsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid list jobs cursor", map[string]any{"cursor": in.Cursor, "reason": err.Error()})
+	}
+	if gotSignature != "" && gotSignature != cursorSignature {
+		return ListJobsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "list jobs cursor does not match request", map[string]any{"cursor": in.Cursor})
+	}
 	var jobs []model.Job
 	if in.Recursive {
-		jobs, err = listJobsRecursive(ctx, api, in.Folder, limit, filter)
+		jobs, err = listJobsRecursive(ctx, api, in.Folder, offset+limit+1, filter)
 	} else {
 		jobs, err = api.ListJobs(ctx, in.Folder)
 	}
@@ -216,11 +231,61 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 	if !in.Recursive {
 		jobs = filterJobs(jobs, filter)
 	}
-	truncated := len(jobs) > limit
-	if truncated {
-		jobs = jobs[:limit]
+	return listJobsPage(jobs, offset, limit, cursorSignature)
+}
+
+const listJobsCursorKind = "jenkins_list_jobs"
+
+func listJobsPage(jobs []model.Job, offset int, limit int, signature string) (ListJobsResponse, error) {
+	if offset > len(jobs) {
+		offset = len(jobs)
 	}
-	return ListJobsResponse{Jobs: jobs, Truncated: truncated}, nil
+	end := offset + limit
+	hasMore := len(jobs) > end
+	if end > len(jobs) {
+		end = len(jobs)
+	}
+	nextCursor := ""
+	if hasMore {
+		var err error
+		nextCursor, err = pagination.EncodeCursor(listJobsCursorKind, end, signature)
+		if err != nil {
+			return ListJobsResponse{}, err
+		}
+	}
+	return ListJobsResponse{Items: jobs[offset:end], NextCursor: nextCursor, HasMore: hasMore, Truncated: hasMore, Limit: limit}, nil
+}
+
+func listJobsCursorSignature(in ListJobsRequest) (string, error) {
+	var building *bool
+	if in.Building != nil {
+		value := *in.Building
+		building = &value
+	}
+	body, err := json.Marshal(struct {
+		Controller   string `json:"controller,omitempty"`
+		Folder       string `json:"folder,omitempty"`
+		Recursive    bool   `json:"recursive,omitempty"`
+		NameContains string `json:"nameContains,omitempty"`
+		NameRegex    string `json:"nameRegex,omitempty"`
+		Type         string `json:"type,omitempty"`
+		Status       string `json:"status,omitempty"`
+		Building     *bool  `json:"building,omitempty"`
+	}{
+		Controller:   in.Controller,
+		Folder:       in.Folder,
+		Recursive:    in.Recursive,
+		NameContains: in.NameContains,
+		NameRegex:    in.NameRegex,
+		Type:         in.Type,
+		Status:       in.Status,
+		Building:     building,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
 type jobFilter struct {
@@ -316,12 +381,12 @@ func jobMatchesType(class string, typ string) bool {
 	}
 }
 
-func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, limit int, filter jobFilter) ([]model.Job, error) {
+func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, maxMatches int, filter jobFilter) ([]model.Job, error) {
 	seen := map[string]bool{}
 	var out []model.Job
 	var walk func(string) error
 	walk = func(current string) error {
-		if len(out) > limit {
+		if maxMatches > 0 && len(out) >= maxMatches {
 			return nil
 		}
 		jobs, err := api.ListJobs(ctx, current)
@@ -335,7 +400,7 @@ func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, 
 			seen[job.FullName] = true
 			if jobMatchesFilter(job, filter) {
 				out = append(out, job)
-				if len(out) > limit {
+				if maxMatches > 0 && len(out) >= maxMatches {
 					return nil
 				}
 			}

@@ -125,7 +125,7 @@ func (s *Server) register() {
 	addTool(s.raw, readOnlyTool("jenkins_resolve_build_url", "Resolve Build URL", "Resolve a Jenkins build URL to controller, job path, and build number."), func(ctx context.Context, in jenkinstools.ResolveBuildURLRequest) (jenkinstools.ResolveBuildURLResponse, error) {
 		return jenkinstools.ResolveBuildURL(ctx, s.deps, in)
 	})
-	addTool(s.raw, readOnlyTool("jenkins_list_jobs", "List Jobs", "List Jenkins jobs at the controller root or within a folder. Supports recursive traversal plus filters for case-insensitive nameContains, nameRegex, type, derived status, and building state."), func(ctx context.Context, in jenkinstools.ListJobsRequest) (jenkinstools.ListJobsResponse, error) {
+	addTool(s.raw, readOnlyTool("jenkins_list_jobs", "List Jobs", "List Jenkins jobs at the controller root or within a folder. Supports cursor pagination, recursive traversal, and filters for case-insensitive nameContains, nameRegex, type, derived status, and building state."), func(ctx context.Context, in jenkinstools.ListJobsRequest) (jenkinstools.ListJobsResponse, error) {
 		return jenkinstools.ListJobs(ctx, s.deps, in)
 	})
 	addTool(s.raw, readOnlyTool("jenkins_get_job", "Get Job", "Get Jenkins job metadata, recent build references, and parameter definitions."), func(ctx context.Context, in jenkinstools.JobRequest) (jenkinstools.GetJobResponse, error) {
