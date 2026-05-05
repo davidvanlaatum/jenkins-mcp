@@ -330,7 +330,7 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		if tool.Name != "jenkins_list_jobs" {
 			continue
 		}
-		for _, want := range []string{"nameContains", "nameRegex", "type", "status", "building"} {
+		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building"} {
 			if !strings.Contains(tool.Description, want) {
 				t.Fatalf("description = %q, want mention of %q", tool.Description, want)
 			}
@@ -348,7 +348,7 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		if err := json.Unmarshal(raw, &schema); err != nil {
 			t.Fatalf("unmarshal input schema: %v", err)
 		}
-		for _, want := range []string{"nameContains", "nameRegex", "type", "status", "building"} {
+		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building"} {
 			property, ok := schema.Properties[want]
 			if !ok {
 				t.Fatalf("input schema missing property %q", want)

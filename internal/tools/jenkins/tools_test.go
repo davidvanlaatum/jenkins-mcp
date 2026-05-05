@@ -174,12 +174,15 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
-	if len(got.Jobs) != 1 {
-		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Jobs), got.Jobs)
+	if len(got.Items) != 1 {
+		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Items), got.Items)
 	}
-	job := got.Jobs[0]
+	job := got.Items[0]
 	if job.Name != "deploy-main" || job.Status != "failed" || !job.Building {
 		t.Fatalf("job = %+v, want deploy-main failed building", job)
+	}
+	if got.Limit != 100 || got.HasMore || got.Truncated || got.NextCursor != "" {
+		t.Fatalf("pagination = %+v, want first complete default page", got)
 	}
 }
 
@@ -199,8 +202,8 @@ func TestListJobsRegexMatchesFullName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
-	if len(got.Jobs) != 1 || got.Jobs[0].FullName != "team/api-main" {
-		t.Fatalf("ListJobs() jobs = %+v, want team/api-main", got.Jobs)
+	if len(got.Items) != 1 || got.Items[0].FullName != "team/api-main" {
+		t.Fatalf("ListJobs() jobs = %+v, want team/api-main", got.Items)
 	}
 }
 
@@ -220,14 +223,148 @@ func TestListJobsDisabledStatusWinsOverCompletedBuildResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
-	if len(got.Jobs) != 1 {
-		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Jobs), got.Jobs)
+	if len(got.Items) != 1 {
+		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Items), got.Items)
 	}
-	if got.Jobs[0].Name != "disabled-job" || got.Jobs[0].Status != "disabled" {
-		t.Fatalf("job = %+v, want disabled-job with disabled status", got.Jobs[0])
+	if got.Items[0].Name != "disabled-job" || got.Items[0].Status != "disabled" {
+		t.Fatalf("job = %+v, want disabled-job with disabled status", got.Items[0])
 	}
-	if got.Jobs[0].Disabled == nil || !*got.Jobs[0].Disabled {
-		t.Fatalf("job disabled = %v, want true", got.Jobs[0].Disabled)
+	if got.Items[0].Disabled == nil || !*got.Items[0].Disabled {
+		t.Fatalf("job disabled = %v, want true", got.Items[0].Disabled)
+	}
+}
+
+func TestListJobsPagesNonRecursiveResults(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"one","url":"https://jenkins.example.com/job/one/","color":"blue","_class":"hudson.model.FreeStyleProject"},
+			{"name":"two","url":"https://jenkins.example.com/job/two/","color":"blue","_class":"hudson.model.FreeStyleProject"},
+			{"name":"three","url":"https://jenkins.example.com/job/three/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+		]}`)
+	})
+
+	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListJobs() first page error = %v", err)
+	}
+	if len(first.Items) != 2 || first.Items[0].Name != "one" || first.Items[1].Name != "two" {
+		t.Fatalf("first page items = %+v, want one/two", first.Items)
+	}
+	if !first.HasMore || !first.Truncated || first.NextCursor == "" || first.Limit != 2 {
+		t.Fatalf("first page pagination = %+v, want hasMore truncated with cursor and limit 2", first)
+	}
+
+	second, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("ListJobs() second page error = %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Name != "three" {
+		t.Fatalf("second page items = %+v, want three", second.Items)
+	}
+	if second.HasMore || second.Truncated || second.NextCursor != "" || second.Limit != 2 {
+		t.Fatalf("second page pagination = %+v, want complete final page", second)
+	}
+}
+
+func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"one","url":"https://jenkins.example.com/job/one/","color":"blue","_class":"hudson.model.FreeStyleProject"},
+			{"name":"two","url":"https://jenkins.example.com/job/two/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+		]}`)
+	})
+
+	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListJobs() first page error = %v", err)
+	}
+	_, err = ListJobs(context.Background(), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
+	if err == nil {
+		t.Fatal("ListJobs() accepted cursor for a changed request")
+	}
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestListJobsRecursiveDetectsTruncationAcrossFolderBoundary(t *testing.T) {
+	var requested []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"folder-a","url":"https://jenkins.example.com/job/folder-a/","color":"blue","_class":"com.cloudbees.hudson.plugins.folder.Folder"},
+				{"name":"folder-b","url":"https://jenkins.example.com/job/folder-b/","color":"blue","_class":"com.cloudbees.hudson.plugins.folder.Folder"}
+			]}`)
+		case "/job/folder-a/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"job-1","url":"https://jenkins.example.com/job/folder-a/job/job-1/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+			]}`)
+		case "/job/folder-b/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"job-2","url":"https://jenkins.example.com/job/folder-b/job/job-2/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+			]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].FullName != "folder-a/job-1" {
+		t.Fatalf("items = %+v, want folder-a/job-1 only", got.Items)
+	}
+	if !got.HasMore || !got.Truncated || got.NextCursor == "" {
+		t.Fatalf("pagination = %+v, want truncation detected from later sibling folder", got)
+	}
+	if !containsString(requested, "/job/folder-b/api/json") {
+		t.Fatalf("requested paths = %+v, want traversal to inspect sibling folder for extra match", requested)
+	}
+}
+
+func TestListJobsRecursiveUsesCursorForNextPage(t *testing.T) {
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"folder-a","url":"https://jenkins.example.com/job/folder-a/","color":"blue","_class":"com.cloudbees.hudson.plugins.folder.Folder"},
+				{"name":"folder-b","url":"https://jenkins.example.com/job/folder-b/","color":"blue","_class":"com.cloudbees.hudson.plugins.folder.Folder"}
+			]}`)
+		case "/job/folder-a/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"job-1","url":"https://jenkins.example.com/job/folder-a/job/job-1/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+			]}`)
+		case "/job/folder-b/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"job-2","url":"https://jenkins.example.com/job/folder-b/job/job-2/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+			]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	if err != nil {
+		t.Fatalf("ListJobs() first page error = %v", err)
+	}
+	second, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle", Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("ListJobs() second page error = %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].FullName != "folder-b/job-2" {
+		t.Fatalf("second page items = %+v, want folder-b/job-2", second.Items)
+	}
+	if second.HasMore || second.Truncated || second.NextCursor != "" {
+		t.Fatalf("second page pagination = %+v, want final page", second)
 	}
 }
 
@@ -875,6 +1012,15 @@ func writeJSON(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, body)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func rawUnsignedWatchStateToken(state watchState) (string, error) {
