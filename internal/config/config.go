@@ -39,6 +39,7 @@ type Config struct {
 	Watch             WatchConfig        `json:"watch"`
 	Artifacts         ArtifactConfig     `json:"artifacts"`
 	Audit             AuditConfig        `json:"audit"`
+	Logging           LoggingConfig      `json:"logging"`
 	Updates           UpdateCheckConfig  `json:"updates"`
 	Capabilities      CapabilityConfig   `json:"capabilities"`
 }
@@ -73,6 +74,13 @@ type ArtifactConfig struct {
 
 type AuditConfig struct {
 	Path string `json:"path,omitempty"`
+}
+
+type LoggingConfig struct {
+	Level        string `json:"level,omitempty"`
+	Path         string `json:"path,omitempty"`
+	ToolCalls    bool   `json:"toolCalls,omitempty"`
+	ToolPayloads bool   `json:"toolPayloads,omitempty"`
 }
 
 type CapabilityConfig struct {
@@ -395,6 +403,18 @@ func merge(base, override Config) Config {
 	if override.Audit.Path != "" {
 		base.Audit.Path = override.Audit.Path
 	}
+	if override.Logging.Level != "" {
+		base.Logging.Level = override.Logging.Level
+	}
+	if override.Logging.Path != "" {
+		base.Logging.Path = override.Logging.Path
+	}
+	if override.Logging.ToolCalls {
+		base.Logging.ToolCalls = true
+	}
+	if override.Logging.ToolPayloads {
+		base.Logging.ToolPayloads = true
+	}
 	if override.Updates.enabledSet {
 		base.Updates.Enabled = override.Updates.Enabled
 	}
@@ -428,8 +448,20 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v := env["JENKINS_AUDIT_PATH"]; v != "" {
 		cfg.Audit.Path = v
 	}
+	if v := env["JENKINS_MCP_LOG_LEVEL"]; v != "" {
+		cfg.Logging.Level = v
+	}
+	if v := env["JENKINS_MCP_LOG_FILE"]; v != "" {
+		cfg.Logging.Path = v
+	}
+	if v := env["JENKINS_MCP_LOG_TOOL_CALLS"]; v != "" {
+		cfg.Logging.ToolCalls = parseBool(v)
+	}
+	if v := env["JENKINS_MCP_LOG_TOOL_PAYLOADS"]; v != "" {
+		cfg.Logging.ToolPayloads = parseBool(v)
+	}
 	if v := env["JENKINS_MCP_UPDATE_CHECK"]; v != "" {
-		cfg.Updates.Enabled = strings.EqualFold(v, "true") || v == "1"
+		cfg.Updates.Enabled = parseBool(v)
 	}
 	if v := env["JENKINS_MCP_UPDATE_REPOSITORY"]; v != "" {
 		cfg.Updates.Repository = v
@@ -440,7 +472,7 @@ func applyEnv(cfg *Config, env map[string]string) {
 		}
 	}
 	if v := env["JENKINS_MCP_PLUGIN_DISCOVERY"]; v != "" {
-		cfg.Capabilities.PluginDiscoveryEnabled = strings.EqualFold(v, "true") || v == "1"
+		cfg.Capabilities.PluginDiscoveryEnabled = parseBool(v)
 	}
 	if v := env["JENKINS_MAX_RESPONSE_BYTES"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -472,6 +504,10 @@ func applyEnv(cfg *Config, env map[string]string) {
 			cfg.Watch.MaxConsecutiveFailures = n
 		}
 	}
+}
+
+func parseBool(v string) bool {
+	return strings.EqualFold(v, "true") || v == "1"
 }
 
 func envMap(environ []string) map[string]string {

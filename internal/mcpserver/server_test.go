@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -55,22 +57,67 @@ func TestToolErrorsAreStructured(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("CallTool() content length = %d, want 1", len(result.Content))
 	}
+	if result.StructuredContent != nil {
+		t.Fatalf("CallTool() structured content = %v, want nil for error result", result.StructuredContent)
+	}
 	textContent, ok := result.Content[0].(*mcp.TextContent)
 	if !ok {
 		t.Fatalf("CallTool() content type = %T, want *mcp.TextContent", result.Content[0])
-	}
-	content, err := json.Marshal(result.StructuredContent)
-	if err != nil {
-		t.Fatalf("structured error marshal: %v", err)
-	}
-	if string(content) != textContent.Text {
-		t.Fatalf("structured error content = %s, want %s", content, textContent.Text)
 	}
 	if err := json.Unmarshal([]byte(textContent.Text), &payload); err != nil {
 		t.Fatalf("structured error unmarshal: %v", err)
 	}
 	if payload.Error.Code != "mutation_disabled" {
 		t.Fatalf("error code = %q", payload.Error.Code)
+	}
+}
+
+func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
+	var logs bytes.Buffer
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+		Logging:           config.LoggingConfig{ToolCalls: true, ToolPayloads: true},
+	}
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Logger: logger, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	_, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "jenkins_trigger_build",
+		Arguments: map[string]any{"job": "app"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	got := logs.String()
+	for _, want := range []string{
+		"tool_call_started",
+		"tool_call_finished",
+		`tool=jenkins_trigger_build`,
+		`arguments="{\"job\":\"app\"}"`,
+		`is_error=true`,
+		`error_code=mutation_disabled`,
+		`error_payload="{\"error\"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("logs missing %q in:\n%s", want, got)
+		}
 	}
 }
 
