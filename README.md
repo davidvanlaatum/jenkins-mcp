@@ -59,6 +59,24 @@ For request URL troubleshooting, enable debug logs:
 export JENKINS_MCP_LOG_LEVEL=debug
 ```
 
+By default logs are written to stderr. To make MCP server logs easier to inspect from hosts that hide stderr, write them to a file:
+
+```bash
+export JENKINS_MCP_LOG_FILE=/tmp/jenkins-mcp-server.log
+```
+
+For MCP tool-call diagnostics, enable start/finish logging:
+
+```bash
+export JENKINS_MCP_LOG_TOOL_CALLS=true
+```
+
+Full tool arguments and responses are not logged unless explicitly opted in. This can expose Jenkins job names, parameters, log text, artifact text, and other sensitive data:
+
+```bash
+export JENKINS_MCP_LOG_TOOL_PAYLOADS=true
+```
+
 For Jenkins-mutating actions:
 
 ```bash
@@ -99,6 +117,19 @@ or:
 {
   "capabilities": {
     "pluginDiscoveryEnabled": false
+  }
+}
+```
+
+Logging can also be configured in JSON:
+
+```json
+{
+  "logging": {
+    "level": "info",
+    "path": "/tmp/jenkins-mcp-server.log",
+    "toolCalls": true,
+    "toolPayloads": false
   }
 }
 ```

@@ -28,6 +28,12 @@
   "audit": {
     "path": ""
   },
+  "logging": {
+    "level": "info",
+    "path": "",
+    "toolCalls": false,
+    "toolPayloads": false
+  },
   "updates": {
     "enabled": true,
     "repository": "davidvanlaatum/jenkins-mcp",

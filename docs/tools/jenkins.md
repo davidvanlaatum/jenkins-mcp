@@ -36,6 +36,12 @@
 
 Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.
 
+## Diagnostics Logging
+
+Server logs go to stderr by default. Set `JENKINS_MCP_LOG_FILE` or `logging.path` to append logs to a file, which can be easier to inspect when MCP hosts hide stdio server logs.
+
+Set `JENKINS_MCP_LOG_TOOL_CALLS=true` or `logging.toolCalls=true` to log MCP tool call start and finish events with tool name, duration, success/error state, normalized error code, and response size. Full tool arguments and responses are only logged when `JENKINS_MCP_LOG_TOOL_PAYLOADS=true` or `logging.toolPayloads=true`; this is intended for local debugging and may include sensitive Jenkins data such as job names, build parameters, console log excerpts, and artifact content.
+
 ## Capability Discovery
 
 `jenkins_get_capabilities` treats Jenkins plugin metadata as optional. If the configured Jenkins user cannot access `pluginManager`, the controller remains available and the response includes a structured `warnings` entry with `optional: true`; the legacy `error` field remains populated for compatibility.

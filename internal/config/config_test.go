@@ -311,6 +311,64 @@ func TestLoadCapabilityConfigFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadLoggingConfigFromEnvironment(t *testing.T) {
+	cfg, err := Load(nil, []string{
+		"JENKINS_URL=https://jenkins.example.com",
+		"JENKINS_MCP_LOG_LEVEL=debug",
+		"JENKINS_MCP_LOG_FILE=/tmp/jenkins-mcp.log",
+		"JENKINS_MCP_LOG_TOOL_CALLS=true",
+		"JENKINS_MCP_LOG_TOOL_PAYLOADS=1",
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Logging.Level != "debug" {
+		t.Fatalf("logging.level = %q", cfg.Logging.Level)
+	}
+	if cfg.Logging.Path != "/tmp/jenkins-mcp.log" {
+		t.Fatalf("logging.path = %q", cfg.Logging.Path)
+	}
+	if !cfg.Logging.ToolCalls {
+		t.Fatal("logging.toolCalls should be enabled by environment")
+	}
+	if !cfg.Logging.ToolPayloads {
+		t.Fatal("logging.toolPayloads should be enabled by environment")
+	}
+}
+
+func TestLoadLoggingConfigFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
+		"defaultController": "default",
+		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
+		"logging": {
+			"level": "warn",
+			"path": "/tmp/jenkins-mcp.log",
+			"toolCalls": true,
+			"toolPayloads": true
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load([]string{"--config", path}, nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Logging.Level != "warn" {
+		t.Fatalf("logging.level = %q", cfg.Logging.Level)
+	}
+	if cfg.Logging.Path != "/tmp/jenkins-mcp.log" {
+		t.Fatalf("logging.path = %q", cfg.Logging.Path)
+	}
+	if !cfg.Logging.ToolCalls {
+		t.Fatal("logging.toolCalls should be enabled from file")
+	}
+	if !cfg.Logging.ToolPayloads {
+		t.Fatal("logging.toolPayloads should be enabled from file")
+	}
+}
+
 func TestValidateRequiresController(t *testing.T) {
 	cfg := Defaults()
 	err := cfg.Validate()

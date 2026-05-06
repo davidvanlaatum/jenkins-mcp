@@ -89,6 +89,9 @@ Environment quick start:
   JENKINS_ID        Optional controller id, defaults to "default"
   JENKINS_MUTATIONS Set to "true" to enable trigger/cancel tools
   JENKINS_MCP_LOG_LEVEL Set to "debug" to log Jenkins request URLs
+  JENKINS_MCP_LOG_FILE Write server logs to a file instead of stderr
+  JENKINS_MCP_LOG_TOOL_CALLS Set to "true" to log MCP tool call start/finish events
+  JENKINS_MCP_LOG_TOOL_PAYLOADS Set to "true" to also log full tool arguments and responses
   JENKINS_MCP_UPDATE_CHECK Set to "false" to disable GitHub release checks
 `, app.Version)
 }
