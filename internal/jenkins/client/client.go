@@ -80,9 +80,10 @@ func (c *Client) Post(ctx context.Context, path string, query url.Values, form u
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body io.Reader, headers http.Header) (int, []byte, http.Header, error) {
-	u := *c.base
-	u.Path = strings.TrimRight(c.base.Path, "/") + "/" + strings.TrimLeft(path, "/")
-	u.RawQuery = query.Encode()
+	u, err := c.endpointURL(path, query)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return 0, nil, nil, err
@@ -115,6 +116,20 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		c.logger.Debug("completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "jenkins_version", res.Header.Get("X-Jenkins"))
 	}
 	return res.StatusCode, b, res.Header, nil
+}
+
+func (c *Client) endpointURL(path string, query url.Values) (*url.URL, error) {
+	escapedPath := strings.TrimRight(c.base.EscapedPath(), "/") + "/" + strings.TrimLeft(path, "/")
+	decodedPath, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid Jenkins request path", map[string]any{"path": path})
+	}
+
+	u := *c.base
+	u.Path = decodedPath
+	u.RawPath = escapedPath
+	u.RawQuery = query.Encode()
+	return &u, nil
 }
 
 func (c *Client) addCrumb(ctx context.Context, headers http.Header) error {
