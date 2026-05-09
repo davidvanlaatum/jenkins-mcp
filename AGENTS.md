@@ -42,6 +42,8 @@
 - **Unit Tests:** Located alongside the code (e.g., `api_test.go`, `client_test.go`).
 - **Integration Tests:** Use `mcp.NewInMemoryTransports()` for end-to-end tool testing in `server_test.go`.
 - **Testdata:** Mocked Jenkins responses should be placed in `testdata/jenkins` and used for local verification when practical.
+- **Assertions:** Use `github.com/stretchr/testify` assertion helpers in tests. Prefer per-test instances (for example, `r := require.New(t)`) over package-level calls that pass `t`, and use specific helpers such as `NoError`, `Len`, `Contains`, `NotNil`, `True`, `False`, and `Equal`. Use `True`/`False` for boolean values with a helpful message, but avoid using them for comparisons when a more specific helper (for example, `Equal`, `Len`, `Greater`, or `Contains`) communicates the failure better.
+- **Contexts:** Use `t.Context()` as the base context in tests instead of `context.Background()`.
 - When fixing a regression and adding a new test, prefer writing the regression test first when practical.
 - Run the new regression test first to confirm it reproduces the bug before applying the fix.
 - After the fix, rerun the relevant tests to confirm the regression is resolved.

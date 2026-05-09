@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,26 +10,27 @@ import (
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/config"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadBoundedReturnsErrorWhenLimitExceeded(t *testing.T) {
+	r := require.New(t)
+
 	_, err := readBounded(strings.NewReader("abcdef"), 5)
-	if err == nil {
-		t.Fatal("readBounded() succeeded when response exceeded limit")
-	}
+	r.Error(err, "readBounded() should fail when response exceeds limit")
 }
 
 func TestReadBoundedAllowsExactLimit(t *testing.T) {
+	r := require.New(t)
+
 	got, err := readBounded(strings.NewReader("abcde"), 5)
-	if err != nil {
-		t.Fatalf("readBounded() error = %v", err)
-	}
-	if string(got) != "abcde" {
-		t.Fatalf("readBounded() = %q", got)
-	}
+	r.NoError(err, "readBounded()")
+	r.Equal("abcde", string(got), "readBounded()")
 }
 
 func TestDoPreservesControllerBasePath(t *testing.T) {
+	r := require.New(t)
 	var gotPath, gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -41,25 +41,16 @@ func TestDoPreservesControllerBasePath(t *testing.T) {
 	defer server.Close()
 
 	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL + "/team-jenkins/"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	status, _, _, err := c.Do(context.Background(), http.MethodGet, "job/Folder/job/App/api/json", url.Values{"tree": {"name"}}, nil, nil)
-	if err != nil {
-		t.Fatalf("Do() error = %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("status = %d", status)
-	}
-	if gotPath != "/team-jenkins/job/Folder/job/App/api/json" {
-		t.Fatalf("path = %q", gotPath)
-	}
-	if gotQuery != "tree=name" {
-		t.Fatalf("query = %q", gotQuery)
-	}
+	r.NoError(err, "New()")
+	status, _, _, err := c.Do(t.Context(), http.MethodGet, "job/Folder/job/App/api/json", url.Values{"tree": {"name"}}, nil, nil)
+	r.NoError(err, "Do()")
+	r.Equal(http.StatusOK, status, "status")
+	r.Equal("/team-jenkins/job/Folder/job/App/api/json", gotPath, "path")
+	r.Equal("tree=name", gotQuery, "query")
 }
 
 func TestDoPreservesEscapedPathSegments(t *testing.T) {
+	r := require.New(t)
 	var gotPath, gotRequestURI string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -70,48 +61,33 @@ func TestDoPreservesEscapedPathSegments(t *testing.T) {
 	defer server.Close()
 
 	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	status, _, _, err := c.Do(context.Background(), http.MethodGet, "job/Download%20Debs/api/json", url.Values{"tree": {"name"}}, nil, nil)
-	if err != nil {
-		t.Fatalf("Do() error = %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("status = %d", status)
-	}
-	if gotPath != "/job/Download Debs/api/json" {
-		t.Fatalf("path = %q", gotPath)
-	}
-	if gotRequestURI != "/job/Download%20Debs/api/json?tree=name" {
-		t.Fatalf("request URI = %q", gotRequestURI)
-	}
+	r.NoError(err, "New()")
+	status, _, _, err := c.Do(t.Context(), http.MethodGet, "job/Download%20Debs/api/json", url.Values{"tree": {"name"}}, nil, nil)
+	r.NoError(err, "Do()")
+	r.Equal(http.StatusOK, status, "status")
+	r.Equal("/job/Download Debs/api/json", gotPath, "path")
+	r.Equal("/job/Download%20Debs/api/json?tree=name", gotRequestURI, "request URI")
 }
 
 func TestEndpointURLBuildsFromEscapedPaths(t *testing.T) {
+	r := require.New(t)
+
 	c, err := New(config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com/team%20jenkins/"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	r.NoError(err, "New()")
 
 	got, err := c.endpointURL("job/Folder%20A/job/Download%20Debs/api/json", url.Values{"tree": {"name"}})
-	if err != nil {
-		t.Fatalf("endpointURL() error = %v", err)
-	}
+	r.NoError(err, "endpointURL()")
 
 	want := "https://jenkins.example.com/team%20jenkins/job/Folder%20A/job/Download%20Debs/api/json?tree=name"
-	if got.String() != want {
-		t.Fatalf("endpointURL() = %q, want %q", got.String(), want)
-	}
+	r.Equal(want, got.String(), "endpointURL()")
 }
 
 func TestEndpointURLRejectsInvalidEscapedPath(t *testing.T) {
-	c, err := New(config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	r := require.New(t)
 
-	if _, err := c.endpointURL("job/bad%zz/api/json", nil); err == nil {
-		t.Fatal("endpointURL() accepted an invalid escaped path")
-	}
+	c, err := New(config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err, "New()")
+
+	_, err = c.endpointURL("job/bad%zz/api/json", nil)
+	r.Error(err, "endpointURL() should reject an invalid escaped path")
 }

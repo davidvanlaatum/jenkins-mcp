@@ -4,47 +4,37 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadFromEnvironment(t *testing.T) {
+	r := require.New(t)
+
 	cfg, err := Load(nil, []string{
 		"JENKINS_URL=https://jenkins.example.com",
 		"JENKINS_USER=alice",
 		"JENKINS_TOKEN=secret",
 		"JENKINS_MUTATIONS=true",
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.DefaultController != "default" {
-		t.Fatalf("DefaultController = %q", cfg.DefaultController)
-	}
-	if len(cfg.Controllers) != 1 {
-		t.Fatalf("controllers length = %d", len(cfg.Controllers))
-	}
+	r.NoError(err, "Load()")
+	r.Equal("default", cfg.DefaultController, "DefaultController")
+	r.Len(cfg.Controllers, 1, "controllers")
 	controller := cfg.Controllers[0]
-	if controller.URL != "https://jenkins.example.com" || controller.Username != "alice" || controller.Token != "secret" {
-		t.Fatalf("controller = %+v", controller)
-	}
-	if !cfg.Mutations.Enabled {
-		t.Fatal("mutations should be enabled")
-	}
-	if !cfg.Updates.Enabled {
-		t.Fatal("update checks should be enabled by default")
-	}
-	if !cfg.Capabilities.PluginDiscoveryEnabled {
-		t.Fatal("plugin discovery should be enabled by default")
-	}
-	if cfg.Redacted().Controllers[0].Token != "<redacted>" {
-		t.Fatal("token was not redacted")
-	}
+	r.Equal("https://jenkins.example.com", controller.URL, "controller URL")
+	r.Equal("alice", controller.Username, "controller username")
+	r.Equal("secret", controller.Token, "controller token")
+	r.True(cfg.Mutations.Enabled, "mutations should be enabled")
+	r.True(cfg.Updates.Enabled, "update checks should be enabled by default")
+	r.True(cfg.Capabilities.PluginDiscoveryEnabled, "plugin discovery should be enabled by default")
+	r.Equal("<redacted>", cfg.Redacted().Controllers[0].Token, "token should be redacted")
 }
 
 func TestLoadUpdateCheckFromFile(t *testing.T) {
+	r := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err := os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
 		"updates": {
@@ -52,120 +42,95 @@ func TestLoadUpdateCheckFromFile(t *testing.T) {
 			"repository": "example/project",
 			"checkIntervalHours": 6
 		}
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load([]string{"--config", path}, nil)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Updates.Enabled {
-		t.Fatal("updates.enabled should be configurable to false")
-	}
-	if cfg.Updates.Repository != "example/project" {
-		t.Fatalf("updates.repository = %q", cfg.Updates.Repository)
-	}
-	if cfg.Updates.CheckIntervalHours != 6 {
-		t.Fatalf("updates.checkIntervalHours = %d", cfg.Updates.CheckIntervalHours)
-	}
+	r.NoError(err, "Load()")
+	r.False(cfg.Updates.Enabled, "updates.enabled should be configurable to false")
+	r.Equal("example/project", cfg.Updates.Repository, "updates.repository")
+	r.Equal(int64(6), cfg.Updates.CheckIntervalHours, "updates.checkIntervalHours")
 }
 
 func TestLoadCapabilityConfigFromFile(t *testing.T) {
+	r := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err := os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
 		"capabilities": {
 			"pluginDiscoveryEnabled": false
 		}
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load([]string{"--config", path}, nil)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Capabilities.PluginDiscoveryEnabled {
-		t.Fatal("capabilities.pluginDiscoveryEnabled should be configurable to false")
-	}
+	r.NoError(err, "Load()")
+	r.False(cfg.Capabilities.PluginDiscoveryEnabled, "capabilities.pluginDiscoveryEnabled should be configurable to false")
 }
 
 func TestLoadFromDefaultConfigFile(t *testing.T) {
+	r := require.New(t)
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".config", "jenkins-mcp")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
+	err := os.MkdirAll(configDir, 0o700)
+	r.NoError(err, "MkdirAll()")
 	path := filepath.Join(configDir, "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err = os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
 		"mutations": {"enabled": true}
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load(nil, []string{"HOME=" + home})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
-		t.Fatalf("controllers = %+v", cfg.Controllers)
-	}
-	if !cfg.Mutations.Enabled {
-		t.Fatal("mutations should be enabled from default config file")
-	}
+	r.NoError(err, "Load()")
+	r.Len(cfg.Controllers, 1, "controllers")
+	r.Equal("https://jenkins.example.com", cfg.Controllers[0].URL, "controller URL")
+	r.True(cfg.Mutations.Enabled, "mutations should be enabled from default config file")
 }
 
 func TestLoadFromXDGDefaultConfigFile(t *testing.T) {
+	r := require.New(t)
 	xdgConfigHome := t.TempDir()
 	configDir := filepath.Join(xdgConfigHome, "jenkins-mcp")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
+	err := os.MkdirAll(configDir, 0o700)
+	r.NoError(err, "MkdirAll()")
 	path := filepath.Join(configDir, "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err = os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}]
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load(nil, []string{"HOME=" + t.TempDir(), "XDG_CONFIG_HOME=" + xdgConfigHome})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
-		t.Fatalf("controllers = %+v", cfg.Controllers)
-	}
+	r.NoError(err, "Load()")
+	r.Len(cfg.Controllers, 1, "controllers")
+	r.Equal("https://jenkins.example.com", cfg.Controllers[0].URL, "controller URL")
 }
 
 func TestLoadFallsBackToHomeDefaultConfigFile(t *testing.T) {
+	r := require.New(t)
 	home := t.TempDir()
 	configDir := filepath.Join(home, ".config", "jenkins-mcp")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
+	err := os.MkdirAll(configDir, 0o700)
+	r.NoError(err, "MkdirAll()")
 	path := filepath.Join(configDir, "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err = os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}]
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load(nil, []string{"HOME=" + home, "XDG_CONFIG_HOME=" + t.TempDir()})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
-		t.Fatalf("controllers = %+v", cfg.Controllers)
-	}
+	r.NoError(err, "Load()")
+	r.Len(cfg.Controllers, 1, "controllers")
+	r.Equal("https://jenkins.example.com", cfg.Controllers[0].URL, "controller URL")
 }
 
 func TestDefaultConfigPathsForWindows(t *testing.T) {
+	r := require.New(t)
+
 	appData := filepath.Join("D:", "Profiles", "alice", "Roaming")
 	got := defaultConfigPathsForOS(map[string]string{
 		"APPDATA":         appData,
@@ -177,141 +142,114 @@ func TestDefaultConfigPathsForWindows(t *testing.T) {
 		filepath.Join(appData, "jenkins-mcp", "config.json"),
 		filepath.Join("C:", "Users", "alice", "AppData", "Roaming", "jenkins-mcp", "config.json"),
 	}
-	if len(got) != len(want) {
-		t.Fatalf("defaultConfigPathsForOS() length = %d, want %d: %q", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("defaultConfigPathsForOS()[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
+	r.Equal(want, got, "defaultConfigPathsForOS()")
 }
 
 func TestDefaultConfigPathsForWindowsFallsBackToUserProfile(t *testing.T) {
+	r := require.New(t)
+
 	userProfile := filepath.Join("C:", "Users", "alice")
 	got := defaultConfigPathsForOS(map[string]string{"USERPROFILE": userProfile}, "windows")
 	want := []string{filepath.Join(userProfile, "AppData", "Roaming", "jenkins-mcp", "config.json")}
-	if len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("defaultConfigPathsForOS() = %q, want %q", got, want)
-	}
+	r.Equal(want, got, "defaultConfigPathsForOS()")
 }
 
 func TestLoadIgnoresMissingDefaultConfigFile(t *testing.T) {
+	r := require.New(t)
+
 	cfg, err := Load(nil, []string{
 		"HOME=" + t.TempDir(),
 		"JENKINS_URL=https://jenkins.example.com",
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
-		t.Fatalf("controllers = %+v", cfg.Controllers)
-	}
+	r.NoError(err, "Load()")
+	r.Len(cfg.Controllers, 1, "controllers")
+	r.Equal("https://jenkins.example.com", cfg.Controllers[0].URL, "controller URL")
 }
 
 func TestLoadErrorsForMissingExplicitConfigFile(t *testing.T) {
+	r := require.New(t)
+
 	path := filepath.Join(t.TempDir(), "missing.json")
-	if _, err := Load([]string{"--config", path}, nil); err == nil {
-		t.Fatal("Load() succeeded with missing explicit config file")
-	}
+	_, err := Load([]string{"--config", path}, nil)
+	r.Error(err, "Load() should fail with missing explicit config file")
 }
 
 func TestInitCreatesDefaultConfigFile(t *testing.T) {
+	r := require.New(t)
+
 	home := t.TempDir()
 	path, err := Init([]string{"--init"}, []string{"HOME=" + home})
-	if err != nil {
-		t.Fatalf("Init() error = %v", err)
-	}
+	r.NoError(err, "Init()")
 	wantPath := filepath.Join(home, ".config", "jenkins-mcp", "config.json")
-	if path != wantPath {
-		t.Fatalf("Init() path = %q, want %q", path, wantPath)
-	}
+	r.Equal(wantPath, path, "Init() path")
 	cfg, err := loadFile(path)
-	if err != nil {
-		t.Fatalf("loadFile() error = %v", err)
-	}
-	if len(cfg.Controllers) != 1 || cfg.Controllers[0].URL != "https://jenkins.example.com" {
-		t.Fatalf("controllers = %+v", cfg.Controllers)
-	}
+	r.NoError(err, "loadFile()")
+	r.Len(cfg.Controllers, 1, "controllers")
+	r.Equal("https://jenkins.example.com", cfg.Controllers[0].URL, "controller URL")
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
+	r.NoError(err, "ReadFile()")
 	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
+	err = json.Unmarshal(b, &raw)
+	r.NoError(err, "Unmarshal()")
 	mutations, ok := raw["mutations"].(map[string]any)
-	if !ok {
-		t.Fatalf("mutations field = %#v, want object", raw["mutations"])
-	}
-	if mutations["enabled"] != false {
-		t.Fatalf("mutations.enabled = %#v, want false", mutations["enabled"])
-	}
-	if _, ok := raw["artifacts"]; ok {
-		t.Fatal("starter config should not include artifacts; downloadDir has an OS-specific default")
-	}
+	r.True(ok, "mutations field should be an object")
+	enabled, ok := mutations["enabled"].(bool)
+	r.True(ok, "mutations.enabled should be a bool")
+	r.False(enabled, "mutations.enabled")
+	_, ok = raw["artifacts"]
+	r.False(ok, "starter config should not include artifacts; downloadDir has an OS-specific default")
 }
 
 func TestInitCreatesExplicitConfigFile(t *testing.T) {
+	r := require.New(t)
+
 	path := filepath.Join(t.TempDir(), "custom.json")
 	got, err := Init([]string{"--init", "--config", path}, nil)
-	if err != nil {
-		t.Fatalf("Init() error = %v", err)
-	}
-	if got != path {
-		t.Fatalf("Init() path = %q, want %q", got, path)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
+	r.NoError(err, "Init()")
+	r.Equal(path, got, "Init() path")
+	_, err = os.Stat(path)
+	r.NoError(err, "Stat()")
 }
 
 func TestInitDoesNotOverwriteExistingConfigFile(t *testing.T) {
+	r := require.New(t)
+
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	if _, err := Init([]string{"--init", "--config", path}, nil); err == nil {
-		t.Fatal("Init() succeeded with existing config file")
-	}
+	err := os.WriteFile(path, []byte("{}"), 0o600)
+	r.NoError(err, "WriteFile()")
+	_, err = Init([]string{"--init", "--config", path}, nil)
+	r.Error(err, "Init() should fail with existing config file")
 }
 
 func TestLoadUpdateCheckFromEnvironment(t *testing.T) {
+	r := require.New(t)
+
 	cfg, err := Load(nil, []string{
 		"JENKINS_URL=https://jenkins.example.com",
 		"JENKINS_MCP_UPDATE_CHECK=false",
 		"JENKINS_MCP_UPDATE_REPOSITORY=example/project",
 		"JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS=12",
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Updates.Enabled {
-		t.Fatal("updates.enabled should be disabled by environment")
-	}
-	if cfg.Updates.Repository != "example/project" {
-		t.Fatalf("updates.repository = %q", cfg.Updates.Repository)
-	}
-	if cfg.Updates.CheckIntervalHours != 12 {
-		t.Fatalf("updates.checkIntervalHours = %d", cfg.Updates.CheckIntervalHours)
-	}
+	r.NoError(err, "Load()")
+	r.False(cfg.Updates.Enabled, "updates.enabled should be disabled by environment")
+	r.Equal("example/project", cfg.Updates.Repository, "updates.repository")
+	r.Equal(int64(12), cfg.Updates.CheckIntervalHours, "updates.checkIntervalHours")
 }
 
 func TestLoadCapabilityConfigFromEnvironment(t *testing.T) {
+	r := require.New(t)
+
 	cfg, err := Load(nil, []string{
 		"JENKINS_URL=https://jenkins.example.com",
 		"JENKINS_MCP_PLUGIN_DISCOVERY=false",
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Capabilities.PluginDiscoveryEnabled {
-		t.Fatal("capabilities.pluginDiscoveryEnabled should be disabled by environment")
-	}
+	r.NoError(err, "Load()")
+	r.False(cfg.Capabilities.PluginDiscoveryEnabled, "capabilities.pluginDiscoveryEnabled should be disabled by environment")
 }
 
 func TestLoadLoggingConfigFromEnvironment(t *testing.T) {
+	r := require.New(t)
+
 	cfg, err := Load(nil, []string{
 		"JENKINS_URL=https://jenkins.example.com",
 		"JENKINS_MCP_LOG_LEVEL=debug",
@@ -319,26 +257,17 @@ func TestLoadLoggingConfigFromEnvironment(t *testing.T) {
 		"JENKINS_MCP_LOG_TOOL_CALLS=true",
 		"JENKINS_MCP_LOG_TOOL_PAYLOADS=1",
 	})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Logging.Level != "debug" {
-		t.Fatalf("logging.level = %q", cfg.Logging.Level)
-	}
-	if cfg.Logging.Path != "/tmp/jenkins-mcp.log" {
-		t.Fatalf("logging.path = %q", cfg.Logging.Path)
-	}
-	if !cfg.Logging.ToolCalls {
-		t.Fatal("logging.toolCalls should be enabled by environment")
-	}
-	if !cfg.Logging.ToolPayloads {
-		t.Fatal("logging.toolPayloads should be enabled by environment")
-	}
+	r.NoError(err, "Load()")
+	r.Equal("debug", cfg.Logging.Level, "logging.level")
+	r.Equal("/tmp/jenkins-mcp.log", cfg.Logging.Path, "logging.path")
+	r.True(cfg.Logging.ToolCalls, "logging.toolCalls should be enabled by environment")
+	r.True(cfg.Logging.ToolPayloads, "logging.toolPayloads should be enabled by environment")
 }
 
 func TestLoadLoggingConfigFromFile(t *testing.T) {
+	r := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{
+	err := os.WriteFile(path, []byte(`{
 		"defaultController": "default",
 		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
 		"logging": {
@@ -347,37 +276,24 @@ func TestLoadLoggingConfigFromFile(t *testing.T) {
 			"toolCalls": true,
 			"toolPayloads": true
 		}
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
 
 	cfg, err := Load([]string{"--config", path}, nil)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Logging.Level != "warn" {
-		t.Fatalf("logging.level = %q", cfg.Logging.Level)
-	}
-	if cfg.Logging.Path != "/tmp/jenkins-mcp.log" {
-		t.Fatalf("logging.path = %q", cfg.Logging.Path)
-	}
-	if !cfg.Logging.ToolCalls {
-		t.Fatal("logging.toolCalls should be enabled from file")
-	}
-	if !cfg.Logging.ToolPayloads {
-		t.Fatal("logging.toolPayloads should be enabled from file")
-	}
+	r.NoError(err, "Load()")
+	r.Equal("warn", cfg.Logging.Level, "logging.level")
+	r.Equal("/tmp/jenkins-mcp.log", cfg.Logging.Path, "logging.path")
+	r.True(cfg.Logging.ToolCalls, "logging.toolCalls should be enabled from file")
+	r.True(cfg.Logging.ToolPayloads, "logging.toolPayloads should be enabled from file")
 }
 
 func TestValidateRequiresController(t *testing.T) {
+	r := require.New(t)
+
 	cfg := Defaults()
 	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() succeeded without controllers")
-	}
-	if !strings.Contains(err.Error(), "jenkins-mcp-server --init") {
-		t.Fatalf("Validate() error = %q, want --init hint", err)
-	}
+	r.Error(err, "Validate() should fail without controllers")
+	r.Contains(err.Error(), "jenkins-mcp-server --init", "Validate() error should include init hint")
 }
 
 func TestValidateRejectsInvalidUpdateRepositories(t *testing.T) {
@@ -394,33 +310,34 @@ func TestValidateRejectsInvalidUpdateRepositories(t *testing.T) {
 	}
 	for _, repository := range tests {
 		t.Run(repository, func(t *testing.T) {
+			r := require.New(t)
+
 			cfg := validTestConfig()
 			cfg.Updates.Repository = repository
-			if err := cfg.Validate(); err == nil {
-				t.Fatal("Validate() succeeded with invalid updates.repository")
-			}
+			err := cfg.Validate()
+			r.Error(err, "Validate() should fail with invalid updates.repository")
 		})
 	}
 }
 
 func TestValidateRejectsExcessiveUpdateCheckInterval(t *testing.T) {
+	r := require.New(t)
+
 	cfg := validTestConfig()
 	cfg.Updates.CheckIntervalHours = maxUpdateCheckIntervalHours + 1
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() succeeded with excessive updates.checkIntervalHours")
-	}
+	err := cfg.Validate()
+	r.Error(err, "Validate() should fail with excessive updates.checkIntervalHours")
 }
 
 func TestUpdateReleaseURLUsesValidatedRepository(t *testing.T) {
+	r := require.New(t)
+
 	cfg := validTestConfig()
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
+	err := cfg.Validate()
+	r.NoError(err, "Validate()")
 	got := cfg.Updates.ReleaseURL()
 	want := "https://api.github.com/repos/davidvanlaatum/jenkins-mcp/releases/latest"
-	if got != want {
-		t.Fatalf("ReleaseURL() = %q, want %q", got, want)
-	}
+	r.Equal(want, got, "ReleaseURL()")
 }
 
 func validTestConfig() Config {

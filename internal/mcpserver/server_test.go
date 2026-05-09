@@ -2,20 +2,20 @@ package mcpserver
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log/slog"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 )
 
 func TestToolErrorsAreStructured(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -26,53 +26,37 @@ func TestToolErrorsAreStructured(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "jenkins_trigger_build",
 		Arguments: map[string]any{"job": "app"},
 	})
-	if err != nil {
-		t.Fatalf("CallTool() error = %v", err)
-	}
-	if !result.IsError {
-		t.Fatal("CallTool() IsError = false")
-	}
+	r.NoError(err, "CallTool()")
+	r.True(result.IsError, "CallTool() IsError")
 	var payload struct {
 		Error struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if len(result.Content) != 1 {
-		t.Fatalf("CallTool() content length = %d, want 1", len(result.Content))
-	}
-	if result.StructuredContent != nil {
-		t.Fatalf("CallTool() structured content = %v, want nil for error result", result.StructuredContent)
-	}
+	r.Len(result.Content, 1, "CallTool() content")
+	r.Nil(result.StructuredContent, "CallTool() structured content should be nil for error result")
 	textContent, ok := result.Content[0].(*mcp.TextContent)
-	if !ok {
-		t.Fatalf("CallTool() content type = %T, want *mcp.TextContent", result.Content[0])
-	}
-	if err := json.Unmarshal([]byte(textContent.Text), &payload); err != nil {
-		t.Fatalf("structured error unmarshal: %v", err)
-	}
-	if payload.Error.Code != "mutation_disabled" {
-		t.Fatalf("error code = %q", payload.Error.Code)
-	}
+	r.True(ok, "CallTool() content type should be *mcp.TextContent")
+	err = json.Unmarshal([]byte(textContent.Text), &payload)
+	r.NoError(err, "structured error unmarshal")
+	r.Equal("mutation_disabled", payload.Error.Code, "error code")
 }
 
 func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
+	r := require.New(t)
 	var logs bytes.Buffer
 	cfg := config.Config{
 		DefaultController: "default",
@@ -86,25 +70,19 @@ func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	_, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "jenkins_trigger_build",
 		Arguments: map[string]any{"job": "app"},
 	})
-	if err != nil {
-		t.Fatalf("CallTool() error = %v", err)
-	}
+	r.NoError(err, "CallTool()")
 	got := logs.String()
 	for _, want := range []string{
 		"tool_call_started",
@@ -115,13 +93,12 @@ func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
 		`error_code=mutation_disabled`,
 		`error_payload="{\"error\"`,
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("logs missing %q in:\n%s", want, got)
-		}
+		r.Contains(got, want, "logs")
 	}
 }
 
 func TestRegisteredToolNames(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -132,23 +109,17 @@ func TestRegisteredToolNames(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	var names []string
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
+		r.NoError(err, "Tools()")
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
@@ -180,12 +151,11 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_trigger_build",
 		"jenkins_watch_build",
 	}
-	if !slices.Equal(names, want) {
-		t.Fatalf("tool names = %#v, want %#v", names, want)
-	}
+	r.Equal(want, names, "tool names")
 }
 
 func TestRegisteredToolAnnotations(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -196,16 +166,12 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	type wantToolAnnotations struct {
@@ -242,35 +208,23 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 	}
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
+		r.NoError(err, "Tools()")
 		got, ok := want[tool.Name]
-		if !ok {
-			t.Fatalf("unexpected tool %q", tool.Name)
-		}
-		if tool.Annotations == nil {
-			t.Fatalf("tool %q annotations are nil", tool.Name)
-		}
-		if tool.Annotations.ReadOnlyHint != got.readOnly {
-			t.Fatalf("tool %q readOnlyHint = %v, want %v", tool.Name, tool.Annotations.ReadOnlyHint, got.readOnly)
-		}
-		if tool.Annotations.IdempotentHint != got.idempotent {
-			t.Fatalf("tool %q idempotentHint = %v, want %v", tool.Name, tool.Annotations.IdempotentHint, got.idempotent)
-		}
+		r.True(ok, "unexpected tool %q", tool.Name)
+		r.NotNil(tool.Annotations, "tool %q annotations", tool.Name)
+		r.Equal(got.readOnly, tool.Annotations.ReadOnlyHint, "tool %q readOnlyHint", tool.Name)
+		r.Equal(got.idempotent, tool.Annotations.IdempotentHint, "tool %q idempotentHint", tool.Name)
 		switch {
 		case tool.Annotations.DestructiveHint == nil && got.destructive == nil:
 		case tool.Annotations.DestructiveHint == nil || got.destructive == nil:
-			t.Fatalf("tool %q destructiveHint = %v, want %v", tool.Name, tool.Annotations.DestructiveHint, got.destructive)
+			r.Equal(got.destructive, tool.Annotations.DestructiveHint, "tool %q destructiveHint", tool.Name)
 		case *tool.Annotations.DestructiveHint != *got.destructive:
-			t.Fatalf("tool %q destructiveHint = %v, want %v", tool.Name, *tool.Annotations.DestructiveHint, *got.destructive)
+			r.Equal(*got.destructive, *tool.Annotations.DestructiveHint, "tool %q destructiveHint", tool.Name)
 		}
 		delete(want, tool.Name)
 	}
 
-	if len(want) != 0 {
-		t.Fatalf("missing tools from annotations check: %#v", want)
-	}
+	r.Empty(want, "missing tools from annotations check")
 }
 
 func ptrBool(v bool) *bool {
@@ -278,6 +232,7 @@ func ptrBool(v bool) *bool {
 }
 
 func TestRegisteredToolTitles(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -288,16 +243,12 @@ func TestRegisteredToolTitles(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	want := map[string]string{
@@ -329,25 +280,18 @@ func TestRegisteredToolTitles(t *testing.T) {
 	}
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
+		r.NoError(err, "Tools()")
 		title, ok := want[tool.Name]
-		if !ok {
-			t.Fatalf("unexpected tool %q", tool.Name)
-		}
-		if tool.Title != title {
-			t.Fatalf("tool %q title = %q, want %q", tool.Name, tool.Title, title)
-		}
+		r.True(ok, "unexpected tool %q", tool.Name)
+		r.Equal(title, tool.Title, "tool %q title", tool.Name)
 		delete(want, tool.Name)
 	}
 
-	if len(want) != 0 {
-		t.Fatalf("missing tools from title check: %#v", want)
-	}
+	r.Empty(want, "missing tools from title check")
 }
 
 func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -358,29 +302,21 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
+		r.NoError(err, "Tools()")
 		if tool.Name != "jenkins_list_jobs" {
 			continue
 		}
 		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building"} {
-			if !strings.Contains(tool.Description, want) {
-				t.Fatalf("description = %q, want mention of %q", tool.Description, want)
-			}
+			r.Contains(tool.Description, want, "description")
 		}
 
 		var schema struct {
@@ -389,27 +325,21 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 			} `json:"properties"`
 		}
 		raw, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			t.Fatalf("marshal input schema: %v", err)
-		}
-		if err := json.Unmarshal(raw, &schema); err != nil {
-			t.Fatalf("unmarshal input schema: %v", err)
-		}
+		r.NoError(err, "marshal input schema")
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal input schema")
 		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building"} {
 			property, ok := schema.Properties[want]
-			if !ok {
-				t.Fatalf("input schema missing property %q", want)
-			}
-			if property.Description == "" {
-				t.Fatalf("input schema property %q has empty description", want)
-			}
+			r.True(ok, "input schema missing property %q", want)
+			r.NotEmpty(property.Description, "input schema property %q description", want)
 		}
 		return
 	}
-	t.Fatal("jenkins_list_jobs tool not found")
+	r.Fail("jenkins_list_jobs tool not found")
 }
 
 func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -420,51 +350,36 @@ func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	var checked int
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
-		if tool.InputSchema == nil {
-			t.Fatalf("tool %q has nil input schema", tool.Name)
-		}
+		r.NoError(err, "Tools()")
+		r.NotNil(tool.InputSchema, "tool %q input schema", tool.Name)
 		raw, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			t.Fatalf("marshal input schema for %q: %v", tool.Name, err)
-		}
+		r.NoError(err, "marshal input schema for %q", tool.Name)
 		var schema any
-		if err := json.Unmarshal(raw, &schema); err != nil {
-			t.Fatalf("unmarshal input schema for %q: %v", tool.Name, err)
-		}
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal input schema for %q", tool.Name)
 		object, ok := schema.(map[string]any)
-		if !ok {
-			t.Fatalf("tool %q input schema is not an object", tool.Name)
-		}
+		r.True(ok, "tool %q input schema should be an object", tool.Name)
 		properties, ok := object["properties"].(map[string]any)
-		if !ok || len(properties) == 0 {
-			t.Fatalf("tool %q input schema has no properties", tool.Name)
-		}
+		r.True(ok, "tool %q input schema properties should be an object", tool.Name)
+		r.NotEmpty(properties, "tool %q input schema properties", tool.Name)
 		assertSchemaPropertyDescriptions(t, tool.Name, "input", schema)
 		checked++
 	}
-	if checked == 0 {
-		t.Fatal("no tools checked")
-	}
+	r.NotZero(checked, "tools checked")
 }
 
 func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
 		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -475,52 +390,37 @@ func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
 	var checked int
 	for tool, err := range clientSession.Tools(ctx, nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
-		if tool.OutputSchema == nil {
-			t.Fatalf("tool %q has nil output schema", tool.Name)
-		}
+		r.NoError(err, "Tools()")
+		r.NotNil(tool.OutputSchema, "tool %q output schema", tool.Name)
 		raw, err := json.Marshal(tool.OutputSchema)
-		if err != nil {
-			t.Fatalf("marshal output schema for %q: %v", tool.Name, err)
-		}
+		r.NoError(err, "marshal output schema for %q", tool.Name)
 		var schema any
-		if err := json.Unmarshal(raw, &schema); err != nil {
-			t.Fatalf("unmarshal output schema for %q: %v", tool.Name, err)
-		}
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal output schema for %q", tool.Name)
 		object, ok := schema.(map[string]any)
-		if !ok {
-			t.Fatalf("tool %q output schema is not an object", tool.Name)
-		}
+		r.True(ok, "tool %q output schema should be an object", tool.Name)
 		properties, ok := object["properties"].(map[string]any)
-		if !ok || len(properties) == 0 {
-			t.Fatalf("tool %q output schema has no properties", tool.Name)
-		}
+		r.True(ok, "tool %q output schema properties should be an object", tool.Name)
+		r.NotEmpty(properties, "tool %q output schema properties", tool.Name)
 		assertSchemaPropertyDescriptions(t, tool.Name, "output", schema)
 		checked++
 	}
-	if checked == 0 {
-		t.Fatal("no tools checked")
-	}
+	r.NotZero(checked, "tools checked")
 }
 
 func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string, schema any) {
 	t.Helper()
+	r := require.New(t)
 	object, ok := schema.(map[string]any)
 	if !ok {
 		return
@@ -528,13 +428,9 @@ func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string,
 	if properties, ok := object["properties"].(map[string]any); ok {
 		for propertyName, propertySchema := range properties {
 			propertyObject, ok := propertySchema.(map[string]any)
-			if !ok {
-				t.Fatalf("tool %q %s schema property %q is not an object", toolName, schemaName, propertyName)
-			}
+			r.True(ok, "tool %q %s schema property %q should be an object", toolName, schemaName, propertyName)
 			description, _ := propertyObject["description"].(string)
-			if description == "" {
-				t.Fatalf("tool %q %s schema property %q has empty description", toolName, schemaName, propertyName)
-			}
+			r.NotEmpty(description, "tool %q %s schema property %q description", toolName, schemaName, propertyName)
 		}
 	}
 	for _, value := range object {
