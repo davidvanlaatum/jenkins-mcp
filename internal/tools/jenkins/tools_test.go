@@ -1,7 +1,6 @@
 package jenkins
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,10 +18,13 @@ import (
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
-	got, err := Capabilities(context.Background(), Deps{
+	r := require.New(t)
+
+	got, err := Capabilities(t.Context(), Deps{
 		Config: config.Config{},
 		UpdateStatus: func() updatecheck.Status {
 			return updatecheck.Status{
@@ -35,21 +37,15 @@ func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
 			}
 		},
 	}, BaseRequest{})
-	if err != nil {
-		t.Fatalf("Capabilities() error = %v", err)
-	}
-	if !got.Updates.UpdateAvailable {
-		t.Fatal("updates.updateAvailable should be true")
-	}
-	if got.Updates.LatestVersion != "v1.2.4" {
-		t.Fatalf("updates.latestVersion = %q", got.Updates.LatestVersion)
-	}
-	if got.Updates.NotificationHint == "" {
-		t.Fatal("updates.notificationHint should be populated")
-	}
+	r.NoError(err, "Capabilities() error")
+	r.True(got.Updates.UpdateAvailable, "updates.updateAvailable")
+	r.Equal("v1.2.4", got.Updates.LatestVersion, "updates.latestVersion")
+	r.NotEmpty(got.Updates.NotificationHint, "updates.notificationHint")
 }
 
 func TestCapabilitiesLabelsPluginDiscoveryFailureAsOptionalWarning(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/json":
@@ -61,33 +57,23 @@ func TestCapabilitiesLabelsPluginDiscoveryFailureAsOptionalWarning(t *testing.T)
 		}
 	})
 
-	got, err := Capabilities(context.Background(), deps, BaseRequest{})
-	if err != nil {
-		t.Fatalf("Capabilities() error = %v", err)
-	}
-	if len(got.Capabilities) != 1 {
-		t.Fatalf("capabilities length = %d", len(got.Capabilities))
-	}
+	got, err := Capabilities(t.Context(), deps, BaseRequest{})
+	r.NoError(err, "Capabilities() error")
+	r.Len(got.Capabilities, 1, "capabilities")
 	caps := got.Capabilities[0]
-	if !caps.Controller.Available {
-		t.Fatal("controller should remain available when plugin discovery fails")
-	}
-	if caps.Error == "" {
-		t.Fatal("legacy error field should remain populated for compatibility")
-	}
-	if len(caps.Warnings) != 1 {
-		t.Fatalf("warnings length = %d, want 1", len(caps.Warnings))
-	}
+	r.True(caps.Controller.Available, "controller should remain available when plugin discovery fails")
+	r.NotEmpty(caps.Error, "legacy error field should remain populated for compatibility")
+	r.Len(caps.Warnings, 1, "warnings")
 	warning := caps.Warnings[0]
-	if warning.Code != "optional_plugin_discovery_failed" || warning.Source != "plugins" || !warning.Optional {
-		t.Fatalf("warning = %+v", warning)
-	}
-	if warning.Error == "" {
-		t.Fatal("warning.error should include the underlying failure")
-	}
+	r.Equal("optional_plugin_discovery_failed", warning.Code, "warning code")
+	r.Equal("plugins", warning.Source, "warning source")
+	r.True(warning.Optional, "warning optional")
+	r.NotEmpty(warning.Error, "warning.error should include the underlying failure")
 }
 
 func TestCapabilitiesCanSkipPluginDiscovery(t *testing.T) {
+	r := require.New(t)
+
 	var pluginRequests int32
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -102,59 +88,54 @@ func TestCapabilitiesCanSkipPluginDiscovery(t *testing.T) {
 	})
 	deps.Config.Capabilities.PluginDiscoveryEnabled = false
 
-	got, err := Capabilities(context.Background(), deps, BaseRequest{})
-	if err != nil {
-		t.Fatalf("Capabilities() error = %v", err)
-	}
-	if atomic.LoadInt32(&pluginRequests) != 0 {
-		t.Fatal("plugin discovery endpoint should not be queried when disabled")
-	}
-	if got.CapabilityConfig.PluginDiscoveryEnabled {
-		t.Fatal("response should report plugin discovery disabled")
-	}
-	if len(got.Capabilities) != 1 || len(got.Capabilities[0].Warnings) != 1 {
-		t.Fatalf("capabilities = %+v", got.Capabilities)
-	}
+	got, err := Capabilities(t.Context(), deps, BaseRequest{})
+	r.NoError(err, "Capabilities() error")
+	r.Equal(int32(0), atomic.LoadInt32(&pluginRequests), "plugin discovery endpoint should not be queried when disabled")
+	r.False(got.CapabilityConfig.PluginDiscoveryEnabled, "response should report plugin discovery disabled")
+	r.Len(got.Capabilities, 1, "capabilities")
+	r.Len(got.Capabilities[0].Warnings, 1, "warnings")
 	warning := got.Capabilities[0].Warnings[0]
-	if warning.Code != "optional_plugin_discovery_disabled" || !warning.Optional || warning.Error != "" {
-		t.Fatalf("warning = %+v", warning)
-	}
+	r.Equal("optional_plugin_discovery_disabled", warning.Code, "warning code")
+	r.True(warning.Optional, "warning optional")
+	r.Empty(warning.Error, "warning error")
 }
 
 func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
-	_, err := TriggerBuild(context.Background(), Deps{
+	r := require.New(t)
+
+	_, err := TriggerBuild(t.Context(), Deps{
 		Config: config.Config{
 			DefaultController: "default",
 			Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
 		},
 	}, TriggerBuildRequest{Job: "app"})
-	if err == nil {
-		t.Fatal("TriggerBuild() succeeded with mutations disabled")
-	}
+	r.Error(err, "TriggerBuild() succeeded with mutations disabled")
 }
 
 func TestResolveBuildURL(t *testing.T) {
+	r := require.New(t)
+
 	ref, err := resolveBuildURL(config.Config{
 		Controllers: []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
 	}, "https://jenkins.example.com/job/weather-station/job/weather-station-server/job/main/104/")
-	if err != nil {
-		t.Fatalf("resolveBuildURL() error = %v", err)
-	}
-	if ref.Controller != "default" || ref.Job != "weather-station/weather-station-server/main" || ref.Build != 104 {
-		t.Fatalf("reference = %+v", ref)
-	}
+	r.NoError(err, "resolveBuildURL() error")
+	r.Equal("default", ref.Controller, "reference controller")
+	r.Equal("weather-station/weather-station-server/main", ref.Job, "reference job")
+	r.Equal(104, ref.Build, "reference build")
 }
 
 func TestResolveBuildURLRejectsUnknownController(t *testing.T) {
+	r := require.New(t)
+
 	_, err := resolveBuildURL(config.Config{
 		Controllers: []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
 	}, "https://other.example.com/job/app/1/")
-	if err == nil {
-		t.Fatal("resolveBuildURL() accepted unknown controller")
-	}
+	r.Error(err, "resolveBuildURL() accepted unknown controller")
 }
 
 func TestResolveBuildURLPrefersMostSpecificControllerPath(t *testing.T) {
+	r := require.New(t)
+
 	cfg := config.Config{
 		Controllers: []config.ControllerConfig{
 			{ID: "root", URL: "https://ci.example.com"},
@@ -164,23 +145,21 @@ func TestResolveBuildURLPrefersMostSpecificControllerPath(t *testing.T) {
 	}
 
 	ref, err := resolveBuildURL(cfg, "https://ci.example.com/jenkins/job/app/42/")
-	if err != nil {
-		t.Fatalf("resolveBuildURL() error = %v", err)
-	}
-	if ref.Controller != "jenkins" || ref.Job != "app" || ref.Build != 42 {
-		t.Fatalf("reference = %+v", ref)
-	}
+	r.NoError(err, "resolveBuildURL() error")
+	r.Equal("jenkins", ref.Controller, "reference controller")
+	r.Equal("app", ref.Job, "reference job")
+	r.Equal(42, ref.Build, "reference build")
 
 	ref, err = resolveBuildURL(cfg, "https://ci.example.com/jenkins-alt/job/api/7/")
-	if err != nil {
-		t.Fatalf("resolveBuildURL() error = %v", err)
-	}
-	if ref.Controller != "jenkins-alt" || ref.Job != "api" || ref.Build != 7 {
-		t.Fatalf("reference = %+v", ref)
-	}
+	r.NoError(err, "resolveBuildURL() error")
+	r.Equal("jenkins-alt", ref.Controller, "reference controller")
+	r.Equal("api", ref.Job, "reference job")
+	r.Equal(7, ref.Build, "reference build")
 }
 
 func TestResolveBuildURLMatchesControllerPathWithTrailingSlash(t *testing.T) {
+	r := require.New(t)
+
 	cfg := config.Config{
 		Controllers: []config.ControllerConfig{
 			{ID: "jenkins", URL: "https://ci.example.com/jenkins/"},
@@ -188,48 +167,44 @@ func TestResolveBuildURLMatchesControllerPathWithTrailingSlash(t *testing.T) {
 	}
 
 	ref, err := resolveBuildURL(cfg, "https://ci.example.com/jenkins/job/app/42/")
-	if err != nil {
-		t.Fatalf("resolveBuildURL() error = %v", err)
-	}
-	if ref.Controller != "jenkins" || ref.Job != "app" || ref.Build != 42 {
-		t.Fatalf("reference = %+v", ref)
-	}
+	r.NoError(err, "resolveBuildURL() error")
+	r.Equal("jenkins", ref.Controller, "reference controller")
+	r.Equal("app", ref.Job, "reference job")
+	r.Equal(42, ref.Build, "reference build")
 }
 
 func TestValidateTriggerParametersRejectsUnknown(t *testing.T) {
+	r := require.New(t)
+
 	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH"}}, map[string]string{"UNKNOWN": "main"})
-	if err == nil {
-		t.Fatal("validateTriggerParameters() accepted unknown parameter")
-	}
+	r.Error(err, "validateTriggerParameters() accepted unknown parameter")
 }
 
 func TestValidateTriggerParametersRequiresRequired(t *testing.T) {
+	r := require.New(t)
+
 	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH", Required: true}}, nil)
-	if err == nil {
-		t.Fatal("validateTriggerParameters() accepted missing required parameter")
-	}
+	r.Error(err, "validateTriggerParameters() accepted missing required parameter")
 }
 
 func TestValidateTriggerParametersAcceptsKnown(t *testing.T) {
+	r := require.New(t)
+
 	err := validateTriggerParameters([]model.ParameterDefinition{{Name: "BRANCH", Required: true}}, map[string]string{"BRANCH": "main"})
-	if err != nil {
-		t.Fatalf("validateTriggerParameters() error = %v", err)
-	}
+	r.NoError(err, "validateTriggerParameters() error")
 }
 
 func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
+	r := require.New(t)
+
+	treeCh := make(chan string, 1)
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/json" {
 			http.NotFound(w, r)
 			return
 		}
 		tree := r.URL.Query().Get("tree")
-		if !strings.Contains(tree, "lastBuild[number,result,building]") || !strings.Contains(tree, "lastCompletedBuild[number,result,building]") {
-			t.Fatalf("tree query = %q, want build status fields", tree)
-		}
-		if !strings.Contains(tree, "disabled") {
-			t.Fatalf("tree query = %q, want disabled field", tree)
-		}
+		treeCh <- tree
 		writeJSON(w, `{"jobs":[
 			{"name":"deploy-main","url":"https://jenkins.example.com/job/deploy-main/","color":"red_anime","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastBuild":{"number":12,"result":"","building":true},"lastCompletedBuild":{"number":11,"result":"FAILURE","building":false}},
 			{"name":"deploy-old","url":"https://jenkins.example.com/job/deploy-old/","color":"blue","_class":"hudson.model.FreeStyleProject","lastBuild":{"number":3,"result":"SUCCESS","building":false}},
@@ -238,28 +213,31 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	})
 
 	building := true
-	got, err := ListJobs(context.Background(), deps, ListJobsRequest{
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{
 		NameContains: "DEPLOY",
 		Type:         "pipeline",
 		Status:       "failure",
 		Building:     &building,
 	})
-	if err != nil {
-		t.Fatalf("ListJobs() error = %v", err)
-	}
-	if len(got.Items) != 1 {
-		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Items), got.Items)
-	}
+	r.NoError(err, "ListJobs() error")
+	tree := <-treeCh
+	r.Contains(tree, "lastBuild[number,result,building]", "tree query should include lastBuild status fields")
+	r.Contains(tree, "lastCompletedBuild[number,result,building]", "tree query should include lastCompletedBuild status fields")
+	r.Contains(tree, "disabled", "tree query should include disabled field")
+	r.Len(got.Items, 1, "ListJobs() items")
 	job := got.Items[0]
-	if job.Name != "deploy-main" || job.Status != "failed" || !job.Building {
-		t.Fatalf("job = %+v, want deploy-main failed building", job)
-	}
-	if got.Limit != 100 || got.HasMore || got.Truncated || got.NextCursor != "" {
-		t.Fatalf("pagination = %+v, want first complete default page", got)
-	}
+	r.Equal("deploy-main", job.Name, "job name")
+	r.Equal("failed", job.Status, "job status")
+	r.True(job.Building, "job building")
+	r.Equal(100, got.Limit, "pagination limit")
+	r.False(got.HasMore, "pagination hasMore")
+	r.False(got.Truncated, "pagination truncated")
+	r.Empty(got.NextCursor, "pagination next cursor")
 }
 
 func TestListJobsRegexMatchesFullName(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/team/api/json" {
 			http.NotFound(w, r)
@@ -271,16 +249,15 @@ func TestListJobsRegexMatchesFullName(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Folder: "team", NameRegex: "^team/api"})
-	if err != nil {
-		t.Fatalf("ListJobs() error = %v", err)
-	}
-	if len(got.Items) != 1 || got.Items[0].FullName != "team/api-main" {
-		t.Fatalf("ListJobs() jobs = %+v, want team/api-main", got.Items)
-	}
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Folder: "team", NameRegex: "^team/api"})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal("team/api-main", got.Items[0].FullName, "job full name")
 }
 
 func TestListJobsDisabledStatusWinsOverCompletedBuildResult(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/json" {
 			http.NotFound(w, r)
@@ -292,22 +269,18 @@ func TestListJobsDisabledStatusWinsOverCompletedBuildResult(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Status: "disabled"})
-	if err != nil {
-		t.Fatalf("ListJobs() error = %v", err)
-	}
-	if len(got.Items) != 1 {
-		t.Fatalf("ListJobs() returned %d jobs, want 1: %+v", len(got.Items), got.Items)
-	}
-	if got.Items[0].Name != "disabled-job" || got.Items[0].Status != "disabled" {
-		t.Fatalf("job = %+v, want disabled-job with disabled status", got.Items[0])
-	}
-	if got.Items[0].Disabled == nil || !*got.Items[0].Disabled {
-		t.Fatalf("job disabled = %v, want true", got.Items[0].Disabled)
-	}
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Status: "disabled"})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal("disabled-job", got.Items[0].Name, "job name")
+	r.Equal("disabled", got.Items[0].Status, "job status")
+	r.NotNil(got.Items[0].Disabled, "job disabled")
+	r.True(*got.Items[0].Disabled, "job disabled")
 }
 
 func TestListJobsPagesNonRecursiveResults(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/json" {
 			http.NotFound(w, r)
@@ -320,30 +293,29 @@ func TestListJobsPagesNonRecursiveResults(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 2})
-	if err != nil {
-		t.Fatalf("ListJobs() first page error = %v", err)
-	}
-	if len(first.Items) != 2 || first.Items[0].Name != "one" || first.Items[1].Name != "two" {
-		t.Fatalf("first page items = %+v, want one/two", first.Items)
-	}
-	if !first.HasMore || !first.Truncated || first.NextCursor == "" || first.Limit != 2 {
-		t.Fatalf("first page pagination = %+v, want hasMore truncated with cursor and limit 2", first)
-	}
+	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2})
+	r.NoError(err, "ListJobs() first page error")
+	r.Len(first.Items, 2, "first page items")
+	r.Equal("one", first.Items[0].Name, "first item name")
+	r.Equal("two", first.Items[1].Name, "second item name")
+	r.True(first.HasMore, "first page hasMore")
+	r.True(first.Truncated, "first page truncated")
+	r.NotEmpty(first.NextCursor, "first page next cursor")
+	r.Equal(2, first.Limit, "first page limit")
 
-	second, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 2, Cursor: first.NextCursor})
-	if err != nil {
-		t.Fatalf("ListJobs() second page error = %v", err)
-	}
-	if len(second.Items) != 1 || second.Items[0].Name != "three" {
-		t.Fatalf("second page items = %+v, want three", second.Items)
-	}
-	if second.HasMore || second.Truncated || second.NextCursor != "" || second.Limit != 2 {
-		t.Fatalf("second page pagination = %+v, want complete final page", second)
-	}
+	second, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2, Cursor: first.NextCursor})
+	r.NoError(err, "ListJobs() second page error")
+	r.Len(second.Items, 1, "second page items")
+	r.Equal("three", second.Items[0].Name, "second page item name")
+	r.False(second.HasMore, "second page hasMore")
+	r.False(second.Truncated, "second page truncated")
+	r.Empty(second.NextCursor, "second page next cursor")
+	r.Equal(2, second.Limit, "second page limit")
 }
 
 func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/json" {
 			http.NotFound(w, r)
@@ -355,18 +327,16 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Limit: 1})
-	if err != nil {
-		t.Fatalf("ListJobs() first page error = %v", err)
-	}
-	_, err = ListJobs(context.Background(), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
-	if err == nil {
-		t.Fatal("ListJobs() accepted cursor for a changed request")
-	}
+	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1})
+	r.NoError(err, "ListJobs() first page error")
+	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
+	r.Error(err, "ListJobs() accepted cursor for a changed request")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
 func TestListJobsRecursiveDetectsTruncationAcrossFolderBoundary(t *testing.T) {
+	r := require.New(t)
+
 	var requested []string
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		requested = append(requested, r.URL.Path)
@@ -389,22 +359,19 @@ func TestListJobsRecursiveDetectsTruncationAcrossFolderBoundary(t *testing.T) {
 		}
 	})
 
-	got, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
-	if err != nil {
-		t.Fatalf("ListJobs() error = %v", err)
-	}
-	if len(got.Items) != 1 || got.Items[0].FullName != "folder-a/job-1" {
-		t.Fatalf("items = %+v, want folder-a/job-1 only", got.Items)
-	}
-	if !got.HasMore || !got.Truncated || got.NextCursor == "" {
-		t.Fatalf("pagination = %+v, want truncation detected from later sibling folder", got)
-	}
-	if !containsString(requested, "/job/folder-b/api/json") {
-		t.Fatalf("requested paths = %+v, want traversal to inspect sibling folder for extra match", requested)
-	}
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "items")
+	r.Equal("folder-a/job-1", got.Items[0].FullName, "item full name")
+	r.True(got.HasMore, "pagination hasMore")
+	r.True(got.Truncated, "pagination truncated")
+	r.NotEmpty(got.NextCursor, "pagination next cursor")
+	r.Contains(requested, "/job/folder-b/api/json", "requested paths")
 }
 
 func TestListJobsRecursiveUsesCursorForNextPage(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/json":
@@ -425,30 +392,27 @@ func TestListJobsRecursiveUsesCursorForNextPage(t *testing.T) {
 		}
 	})
 
-	first, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
-	if err != nil {
-		t.Fatalf("ListJobs() first page error = %v", err)
-	}
-	second, err := ListJobs(context.Background(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle", Cursor: first.NextCursor})
-	if err != nil {
-		t.Fatalf("ListJobs() second page error = %v", err)
-	}
-	if len(second.Items) != 1 || second.Items[0].FullName != "folder-b/job-2" {
-		t.Fatalf("second page items = %+v, want folder-b/job-2", second.Items)
-	}
-	if second.HasMore || second.Truncated || second.NextCursor != "" {
-		t.Fatalf("second page pagination = %+v, want final page", second)
-	}
+	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	r.NoError(err, "ListJobs() first page error")
+	second, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle", Cursor: first.NextCursor})
+	r.NoError(err, "ListJobs() second page error")
+	r.Len(second.Items, 1, "second page items")
+	r.Equal("folder-b/job-2", second.Items[0].FullName, "second page item full name")
+	r.False(second.HasMore, "second page hasMore")
+	r.False(second.Truncated, "second page truncated")
+	r.Empty(second.NextCursor, "second page next cursor")
 }
 
 func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
+	r := require.New(t)
+
 	var trees []string
-	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/job/app/api/json" {
-			http.NotFound(w, r)
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, req)
 			return
 		}
-		tree := r.URL.Query().Get("tree")
+		tree := req.URL.Query().Get("tree")
 		trees = append(trees, tree)
 		switch {
 		case strings.Contains(tree, "{0,2}"):
@@ -458,47 +422,44 @@ func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
 			]}`)
 		case strings.Contains(tree, "{1,3}"):
 			writeJSON(w, `{"builds":[
-				{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"FAILURE","building":false,"timestamp":900,"duration":1500,"description":"failed tests","displayName":"#42","queueId":98,"estimatedDuration":2500,"keepLog":false}
-			]}`)
+					{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"FAILURE","building":false,"timestamp":900,"duration":1500,"description":"failed tests","displayName":"#42","queueId":98,"estimatedDuration":2500,"keepLog":false}
+				]}`)
 		default:
-			t.Fatalf("unexpected tree query %q", tree)
+			r.Failf("unexpected tree query", "tree query %q", tree)
 		}
 	})
 
-	first, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1})
-	if err != nil {
-		t.Fatalf("ListBuilds() first page error = %v", err)
-	}
-	if len(first.Items) != 1 {
-		t.Fatalf("first page items = %d, want 1", len(first.Items))
-	}
+	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	r.NoError(err, "ListBuilds() first page error")
+	r.Len(first.Items, 1, "first page items")
 	build := first.Items[0]
-	if build.ID != "43" || build.Description != "deployed prod" || build.DisplayName != "v1.2.3" || build.QueueID != 99 || build.EstimatedDuration != 3000 || build.KeepLog == nil || !*build.KeepLog {
-		t.Fatalf("first build summary = %+v, want extended fields populated", build)
-	}
-	if build.Result != "SUCCESS" {
-		t.Fatalf("first build result = %q, want SUCCESS", build.Result)
-	}
-	if !first.HasMore || !first.Truncated || first.NextCursor == "" || first.Limit != 1 {
-		t.Fatalf("first page pagination = %+v, want hasMore truncated with cursor and limit 1", first)
-	}
+	r.Equal("43", build.ID, "first build ID")
+	r.Equal("deployed prod", build.Description, "first build description")
+	r.Equal("v1.2.3", build.DisplayName, "first build display name")
+	r.Equal(int64(99), build.QueueID, "first build queue ID")
+	r.Equal(int64(3000), build.EstimatedDuration, "first build estimated duration")
+	r.NotNil(build.KeepLog, "first build keepLog")
+	r.True(*build.KeepLog, "first build keepLog")
+	r.Equal("SUCCESS", build.Result, "first build result")
+	r.True(first.HasMore, "first page hasMore")
+	r.True(first.Truncated, "first page truncated")
+	r.NotEmpty(first.NextCursor, "first page next cursor")
+	r.Equal(1, first.Limit, "first page limit")
 
-	second, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1, Cursor: first.NextCursor})
-	if err != nil {
-		t.Fatalf("ListBuilds() second page error = %v", err)
-	}
-	if len(second.Items) != 1 || second.Items[0].Number != 42 {
-		t.Fatalf("second page items = %+v, want build 42", second.Items)
-	}
-	if second.HasMore || second.Truncated || second.NextCursor != "" || second.Limit != 1 {
-		t.Fatalf("second page pagination = %+v, want complete final page", second)
-	}
-	if len(trees) != 2 {
-		t.Fatalf("tree queries = %+v, want two paged requests", trees)
-	}
+	second, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Cursor: first.NextCursor})
+	r.NoError(err, "ListBuilds() second page error")
+	r.Len(second.Items, 1, "second page items")
+	r.Equal(42, second.Items[0].Number, "second page build number")
+	r.False(second.HasMore, "second page hasMore")
+	r.False(second.Truncated, "second page truncated")
+	r.Empty(second.NextCursor, "second page next cursor")
+	r.Equal(1, second.Limit, "second page limit")
+	r.Len(trees, 2, "tree queries")
 }
 
 func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/app/api/json" {
 			http.NotFound(w, r)
@@ -510,29 +471,24 @@ func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "app", Limit: 1})
-	if err != nil {
-		t.Fatalf("ListBuilds() first page error = %v", err)
-	}
-	_, err = ListBuilds(context.Background(), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
-	if err == nil {
-		t.Fatal("ListBuilds() accepted cursor for a changed request")
-	}
+	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	r.NoError(err, "ListBuilds() first page error")
+	_, err = ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
+	r.Error(err, "ListBuilds() accepted cursor for a changed request")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
 func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {
-	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/job/app/43/api/json" {
-			http.NotFound(w, r)
+	r := require.New(t)
+
+	treeCh := make(chan string, 1)
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/43/api/json" {
+			http.NotFound(w, req)
 			return
 		}
-		tree := r.URL.Query().Get("tree")
-		for _, want := range []string{"id", "queueId", "estimatedDuration", "keepLog"} {
-			if !strings.Contains(tree, want) {
-				t.Fatalf("tree query = %q, want %q", tree, want)
-			}
-		}
+		tree := req.URL.Query().Get("tree")
+		treeCh <- tree
 		writeJSON(w, `{
 			"id":"43",
 			"number":43,
@@ -553,34 +509,42 @@ func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {
 		}`)
 	})
 
-	got, err := GetBuild(context.Background(), deps, BuildRequest{Job: "app", Build: 43})
-	if err != nil {
-		t.Fatalf("GetBuild() error = %v", err)
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	tree := <-treeCh
+	for _, want := range []string{"id", "queueId", "estimatedDuration", "keepLog"} {
+		r.Contains(tree, want, "tree query")
 	}
 	build := got.Build
-	if build.ID != "43" || build.Description != "deployed prod" || build.DisplayName != "v1.2.3" || build.FullDisplayName != "app v1.2.3" || build.QueueID != 99 || build.EstimatedDuration != 3000 || build.KeepLog == nil || !*build.KeepLog {
-		t.Fatalf("build = %+v, want extended summary fields populated", build)
-	}
+	r.Equal("43", build.ID, "build ID")
+	r.Equal("deployed prod", build.Description, "build description")
+	r.Equal("v1.2.3", build.DisplayName, "build display name")
+	r.Equal("app v1.2.3", build.FullDisplayName, "build full display name")
+	r.Equal(int64(99), build.QueueID, "build queue ID")
+	r.Equal(int64(3000), build.EstimatedDuration, "build estimated duration")
+	r.NotNil(build.KeepLog, "build keepLog")
+	r.True(*build.KeepLog, "build keepLog")
 }
 
 func TestListJobsRejectsInvalidNameRegex(t *testing.T) {
-	_, err := ListJobs(context.Background(), Deps{}, ListJobsRequest{NameRegex: "["})
-	if err == nil {
-		t.Fatal("ListJobs() accepted invalid regex")
-	}
+	r := require.New(t)
+
+	_, err := ListJobs(t.Context(), Deps{}, ListJobsRequest{NameRegex: "["})
+	r.Error(err, "ListJobs() accepted invalid regex")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
 func TestGetJobReturnsDerivedStatusAndDisabledState(t *testing.T) {
+	r := require.New(t)
+
+	treeCh := make(chan string, 1)
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/app/api/json" {
 			http.NotFound(w, r)
 			return
 		}
 		tree := r.URL.Query().Get("tree")
-		if !strings.Contains(tree, "disabled") || !strings.Contains(tree, "lastCompletedBuild[number,url,result,building,timestamp,duration]") {
-			t.Fatalf("tree query = %q, want disabled and lastCompletedBuild fields", tree)
-		}
+		treeCh <- tree
 		writeJSON(w, `{
 			"name":"app",
 			"fullName":"folder/app",
@@ -598,19 +562,20 @@ func TestGetJobReturnsDerivedStatusAndDisabledState(t *testing.T) {
 		}`)
 	})
 
-	got, err := GetJob(context.Background(), deps, JobRequest{Job: "app"})
-	if err != nil {
-		t.Fatalf("GetJob() error = %v", err)
-	}
-	if got.Job.Status != "disabled" || !got.Job.Building {
-		t.Fatalf("job = %+v, want disabled status and building=true", got.Job.Job)
-	}
-	if got.Job.Disabled == nil || !*got.Job.Disabled {
-		t.Fatalf("job disabled = %v, want true", got.Job.Disabled)
-	}
+	got, err := GetJob(t.Context(), deps, JobRequest{Job: "app"})
+	r.NoError(err, "GetJob() error")
+	tree := <-treeCh
+	r.Contains(tree, "disabled", "tree query should include disabled field")
+	r.Contains(tree, "lastCompletedBuild[number,url,result,building,timestamp,duration]", "tree query should include lastCompletedBuild fields")
+	r.Equal("disabled", got.Job.Status, "job status")
+	r.True(got.Job.Building, "job building")
+	r.NotNil(got.Job.Disabled, "job disabled")
+	r.True(*got.Job.Disabled, "job disabled")
 }
 
 func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/api/json":
@@ -622,32 +587,24 @@ func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	if first.Watch.State == "" {
-		t.Fatal("first WatchBuild() returned empty state")
-	}
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	r.NotEmpty(first.Watch.State, "first WatchBuild() state")
 
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() did not time out")
-	}
-	if second.Watch.State != first.Watch.State {
-		t.Fatal("second WatchBuild() changed state without a semantic update")
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.TimedOut, "second WatchBuild() timed out")
+	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() state")
 }
 
 func TestWatchBuildKeepsStateStableWhenOnlyDurationChanges(t *testing.T) {
+	r := require.New(t)
+
 	var buildRequests int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -665,28 +622,22 @@ func TestWatchBuildKeepsStateStableWhenOnlyDurationChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() did not time out when only duration changed")
-	}
-	if second.Watch.State != first.Watch.State {
-		t.Fatal("second WatchBuild() changed state when only duration changed")
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.TimedOut, "second WatchBuild() did not time out when only duration changed")
+	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() changed state when only duration changed")
 }
 
 func TestWatchBuildReturnsWhenStageStatusChanges(t *testing.T) {
+	r := require.New(t)
+
 	var polls int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -704,31 +655,25 @@ func TestWatchBuildReturnsWhenStageStatusChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 100,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() timed out despite a stage transition")
-	}
-	if second.Watch.State == first.Watch.State {
-		t.Fatal("second WatchBuild() did not advance state")
-	}
-	if second.Watch.Pipeline == nil || len(second.Watch.Pipeline.Stages) < 2 || second.Watch.Pipeline.Stages[1].Status != "IN_PROGRESS" {
-		t.Fatalf("second WatchBuild() pipeline = %+v", second.Watch.Pipeline)
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.False(second.Watch.TimedOut, "second WatchBuild() timed out despite a stage transition")
+	r.NotEqual(first.Watch.State, second.Watch.State, "second WatchBuild() did not advance state")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() pipeline")
+	r.GreaterOrEqual(len(second.Watch.Pipeline.Stages), 2, "second WatchBuild() pipeline stages")
+	r.Equal("IN_PROGRESS", second.Watch.Pipeline.Stages[1].Status, "second WatchBuild() pipeline stage status")
 }
 
 func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
+	r := require.New(t)
+
 	var polls int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -746,31 +691,24 @@ func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 100,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() timed out despite a pipeline run-status transition")
-	}
-	if second.Watch.State == first.Watch.State {
-		t.Fatal("second WatchBuild() did not advance state on pipeline run-status change")
-	}
-	if second.Watch.Pipeline == nil || second.Watch.Pipeline.Status != "PAUSED_PENDING_INPUT" {
-		t.Fatalf("second WatchBuild() pipeline = %+v", second.Watch.Pipeline)
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.False(second.Watch.TimedOut, "second WatchBuild() timed out despite a pipeline run-status transition")
+	r.NotEqual(first.Watch.State, second.Watch.State, "second WatchBuild() did not advance state on pipeline run-status change")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() pipeline")
+	r.Equal("PAUSED_PENDING_INPUT", second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
 }
 
 func TestPipelineRunReportsPendingInputActions(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/wfapi/describe":
@@ -782,23 +720,20 @@ func TestPipelineRunReportsPendingInputActions(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("PipelineRun() error = %v", err)
-	}
-	if !got.Run.WaitingForInput {
-		t.Fatal("PipelineRun() did not report waitingForInput")
-	}
-	if len(got.Run.PendingInputActions) != 1 {
-		t.Fatalf("pendingInputActions len = %d, want 1", len(got.Run.PendingInputActions))
-	}
+	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "PipelineRun() error")
+	r.True(got.Run.WaitingForInput, "PipelineRun() did not report waitingForInput")
+	r.Len(got.Run.PendingInputActions, 1, "pendingInputActions")
 	action := got.Run.PendingInputActions[0]
-	if action.ID != "approve-prod" || action.Message != "Deploy to production?" || action.ProceedURL == "" || action.AbortURL == "" {
-		t.Fatalf("pending input action = %+v", action)
-	}
+	r.Equal("approve-prod", action.ID, "pending input action ID")
+	r.Equal("Deploy to production?", action.Message, "pending input action message")
+	r.NotEmpty(action.ProceedURL, "pending input action proceed URL")
+	r.NotEmpty(action.AbortURL, "pending input action abort URL")
 }
 
 func TestPipelineRunTreatsMissingPendingInputEndpointAsOptional(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/wfapi/describe":
@@ -810,16 +745,14 @@ func TestPipelineRunTreatsMissingPendingInputEndpointAsOptional(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("PipelineRun() error = %v", err)
-	}
-	if got.Run.WaitingForInput {
-		t.Fatal("PipelineRun() unexpectedly reported waitingForInput")
-	}
+	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "PipelineRun() error")
+	r.False(got.Run.WaitingForInput, "PipelineRun() unexpectedly reported waitingForInput")
 }
 
 func TestPipelineRunDerivesWaitingForInputFromStageStatus(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/wfapi/describe":
@@ -831,16 +764,14 @@ func TestPipelineRunDerivesWaitingForInputFromStageStatus(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("PipelineRun() error = %v", err)
-	}
-	if !got.Run.WaitingForInput {
-		t.Fatal("PipelineRun() did not derive waitingForInput from stage status")
-	}
+	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "PipelineRun() error")
+	r.True(got.Run.WaitingForInput, "PipelineRun() did not derive waitingForInput from stage status")
 }
 
 func TestPipelineRunReturnsStagesWithPendingInputEnrichmentError(t *testing.T) {
+	r := require.New(t)
+
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/wfapi/describe":
@@ -852,19 +783,15 @@ func TestPipelineRunReturnsStagesWithPendingInputEnrichmentError(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(context.Background(), deps, BuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("PipelineRun() error = %v", err)
-	}
-	if len(got.Run.Stages) != 1 {
-		t.Fatalf("stages len = %d, want 1", len(got.Run.Stages))
-	}
-	if got.Run.PendingInputError == "" {
-		t.Fatal("PipelineRun() did not report pending input enrichment error")
-	}
+	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "PipelineRun() error")
+	r.Len(got.Run.Stages, 1, "stages")
+	r.NotEmpty(got.Run.PendingInputError, "PipelineRun() did not report pending input enrichment error")
 }
 
 func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
+	r := require.New(t)
+
 	var polls int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -888,59 +815,48 @@ func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	if first.Watch.Pipeline == nil || first.Watch.Pipeline.WaitingForInput {
-		t.Fatalf("first WatchBuild() pipeline = %+v", first.Watch.Pipeline)
-	}
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	r.NotNil(first.Watch.Pipeline, "first WatchBuild() pipeline")
+	r.False(first.Watch.Pipeline.WaitingForInput, "first WatchBuild() pipeline waitingForInput")
 
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 100,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() timed out despite pending input")
-	}
-	if second.Watch.Pipeline == nil || !second.Watch.Pipeline.WaitingForInput {
-		t.Fatalf("second WatchBuild() pipeline = %+v", second.Watch.Pipeline)
-	}
-	if len(second.Watch.Pipeline.PendingInputActions) != 1 || second.Watch.Pipeline.PendingInputActions[0].ID != "approve-prod" {
-		t.Fatalf("second WatchBuild() pending inputs = %+v", second.Watch.Pipeline.PendingInputActions)
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.False(second.Watch.TimedOut, "second WatchBuild() timed out despite pending input")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() pipeline")
+	r.True(second.Watch.Pipeline.WaitingForInput, "second WatchBuild() pipeline waitingForInput")
+	r.Len(second.Watch.Pipeline.PendingInputActions, 1, "second WatchBuild() pending inputs")
+	r.Equal("approve-prod", second.Watch.Pipeline.PendingInputActions[0].ID, "second WatchBuild() pending input ID")
 }
 
 func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStatus(t *testing.T) {
+	r := require.New(t)
+
 	got := pipelineRunFromState(&watchState{
 		Run: watchRunState{Status: "PAUSED_PENDING_INPUT"},
 	})
-	if got == nil {
-		t.Fatal("pipelineRunFromState() returned nil")
-	}
-	if !got.WaitingForInput {
-		t.Fatalf("waitingForInput = false for status %q", got.Status)
-	}
+	r.NotNil(got, "pipelineRunFromState() returned nil")
+	r.True(got.WaitingForInput, "waitingForInput for status %q", got.Status)
 }
 
 func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStage(t *testing.T) {
+	r := require.New(t)
+
 	got := pipelineRunFromState(&watchState{
 		Stages: []watchStageState{{ID: "1", Name: "Deploy", Status: "PAUSED_PENDING_INPUT"}},
 	})
-	if got == nil {
-		t.Fatal("pipelineRunFromState() returned nil")
-	}
-	if !got.WaitingForInput {
-		t.Fatalf("waitingForInput = false for stages %+v", got.Stages)
-	}
+	r.NotNil(got, "pipelineRunFromState() returned nil")
+	r.True(got.WaitingForInput, "waitingForInput for stages %+v", got.Stages)
 }
 
 func TestWatchBuildLargeStageListStateRoundTrips(t *testing.T) {
+	r := require.New(t)
+
 	stageItems := make([]string, 0, 700)
 	for i := 0; i < 700; i++ {
 		stageItems = append(stageItems, fmt.Sprintf(`{"id":"stage-%d","name":"Long Stage Name %d","status":"IN_PROGRESS"}`, i, i))
@@ -958,29 +874,23 @@ func TestWatchBuildLargeStageListStateRoundTrips(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	if first.Watch.State == "" {
-		t.Fatal("first WatchBuild() returned empty state")
-	}
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	r.NotEmpty(first.Watch.State, "first WatchBuild() returned empty state")
 
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 15,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() did not time out")
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.TimedOut, "second WatchBuild() did not time out")
 }
 
 func TestWatchBuildToleratesTransientPollingFailures(t *testing.T) {
+	r := require.New(t)
+
 	var buildRequests int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -998,16 +908,14 @@ func TestWatchBuildToleratesTransientPollingFailures(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	got, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("WatchBuild() error = %v", err)
-	}
-	if got.Watch.State == "" {
-		t.Fatal("WatchBuild() returned empty state after transient failures")
-	}
+	got, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "WatchBuild() error")
+	r.NotEmpty(got.Watch.State, "WatchBuild() returned empty state after transient failures")
 }
 
 func TestWatchBuildReturnsImmediatelyWhenBuildAlreadyComplete(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/api/json":
@@ -1019,29 +927,23 @@ func TestWatchBuildReturnsImmediatelyWhenBuildAlreadyComplete(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
 
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 100,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() timed out for a completed build")
-	}
-	if !second.Watch.Complete {
-		t.Fatal("second WatchBuild() did not report completed build")
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.False(second.Watch.TimedOut, "second WatchBuild() timed out for a completed build")
+	r.True(second.Watch.Complete, "second WatchBuild() did not report completed build")
 }
 
 func TestWatchBuildDegradesWhenPipelineEndpointIsFlaky(t *testing.T) {
+	r := require.New(t)
+
 	var pipelineRequests int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1059,34 +961,24 @@ func TestWatchBuildDegradesWhenPipelineEndpointIsFlaky(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() should time out when only wfapi is flaky")
-	}
-	if second.Watch.Complete {
-		t.Fatal("second WatchBuild() unexpectedly marked build complete")
-	}
-	if second.Watch.Pipeline == nil {
-		t.Fatal("second WatchBuild() lost pipeline context during transient wfapi degradation")
-	}
-	if second.Watch.Pipeline.Status != first.Watch.Pipeline.Status {
-		t.Fatalf("second WatchBuild() pipeline status = %q, want %q", second.Watch.Pipeline.Status, first.Watch.Pipeline.Status)
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.TimedOut, "second WatchBuild() should time out when only wfapi is flaky")
+	r.False(second.Watch.Complete, "second WatchBuild() unexpectedly marked build complete")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() lost pipeline context during transient wfapi degradation")
+	r.Equal(first.Watch.Pipeline.Status, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
 }
 
 func TestWatchBuildPreservesPipelineSnapshotWhenBuildCompletesDuringWfapiOutage(t *testing.T) {
+	r := require.New(t)
+
 	var buildRequests int
 	var pipelineRequests int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1110,31 +1002,23 @@ func TestWatchBuildPreservesPipelineSnapshotWhenBuildCompletesDuringWfapiOutage(
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 50,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.Complete {
-		t.Fatal("second WatchBuild() did not report completed build")
-	}
-	if second.Watch.Pipeline == nil {
-		t.Fatal("second WatchBuild() lost pipeline snapshot during wfapi outage")
-	}
-	if second.Watch.Pipeline.Status != first.Watch.Pipeline.Status {
-		t.Fatalf("second WatchBuild() pipeline status = %q, want %q", second.Watch.Pipeline.Status, first.Watch.Pipeline.Status)
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.Complete, "second WatchBuild() did not report completed build")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() lost pipeline snapshot during wfapi outage")
+	r.Equal(first.Watch.Pipeline.Status, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
 }
 
 func TestWatchBuildDoesNotMaskBrokenPipelineMetadata(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/api/json":
@@ -1148,14 +1032,14 @@ func TestWatchBuildDoesNotMaskBrokenPipelineMetadata(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	_, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err == nil {
-		t.Fatal("WatchBuild() masked broken pipeline metadata")
-	}
+	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.Error(err, "WatchBuild() masked broken pipeline metadata")
 	assertAppErrorCode(t, err, apperrors.CodeJenkins)
 }
 
 func TestWatchBuildRejectsStateFromDifferentBuild(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/api/json":
@@ -1171,23 +1055,21 @@ func TestWatchBuildRejectsStateFromDifferentBuild(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
 
-	_, err = WatchBuild(context.Background(), deps, WatchBuildRequest{
+	_, err = WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "other",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
 	})
-	if err == nil {
-		t.Fatal("WatchBuild() accepted state token from a different build")
-	}
+	r.Error(err, "WatchBuild() accepted state token from a different build")
 }
 
 func TestWatchBuildTimesOutAfterDeadlineWhenPollingKeepsFailing(t *testing.T) {
+	r := require.New(t)
+
 	var requests int
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1205,40 +1087,26 @@ func TestWatchBuildTimesOutAfterDeadlineWhenPollingKeepsFailing(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	first, err := WatchBuild(context.Background(), deps, WatchBuildRequest{Job: "app", Build: 42})
-	if err != nil {
-		t.Fatalf("first WatchBuild() error = %v", err)
-	}
-	second, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 15,
 	})
-	if err != nil {
-		t.Fatalf("second WatchBuild() error = %v", err)
-	}
-	if !second.Watch.TimedOut {
-		t.Fatal("second WatchBuild() did not time out after repeated polling failures")
-	}
-	if second.Watch.State != first.Watch.State {
-		t.Fatal("second WatchBuild() changed state after repeated polling failures")
-	}
-	if second.Watch.Build.URL != first.Watch.Build.URL {
-		t.Fatalf("second WatchBuild() build URL = %q, want %q", second.Watch.Build.URL, first.Watch.Build.URL)
-	}
-	if second.Watch.Pipeline == nil {
-		t.Fatal("second WatchBuild() lost pipeline context after repeated polling failures")
-	}
-	if second.Watch.Pipeline.Status != first.Watch.Pipeline.Status {
-		t.Fatalf("second WatchBuild() pipeline status = %q, want %q", second.Watch.Pipeline.Status, first.Watch.Pipeline.Status)
-	}
-	if len(second.Watch.Pipeline.Stages) != len(first.Watch.Pipeline.Stages) {
-		t.Fatalf("second WatchBuild() pipeline stages = %d, want %d", len(second.Watch.Pipeline.Stages), len(first.Watch.Pipeline.Stages))
-	}
+	r.NoError(err, "second WatchBuild() error")
+	r.True(second.Watch.TimedOut, "second WatchBuild() did not time out after repeated polling failures")
+	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() changed state after repeated polling failures")
+	r.Equal(first.Watch.Build.URL, second.Watch.Build.URL, "second WatchBuild() build URL")
+	r.NotNil(second.Watch.Pipeline, "second WatchBuild() lost pipeline context after repeated polling failures")
+	r.Equal(first.Watch.Pipeline.Status, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
+	r.Len(second.Watch.Pipeline.Stages, len(first.Watch.Pipeline.Stages), "second WatchBuild() pipeline stages")
 }
 
 func TestWatchBuildBootstrapHonorsTimeoutOnRepeatedFailures(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/job/app/42/api/json":
@@ -1248,17 +1116,17 @@ func TestWatchBuildBootstrapHonorsTimeoutOnRepeatedFailures(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	_, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		WaitTimeoutMs: 15,
 	})
-	if err == nil {
-		t.Fatal("WatchBuild() succeeded despite repeated bootstrap failures")
-	}
+	r.Error(err, "WatchBuild() succeeded despite repeated bootstrap failures")
 }
 
 func TestWatchBuildRejectsForgedUnsignedStateToken(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
@@ -1279,68 +1147,61 @@ func TestWatchBuildRejectsForgedUnsignedStateToken(t *testing.T) {
 			Building: true,
 		},
 	})
-	if err != nil {
-		t.Fatalf("rawUnsignedWatchStateToken() error = %v", err)
-	}
+	r.NoError(err, "rawUnsignedWatchStateToken() error")
 	forged := forgedPayload + ".invalid-signature"
 
-	_, err = WatchBuild(context.Background(), deps, WatchBuildRequest{
+	_, err = WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     forged,
 		WaitTimeoutMs: 15,
 	})
-	if err == nil {
-		t.Fatal("WatchBuild() accepted forged unsigned watch state")
-	}
+	r.Error(err, "WatchBuild() accepted forged unsigned watch state")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
-	if !strings.Contains(err.Error(), "expired") {
-		t.Fatalf("WatchBuild() error = %v, want expired/re-bootstrap guidance", err)
-	}
+	r.Contains(err.Error(), "expired", "WatchBuild() error should include expired/re-bootstrap guidance")
 }
 
 func TestWatchBuildRejectsMalformedStateToken(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	_, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:       "app",
 		Build:     42,
 		LastState: "not-a-valid-watch-token",
 	})
-	if err == nil {
-		t.Fatal("WatchBuild() accepted malformed watch state")
-	}
+	r.Error(err, "WatchBuild() accepted malformed watch state")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
 func TestWatchBuildRejectsOversizedStateToken(t *testing.T) {
+	r := require.New(t)
+
 	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
 	oversized := strings.Repeat("a", maxWatchStateTokenBytes+1)
-	_, err := WatchBuild(context.Background(), deps, WatchBuildRequest{
+	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
 		Job:       "app",
 		Build:     42,
 		LastState: oversized,
 	})
-	if err == nil {
-		t.Fatal("WatchBuild() accepted oversized watch state")
-	}
+	r.Error(err, "WatchBuild() accepted oversized watch state")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
 func newWatchTestDeps(t *testing.T, handler http.HandlerFunc, watchCfg config.WatchConfig) Deps {
 	t.Helper()
+	r := require.New(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
 	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("client.New() error = %v", err)
-	}
+	r.NoError(err, "client.New() error")
 
 	cfg := config.Defaults()
 	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}
@@ -1355,13 +1216,12 @@ func newWatchTestDeps(t *testing.T, handler http.HandlerFunc, watchCfg config.Wa
 
 func newJenkinsTestDeps(t *testing.T, handler http.HandlerFunc) Deps {
 	t.Helper()
+	r := require.New(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
 	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("client.New() error = %v", err)
-	}
+	r.NoError(err, "client.New() error")
 
 	cfg := config.Defaults()
 	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}
@@ -1379,15 +1239,6 @@ func writeJSON(w http.ResponseWriter, body string) {
 	_, _ = io.WriteString(w, body)
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func rawUnsignedWatchStateToken(state watchState) (string, error) {
 	payload, err := json.Marshal(state)
 	if err != nil {
@@ -1398,11 +1249,8 @@ func rawUnsignedWatchStateToken(state watchState) (string, error) {
 
 func assertAppErrorCode(t *testing.T, err error, want apperrors.Code) {
 	t.Helper()
-	appErr, ok := err.(*apperrors.Error)
-	if !ok {
-		t.Fatalf("error type = %T, want *errors.Error", err)
-	}
-	if appErr.Code != want {
-		t.Fatalf("error code = %q, want %q", appErr.Code, want)
-	}
+	r := require.New(t)
+	var appErr *apperrors.Error
+	r.ErrorAs(err, &appErr, "error type")
+	r.Equal(want, appErr.Code, "error code")
 }

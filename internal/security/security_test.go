@@ -1,24 +1,27 @@
 package security
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestSafeJoinRejectsTraversal(t *testing.T) {
 	tests := []string{"../secret", "/tmp/secret", "nested/../../secret"}
 	for _, test := range tests {
 		t.Run(test, func(t *testing.T) {
-			if _, err := SafeJoin("/tmp/root", test); err == nil {
-				t.Fatal("SafeJoin() accepted unsafe path")
-			}
+			r := require.New(t)
+
+			_, err := SafeJoin("/tmp/root", test)
+			r.Error(err, "SafeJoin() should reject unsafe path")
 		})
 	}
 }
 
 func TestSafeJoinAllowsNestedRelativePath(t *testing.T) {
+	r := require.New(t)
+
 	got, err := SafeJoin("/tmp/root", "job/artifact.txt")
-	if err != nil {
-		t.Fatalf("SafeJoin() error = %v", err)
-	}
-	if got != "/tmp/root/job/artifact.txt" {
-		t.Fatalf("SafeJoin() = %q", got)
-	}
+	r.NoError(err, "SafeJoin()")
+	r.Equal("/tmp/root/job/artifact.txt", got, "SafeJoin()")
 }

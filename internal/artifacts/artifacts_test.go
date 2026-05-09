@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type fakeFetcher struct {
@@ -18,25 +20,22 @@ func (f *fakeFetcher) DownloadArtifact(_ context.Context, _ string, _ int, relat
 }
 
 func TestDownloadPreservesArtifactDirectoryStructure(t *testing.T) {
+	r := require.New(t)
 	fetcher := &fakeFetcher{}
-	result, err := Download(context.Background(), t.TempDir(), fetcher, "folder/job", 1, "linux/report.xml")
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
-	if fetcher.path != "linux/report.xml" {
-		t.Fatalf("fetched path = %q", fetcher.path)
-	}
-	if filepath.Base(filepath.Dir(result.Path)) != "linux" {
-		t.Fatalf("download path did not preserve artifact directory: %q", result.Path)
-	}
+
+	result, err := Download(t.Context(), t.TempDir(), fetcher, "folder/job", 1, "linux/report.xml")
+
+	r.NoError(err, "Download()")
+	r.Equal("linux/report.xml", fetcher.path, "fetched path")
+	r.Equal("linux", filepath.Base(filepath.Dir(result.Path)), "download path should preserve artifact directory")
 }
 
 func TestDownloadRejectsUnsafeArtifactPathBeforeFetch(t *testing.T) {
+	r := require.New(t)
 	fetcher := &fakeFetcher{}
-	if _, err := Download(context.Background(), t.TempDir(), fetcher, "job", 1, "../consoleText"); err == nil {
-		t.Fatal("Download() accepted unsafe artifact path")
-	}
-	if fetcher.called {
-		t.Fatal("fetcher was called for unsafe artifact path")
-	}
+
+	_, err := Download(t.Context(), t.TempDir(), fetcher, "job", 1, "../consoleText")
+
+	r.Error(err, "Download() should reject unsafe artifact path")
+	r.False(fetcher.called, "fetcher should not be called for unsafe artifact path")
 }
