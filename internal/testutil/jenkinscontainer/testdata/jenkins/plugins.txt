@@ -1,0 +1,9 @@
+configuration-as-code
+job-dsl
+workflow-aggregator
+pipeline-rest-api
+junit
+warnings-ng
+coverage
+credentials
+matrix-auth

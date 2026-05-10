@@ -47,6 +47,7 @@
 - When fixing a regression and adding a new test, prefer writing the regression test first when practical.
 - Run the new regression test first to confirm it reproduces the bug before applying the fix.
 - After the fix, rerun the relevant tests to confirm the regression is resolved.
+- In sandboxed Codex environments, Go and golangci-lint may not be able to write their default caches under the user home directory. When validation fails with cache permission or missing cache-entry errors, rerun with writable caches such as `GOCACHE=/private/tmp/jenkins-mcp-gocache` and `GOLANGCI_LINT_CACHE=/private/tmp/jenkins-mcp-golangci-lint`.
 
 ### Coding Standards
 - **Logging:** Use `log/slog`.
