@@ -1,0 +1,36 @@
+jenkins:
+  systemMessage: "jenkins-mcp integration test controller"
+  numExecutors: 2
+  mode: NORMAL
+  scmCheckoutRetryCount: 0
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "admin-password"
+        - id: "read-only"
+          password: "read-only-password"
+        - id: "build-only"
+          password: "build-only-password"
+        - id: "no-config-access"
+          password: "no-config-access-password"
+  authorizationStrategy:
+    globalMatrix:
+      permissions:
+        - "Overall/Administer:admin"
+        - "Overall/Read:read-only"
+        - "Job/Read:read-only"
+        - "Overall/Read:build-only"
+        - "Job/Read:build-only"
+        - "Job/Build:build-only"
+        - "Overall/Read:no-config-access"
+        - "Job/Read:no-config-access"
+
+security:
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"

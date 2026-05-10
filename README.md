@@ -143,6 +143,11 @@ go test ./...
 go build ./cmd/jenkins-mcp-server
 ```
 
+`go test ./...` includes Docker-backed integration tests when Docker is
+available. Those tests build a dedicated Jenkins LTS image with JCasC, Job DSL,
+and the plugins needed by the MCP tool surface. Exclude them with
+`go test -tags=no_integration ./...`.
+
 GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, and GoReleaser snapshot validation. Tagged releases matching `v*` are built and published with GoReleaser.
 
 See also:

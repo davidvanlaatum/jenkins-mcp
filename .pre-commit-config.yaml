@@ -17,6 +17,8 @@ repos:
           - -w
       - id: golangci-lint-repo-mod
       - id: go-test-mod
+        args:
+          - -tags=no_integration
       - id: go-build-repo-mod
 
   - repo: local
