@@ -1377,6 +1377,29 @@ type QueueItemResponse struct {
 	Item model.QueueItem `json:"item" jsonschema:"Jenkins queue item detail"`
 }
 
+type WatchQueueItemRequest struct {
+	Controller    string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	ID            int64  `json:"id" jsonschema:"Jenkins queue item id to watch"`
+	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque queue watch state token returned by a previous jenkins_watch_queue_item call"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for queue assignment, cancellation, disappearance, or another queue state change"`
+}
+type WatchQueueItemResponse struct {
+	Watch model.QueueWatch `json:"watch" jsonschema:"Current queue watch state, terminal status, and resolved build reference when available"`
+}
+
+type queueWatchState struct {
+	Version int                   `json:"v"`
+	Target  queueWatchTargetState `json:"target"`
+	Status  string                `json:"status"`
+	Item    *model.QueueItem      `json:"item,omitempty"`
+	Build   *model.BuildReference `json:"build,omitempty"`
+}
+
+type queueWatchTargetState struct {
+	Controller string `json:"controller"`
+	ID         int64  `json:"id"`
+}
+
 type ListQueueResponse struct {
 	Items []model.QueueItem `json:"items" jsonschema:"Current Jenkins queue items"`
 }
@@ -1397,6 +1420,216 @@ func QueueItem(ctx context.Context, deps Deps, in QueueItemRequest) (QueueItemRe
 	}
 	item, err := api.QueueItem(ctx, in.ID)
 	return QueueItemResponse{Item: item}, err
+}
+
+func WatchQueueItem(ctx context.Context, deps Deps, in WatchQueueItemRequest) (WatchQueueItemResponse, error) {
+	if in.ID <= 0 {
+		return WatchQueueItemResponse{}, apperrors.New(apperrors.CodeInvalidRequest, "queue item id must be positive")
+	}
+	controllerID := in.Controller
+	if controllerID == "" {
+		controllerID = deps.Config.DefaultController
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return WatchQueueItemResponse{}, err
+	}
+	previous, err := decodeQueueWatchState(in.LastState)
+	if err != nil {
+		return WatchQueueItemResponse{}, err
+	}
+	if previous != nil && (previous.Target.Controller != controllerID || previous.Target.ID != in.ID) {
+		return WatchQueueItemResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "watch state does not match requested queue item", map[string]any{
+			"controller": controllerID,
+			"id":         in.ID,
+		})
+	}
+	waitTimeout := deps.Config.Watch.DefaultWaitTimeoutMs
+	if in.WaitTimeoutMs > 0 {
+		waitTimeout = in.WaitTimeoutMs
+	}
+	if waitTimeout > deps.Config.Watch.MaxWaitTimeoutMs {
+		waitTimeout = deps.Config.Watch.MaxWaitTimeoutMs
+	}
+	deadline := time.Now().Add(time.Duration(waitTimeout) * time.Millisecond)
+	consecutiveFailures := 0
+
+	for {
+		current, err := fetchQueueWatchState(ctx, deps.Config, api, controllerID, in.ID)
+		if err == nil {
+			consecutiveFailures = 0
+			changed := previous == nil || !queueWatchStatesEqual(*previous, current)
+			terminal := queueWatchStateTerminal(current)
+			if changed || terminal || !time.Now().Before(deadline) {
+				stateToken, err := encodeQueueWatchState(current)
+				if err != nil {
+					return WatchQueueItemResponse{}, err
+				}
+				return WatchQueueItemResponse{Watch: queueWatchResponse(current, stateToken, !changed && !terminal)}, nil
+			}
+		} else {
+			if previous == nil && !time.Now().Before(deadline) {
+				return WatchQueueItemResponse{}, apperrors.Wrap(apperrors.CodeUnavailable, "jenkins queue watch bootstrap timed out", map[string]any{
+					"waitTimeoutMs": waitTimeout,
+					"lastError":     err.Error(),
+				})
+			}
+			if previous != nil && !time.Now().Before(deadline) {
+				return WatchQueueItemResponse{Watch: queueWatchResponse(*previous, in.LastState, true)}, nil
+			}
+			consecutiveFailures++
+			if consecutiveFailures >= deps.Config.Watch.MaxConsecutiveFailures {
+				return WatchQueueItemResponse{}, apperrors.Wrap(apperrors.CodeUnavailable, "jenkins queue watch polling failed repeatedly", map[string]any{
+					"consecutiveFailures": consecutiveFailures,
+					"lastError":           err.Error(),
+				})
+			}
+		}
+
+		if err := sleepWithContext(ctx, watchSleepDuration(time.Until(deadline), deps.Config.Watch.PollIntervalMs)); err != nil {
+			return WatchQueueItemResponse{}, err
+		}
+	}
+}
+
+func fetchQueueWatchState(ctx context.Context, cfg config.Config, api *jenkinsapi.API, controllerID string, id int64) (queueWatchState, error) {
+	item, err := api.QueueItem(ctx, id)
+	if err != nil {
+		if isNotFound(err) {
+			return queueWatchState{
+				Version: 1,
+				Target:  queueWatchTargetState{Controller: controllerID, ID: id},
+				Status:  "disappeared",
+			}, nil
+		}
+		return queueWatchState{}, err
+	}
+	state := queueWatchState{
+		Version: 1,
+		Target:  queueWatchTargetState{Controller: controllerID, ID: id},
+		Status:  "queued",
+		Item:    &item,
+	}
+	if item.Cancelled {
+		state.Status = "cancelled"
+	}
+	if item.Executable != nil {
+		state.Status = "executable"
+		if item.Executable.URL != "" {
+			if ref, err := resolveBuildURL(cfg, item.Executable.URL); err == nil {
+				state.Build = &ref
+			}
+		}
+	}
+	return state, nil
+}
+
+func encodeQueueWatchState(state queueWatchState) (string, error) {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.CodeJenkins, "failed to encode queue watch state", err.Error())
+	}
+	compressed, err := compressWatchState(payload)
+	if err != nil {
+		return "", err
+	}
+	key, err := getWatchStateSigningKey()
+	if err != nil {
+		return "", err
+	}
+	payloadToken := base64.RawURLEncoding.EncodeToString(compressed)
+	signature := signWatchStateToken(key, payloadToken)
+	token := payloadToken + "." + signature
+	if len(token) > maxWatchStateTokenBytes {
+		return "", apperrors.Wrap(apperrors.CodeJenkins, "queue watch state too large to encode", map[string]any{"maxBytes": maxWatchStateTokenBytes})
+	}
+	return token, nil
+}
+
+func decodeQueueWatchState(raw string) (*queueWatchState, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	if len(raw) > maxWatchStateTokenBytes {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "watch state too large", map[string]any{"maxBytes": maxWatchStateTokenBytes})
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	key, err := getWatchStateSigningKey()
+	if err != nil {
+		return nil, err
+	}
+	if !verifyWatchStateToken(key, parts[0], parts[1]) {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "watch state expired; you need to re-bootstrap")
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	payload, err := decompressWatchState(compressed)
+	if err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	var state queueWatchState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return nil, apperrors.New(apperrors.CodeInvalidRequest, "invalid watch state")
+	}
+	if state.Version != 1 {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "unsupported watch state version", state.Version)
+	}
+	return &state, nil
+}
+
+func queueWatchStatesEqual(a, b queueWatchState) bool {
+	return a.Target == b.Target &&
+		a.Status == b.Status &&
+		queueItemsEqual(a.Item, b.Item) &&
+		buildReferencesEqual(a.Build, b.Build)
+}
+
+func queueItemsEqual(a, b *model.QueueItem) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.ID != b.ID || a.URL != b.URL || a.Why != b.Why || a.Cancelled != b.Cancelled || a.TaskName != b.TaskName || a.TaskURL != b.TaskURL {
+		return false
+	}
+	if a.Executable == nil || b.Executable == nil {
+		return a.Executable == b.Executable
+	}
+	return stableWatchSummary(*a.Executable) == stableWatchSummary(*b.Executable)
+}
+
+func buildReferencesEqual(a, b *model.BuildReference) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func queueWatchStateTerminal(state queueWatchState) bool {
+	return state.Status == "executable" || state.Status == "cancelled" || state.Status == "disappeared"
+}
+
+func queueWatchResponse(state queueWatchState, token string, timedOut bool) model.QueueWatch {
+	watch := model.QueueWatch{
+		State:       token,
+		Status:      state.Status,
+		Item:        state.Item,
+		Build:       state.Build,
+		TimedOut:    timedOut,
+		Terminal:    queueWatchStateTerminal(state),
+		Cancelled:   state.Status == "cancelled",
+		Disappeared: state.Status == "disappeared",
+	}
+	return watch
+}
+
+func isNotFound(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	return ok && appErr.Code == apperrors.CodeNotFound
 }
 
 type CancelQueueItemResponse struct {

@@ -1372,12 +1372,181 @@ func TestWatchBuildRejectsOversizedStateToken(t *testing.T) {
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 
+func TestWatchQueueItemReturnsWhenExecutableAssigned(t *testing.T) {
+	r := require.New(t)
+
+	var requests int
+	var serverURL string
+	deps := newWatchTestDepsWithURL(t, func(baseURL string) http.HandlerFunc {
+		serverURL = baseURL
+		return func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/queue/item/99/api/json":
+				requests++
+				if requests == 1 {
+					writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"Waiting for next executor","cancelled":false,"task":{"name":"app","url":"`+serverURL+`/job/folder/job/app/"}}`)
+					return
+				}
+				writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"","cancelled":false,"task":{"name":"app","url":"`+serverURL+`/job/folder/job/app/"},"executable":{"number":15,"url":"`+serverURL+`/job/folder/job/app/15/","building":true}}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+	r.Equal("queued", first.Watch.Status, "first WatchQueueItem() status")
+	r.False(first.Watch.Terminal, "first WatchQueueItem() terminal")
+	r.NotEmpty(first.Watch.State, "first WatchQueueItem() state")
+
+	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:            99,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 50,
+	})
+	r.NoError(err, "second WatchQueueItem() error")
+	r.Equal("executable", second.Watch.Status, "second WatchQueueItem() status")
+	r.True(second.Watch.Terminal, "second WatchQueueItem() terminal")
+	r.False(second.Watch.TimedOut, "second WatchQueueItem() timed out")
+	r.NotNil(second.Watch.Build, "second WatchQueueItem() build")
+	r.Equal("folder/app", second.Watch.Build.Job, "second WatchQueueItem() build job")
+	r.Equal(15, second.Watch.Build.Build, "second WatchQueueItem() build number")
+}
+
+func TestWatchQueueItemTimesOutWithoutStateChange(t *testing.T) {
+	r := require.New(t)
+
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/queue/item/99/api/json":
+			writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"Waiting for next executor","cancelled":false,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:            99,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 25,
+	})
+	r.NoError(err, "second WatchQueueItem() error")
+	r.True(second.Watch.TimedOut, "second WatchQueueItem() timed out")
+	r.Equal(first.Watch.State, second.Watch.State, "second WatchQueueItem() state")
+}
+
+func TestWatchQueueItemReportsCancelledAndDisappearedStates(t *testing.T) {
+	r := require.New(t)
+
+	var requests int
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/queue/item/99/api/json":
+			requests++
+			if requests == 1 {
+				writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"Waiting","cancelled":false,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`)
+				return
+			}
+			writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"","cancelled":true,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`)
+		case "/queue/item/100/api/json":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+	cancelled, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:            99,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 50,
+	})
+	r.NoError(err, "cancelled WatchQueueItem() error")
+	r.Equal("cancelled", cancelled.Watch.Status, "cancelled WatchQueueItem() status")
+	r.True(cancelled.Watch.Cancelled, "cancelled WatchQueueItem() cancelled")
+	r.True(cancelled.Watch.Terminal, "cancelled WatchQueueItem() terminal")
+
+	disappeared, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 100})
+	r.NoError(err, "disappeared WatchQueueItem() error")
+	r.Equal("disappeared", disappeared.Watch.Status, "disappeared WatchQueueItem() status")
+	r.True(disappeared.Watch.Disappeared, "disappeared WatchQueueItem() disappeared")
+	r.True(disappeared.Watch.Terminal, "disappeared WatchQueueItem() terminal")
+}
+
+func TestWatchQueueItemRejectsStateFromDifferentItem(t *testing.T) {
+	r := require.New(t)
+
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/queue/item/99/api/json", "/queue/item/100/api/json":
+			writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"Waiting","cancelled":false,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+
+	_, err = WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:            100,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 25,
+	})
+	r.Error(err, "WatchQueueItem() accepted state token from a different queue item")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestWatchQueueItemRejectsMalformedStateToken(t *testing.T) {
+	r := require.New(t)
+
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
+
+	_, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:        99,
+		LastState: "not-a-valid-watch-token",
+	})
+	r.Error(err, "WatchQueueItem() accepted malformed watch state")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
 func newWatchTestDeps(t *testing.T, handler http.HandlerFunc, watchCfg config.WatchConfig) Deps {
 	t.Helper()
 	r := require.New(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err, "client.New() error")
+
+	cfg := config.Defaults()
+	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}
+	cfg.DefaultController = "default"
+	cfg.Watch = watchCfg
+
+	return Deps{
+		Config:  cfg,
+		Jenkins: map[string]*jenkinsapi.API{"default": jenkinsapi.New("default", client)},
+	}
+}
+
+func newWatchTestDepsWithURL(t *testing.T, handlerFactory func(string) http.HandlerFunc, watchCfg config.WatchConfig) Deps {
+	t.Helper()
+	var serverURL string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerFactory(serverURL)(w, r)
+	})
+	server := httptest.NewServer(handler)
+	serverURL = server.URL
+	t.Cleanup(server.Close)
+
+	r := require.New(t)
 	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	r.NoError(err, "client.New() error")
 

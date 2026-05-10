@@ -228,6 +228,17 @@ type QueueItem struct {
 	Executable *BuildSummary `json:"executable,omitempty" jsonschema:"Build executable created from this queue item, when available"`
 }
 
+type QueueWatch struct {
+	State       string          `json:"state" jsonschema:"Opaque queue watch state token to pass as lastState on the next jenkins_watch_queue_item call"`
+	Status      string          `json:"status" jsonschema:"Queue watch status: queued, executable, cancelled, or disappeared"`
+	Item        *QueueItem      `json:"item,omitempty" jsonschema:"Latest Jenkins queue item snapshot, when Jenkins still exposes it"`
+	Build       *BuildReference `json:"build,omitempty" jsonschema:"Resolved build reference when Jenkins assigns an executable to the queue item"`
+	TimedOut    bool            `json:"timedOut" jsonschema:"Whether the long-poll call reached waitTimeoutMs without a queue state change"`
+	Terminal    bool            `json:"terminal" jsonschema:"Whether the queue item reached a terminal state and no further queue watching is needed"`
+	Cancelled   bool            `json:"cancelled" jsonschema:"Whether Jenkins reports the queue item was cancelled"`
+	Disappeared bool            `json:"disappeared" jsonschema:"Whether Jenkins no longer exposes the queue item before an executable could be resolved"`
+}
+
 type PipelineRun struct {
 	ID                  string               `json:"id,omitempty" jsonschema:"Pipeline run id reported by Jenkins"`
 	Name                string               `json:"name,omitempty" jsonschema:"Pipeline run name"`
