@@ -4,6 +4,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,29 +17,21 @@ import (
 
 func TestIntegrationJenkinsMCP(t *testing.T) {
 	jenkins := jenkinscontainer.Start(t)
+	_, api := jenkins.Controller(t, "admin")
+	freestyleBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-freestyle")
+	pipelineBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-pipeline")
 
 	t.Run("list jobs", func(t *testing.T) {
 		r := require.New(t)
 		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
 		defer cleanup()
 
-		result, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
-			Name:      "jenkins_list_jobs",
-			Arguments: map[string]any{"controller": jenkinscontainer.ControllerID},
-		})
-		r.NoError(err, "CallTool()")
-		r.False(result.IsError, "CallTool() IsError")
-		r.NotNil(result.StructuredContent, "CallTool() structured content")
-
-		var got struct {
+		got := callIntegrationTool[struct {
 			Items []struct {
 				Name     string `json:"name"`
 				FullName string `json:"fullName"`
 			} `json:"items"`
-		}
-		payload, err := json.Marshal(result.StructuredContent)
-		r.NoError(err, "marshal structured content")
-		r.NoError(json.Unmarshal(payload, &got), "unmarshal structured content")
+		}](t, clientSession, "jenkins_list_jobs", map[string]any{"controller": jenkinscontainer.ControllerID})
 		names := map[string]bool{}
 		for _, item := range got.Items {
 			names[item.Name] = true
@@ -48,6 +41,287 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(names, "example-junit", "JUnit job")
 		r.Contains(names, "example-warnings", "Warnings NG job")
 	})
+
+	t.Run("list jobs filters and empty result", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		page := callIntegrationTool[struct {
+			Items      []struct{ Name string } `json:"items"`
+			NextCursor string                  `json:"nextCursor"`
+			HasMore    bool                    `json:"hasMore"`
+			Limit      int                     `json:"limit"`
+		}](t, clientSession, "jenkins_list_jobs", map[string]any{"controller": jenkinscontainer.ControllerID, "limit": 2})
+		r.Len(page.Items, 2, "first page job count")
+		r.True(page.HasMore, "first page should report more jobs")
+		r.NotEmpty(page.NextCursor, "first page cursor")
+		r.Equal(2, page.Limit, "first page limit")
+
+		filtered := callIntegrationTool[struct {
+			Items []struct {
+				Name     string `json:"name"`
+				FullName string `json:"fullName"`
+				Class    string `json:"class"`
+			} `json:"items"`
+			HasMore bool `json:"hasMore"`
+		}](t, clientSession, "jenkins_list_jobs", map[string]any{
+			"controller":   jenkinscontainer.ControllerID,
+			"nameContains": "pipeline",
+			"type":         "pipeline",
+		})
+		r.Len(filtered.Items, 1, "filtered pipeline jobs")
+		r.Equal("example-pipeline", filtered.Items[0].Name, "filtered pipeline job name")
+		r.False(filtered.HasMore, "single filtered result should not have more pages")
+
+		empty := callIntegrationTool[struct {
+			Items   []struct{} `json:"items"`
+			HasMore bool       `json:"hasMore"`
+		}](t, clientSession, "jenkins_list_jobs", map[string]any{
+			"controller":   jenkinscontainer.ControllerID,
+			"nameContains": "no-such-integration-job",
+		})
+		r.Len(empty.Items, 0, "empty filtered job result")
+		r.False(empty.HasMore, "empty result should not have more pages")
+	})
+
+	t.Run("job and build metadata", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		job := callIntegrationTool[struct {
+			Job struct {
+				Name            string `json:"name"`
+				Description     string `json:"description"`
+				Buildable       bool   `json:"buildable"`
+				NextBuildNumber int    `json:"nextBuildNumber"`
+				LastBuild       *struct {
+					Number int    `json:"number"`
+					Result string `json:"result"`
+				} `json:"lastBuild"`
+			} `json:"job"`
+		}](t, clientSession, "jenkins_get_job", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle"})
+		r.Equal("example-freestyle", job.Job.Name, "job name")
+		r.Contains(job.Job.Description, "Buildable freestyle job", "job description")
+		r.True(job.Job.Buildable, "job should be buildable")
+		r.NotNil(job.Job.LastBuild, "last build")
+		r.Equal(freestyleBuild, job.Job.LastBuild.Number, "last build number")
+		r.Equal("SUCCESS", job.Job.LastBuild.Result, "last build result")
+		r.Equal(freestyleBuild+1, job.Job.NextBuildNumber, "next build number")
+
+		builds := callIntegrationTool[struct {
+			Items []struct {
+				Number   int    `json:"number"`
+				Result   string `json:"result"`
+				Building bool   `json:"building"`
+				URL      string `json:"url"`
+			} `json:"items"`
+			HasMore bool `json:"hasMore"`
+			Limit   int  `json:"limit"`
+		}](t, clientSession, "jenkins_list_builds", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle", "limit": 1})
+		r.Len(builds.Items, 1, "build summary count")
+		r.Equal(1, builds.Limit, "build list limit")
+		r.False(builds.HasMore, "single build should not have another page")
+		r.Equal(freestyleBuild, builds.Items[0].Number, "build summary number")
+		r.Equal("SUCCESS", builds.Items[0].Result, "build summary result")
+		r.False(builds.Items[0].Building, "build summary should be complete")
+		r.NotEmpty(builds.Items[0].URL, "build summary URL")
+
+		build := callIntegrationTool[struct {
+			Build struct {
+				Number          int    `json:"number"`
+				Result          string `json:"result"`
+				Building        bool   `json:"building"`
+				FullDisplayName string `json:"fullDisplayName"`
+				Causes          []struct {
+					ShortDescription string `json:"shortDescription"`
+				} `json:"causes"`
+			} `json:"build"`
+		}](t, clientSession, "jenkins_get_build", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle", "build": freestyleBuild})
+		r.Equal(freestyleBuild, build.Build.Number, "build number")
+		r.Equal("SUCCESS", build.Build.Result, "build result")
+		r.False(build.Build.Building, "build should be complete")
+		r.Contains(build.Build.FullDisplayName, "example-freestyle", "build full display name")
+		r.NotEmpty(build.Build.Causes, "build causes")
+	})
+
+	t.Run("console log tools", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		chunk := callIntegrationTool[struct {
+			Log struct {
+				Text      string `json:"text"`
+				Start     int64  `json:"start"`
+				NextStart int64  `json:"nextStart"`
+				More      bool   `json:"more"`
+				Truncated bool   `json:"truncated"`
+			} `json:"log"`
+		}](t, clientSession, "jenkins_get_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+			"maxBytes":   12,
+		})
+		r.Equal(int64(0), chunk.Log.Start, "log chunk start")
+		r.NotEmpty(chunk.Log.Text, "log chunk text")
+		r.True(chunk.Log.Truncated, "small log chunk should be truncated")
+		r.Greater(chunk.Log.NextStart, int64(0), "log next start")
+
+		search := callIntegrationTool[struct {
+			Result struct {
+				Query   string `json:"query"`
+				Matches []struct {
+					Line int    `json:"line"`
+					Text string `json:"text"`
+				} `json:"matches"`
+				ScannedBytes int64 `json:"scannedBytes"`
+			} `json:"result"`
+		}](t, clientSession, "jenkins_search_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+			"query":      "hello from freestyle",
+			"maxMatches": 1,
+		})
+		r.Equal("hello from freestyle", search.Result.Query, "search query")
+		r.Len(search.Result.Matches, 1, "search matches")
+		r.Contains(search.Result.Matches[0].Text, "hello from freestyle", "search match text")
+		r.Greater(search.Result.ScannedBytes, int64(0), "search scanned bytes")
+
+		empty := callIntegrationTool[struct {
+			Result struct {
+				Matches []struct{} `json:"matches"`
+			} `json:"result"`
+		}](t, clientSession, "jenkins_search_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+			"query":      "no such log line",
+		})
+		r.Len(empty.Result.Matches, 0, "empty search matches")
+
+		tail := callIntegrationTool[struct {
+			Log struct {
+				Text      string `json:"text"`
+				Start     int64  `json:"start"`
+				NextStart int64  `json:"nextStart"`
+				Truncated bool   `json:"truncated"`
+			} `json:"log"`
+		}](t, clientSession, "jenkins_tail_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+			"bytes":      64,
+		})
+		r.NotEmpty(tail.Log.Text, "tail log text")
+		r.GreaterOrEqual(tail.Log.NextStart, tail.Log.Start, "tail log offsets")
+		r.LessOrEqual(len(tail.Log.Text), 64, "tail log should honor requested byte bound")
+	})
+
+	t.Run("pipeline stage and node log tools", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		run := callIntegrationTool[struct {
+			Run struct {
+				Status string `json:"status"`
+				Stages []struct {
+					ID     string `json:"id"`
+					Name   string `json:"name"`
+					Status string `json:"status"`
+				} `json:"stages"`
+			} `json:"run"`
+		}](t, clientSession, "jenkins_get_pipeline_run", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      pipelineBuild,
+		})
+		r.Equal("SUCCESS", run.Run.Status, "pipeline run status")
+		r.NotEmpty(run.Run.Stages, "pipeline stages")
+
+		stageID := ""
+		for _, stage := range run.Run.Stages {
+			if stage.Name == "build" {
+				stageID = stage.ID
+				r.Equal("SUCCESS", stage.Status, "pipeline build stage status")
+				break
+			}
+		}
+		r.NotEmpty(stageID, "pipeline build stage id")
+
+		stage := callIntegrationTool[struct {
+			Stage struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				Nodes  []struct {
+					ID     string `json:"id"`
+					Name   string `json:"name"`
+					HasLog bool   `json:"hasLog"`
+				} `json:"nodes"`
+			} `json:"stage"`
+		}](t, clientSession, "jenkins_get_pipeline_stage", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      pipelineBuild,
+			"stageId":    stageID,
+		})
+		r.Equal(stageID, stage.Stage.ID, "pipeline stage id")
+		r.Equal("build", stage.Stage.Name, "pipeline stage name")
+		r.Equal("SUCCESS", stage.Stage.Status, "pipeline stage status")
+
+		nodeID := ""
+		for _, node := range stage.Stage.Nodes {
+			if node.HasLog && strings.Contains(strings.ToLower(node.Name), "echo") {
+				nodeID = node.ID
+				break
+			}
+			if node.HasLog && nodeID == "" {
+				nodeID = node.ID
+			}
+		}
+		r.NotEmpty(nodeID, "pipeline node with log")
+
+		nodeLog := callIntegrationTool[struct {
+			Log struct {
+				NodeID    string `json:"nodeId"`
+				Text      string `json:"text"`
+				Truncated bool   `json:"truncated"`
+			} `json:"log"`
+		}](t, clientSession, "jenkins_get_pipeline_node_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      pipelineBuild,
+			"nodeId":     nodeID,
+			"maxBytes":   128,
+		})
+		r.Equal(nodeID, nodeLog.Log.NodeID, "pipeline node log id")
+		r.Contains(nodeLog.Log.Text, "hello from pipeline", "pipeline node log text")
+		r.False(nodeLog.Log.Truncated, "pipeline node log should fit in requested bytes")
+	})
+}
+
+func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, name string, args map[string]any) T {
+	t.Helper()
+
+	r := require.New(t)
+	result, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	r.NoError(err, "CallTool(%s)", name)
+	r.False(result.IsError, "CallTool(%s) IsError", name)
+	r.NotNil(result.StructuredContent, "CallTool(%s) structured content", name)
+
+	var got T
+	payload, err := json.Marshal(result.StructuredContent)
+	r.NoError(err, "marshal %s structured content", name)
+	r.NoError(json.Unmarshal(payload, &got), "unmarshal %s structured content", name)
+	return got
 }
 
 func connectIntegrationMCP(t *testing.T, jenkins jenkinscontainer.Fixture, user string) (*mcp.ClientSession, func()) {

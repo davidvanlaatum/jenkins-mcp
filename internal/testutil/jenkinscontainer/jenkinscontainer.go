@@ -87,8 +87,9 @@ func Start(t *testing.T) Fixture {
 func (f Fixture) Controller(t *testing.T, user string) (config.Config, *jenkinsapi.API) {
 	t.Helper()
 
+	r := require.New(t)
 	token, ok := users[user]
-	require.True(t, ok, "integration user %q is configured", user)
+	r.True(ok, "integration user %q is configured", user)
 
 	cfg := config.Defaults()
 	cfg.DefaultController = ControllerID
@@ -99,13 +100,14 @@ func (f Fixture) Controller(t *testing.T, user string) (config.Config, *jenkinsa
 		Token:    token,
 	}}
 	client, err := jenkinsclient.New(cfg.Controllers[0], slog.Default())
-	require.NoError(t, err, "Jenkins client")
+	r.NoError(err, "Jenkins client")
 	return cfg, jenkinsapi.New(ControllerID, client)
 }
 
 func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	t.Helper()
 
+	r := require.New(t)
 	deadline := time.Now().Add(30 * time.Second)
 	var lastErr error
 	var missing []string
@@ -125,8 +127,38 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	require.NoError(t, lastErr, "wait for Job DSL-created jobs")
-	require.Failf(t, "wait for Job DSL-created jobs", "timed out waiting for jobs: %v", missing)
+	r.NoError(lastErr, "wait for Job DSL-created jobs")
+	r.Failf("wait for Job DSL-created jobs", "timed out waiting for jobs: %v", missing)
+}
+
+func WaitForSuccessfulBuild(t *testing.T, api *jenkinsapi.API, job string) int {
+	t.Helper()
+
+	r := require.New(t)
+	deadline := time.Now().Add(90 * time.Second)
+	var lastSeen string
+	for time.Now().Before(deadline) {
+		builds, err := api.ListBuilds(t.Context(), job, 0, 1)
+		if err != nil {
+			lastSeen = err.Error()
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		if len(builds) == 0 {
+			lastSeen = "no builds yet"
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		build := builds[0]
+		lastSeen = build.Result
+		if !build.Building && build.Result != "" {
+			r.Equal("SUCCESS", build.Result, "%s integration build result", job)
+			return build.Number
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	r.Failf("wait for integration build", "timed out waiting for %s build to complete; last seen: %s", job, lastSeen)
+	return 0
 }
 
 func missingJobs(seen map[string]bool) []string {
@@ -142,15 +174,16 @@ func missingJobs(seen map[string]bool) []string {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
+	r := require.New(t)
 	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok, "resolve Jenkins container fixture path")
+	r.True(ok, "resolve Jenkins container fixture path")
 	dir := filepath.Dir(file)
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
-		require.NotEqual(t, dir, parent, "could not find repository root from %s", file)
+		r.NotEqual(dir, parent, "could not find repository root from %s", file)
 		dir = parent
 	}
 }
