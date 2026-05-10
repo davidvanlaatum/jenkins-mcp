@@ -151,6 +151,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_tail_log",
 		"jenkins_trigger_build",
 		"jenkins_watch_build",
+		"jenkins_watch_queue_item",
 	}
 	r.Equal(want, names, "tool names")
 }
@@ -202,6 +203,7 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_get_changes":           {readOnly: true},
 		"jenkins_watch_build":           {readOnly: true},
 		"jenkins_get_queue_item":        {readOnly: true},
+		"jenkins_watch_queue_item":      {readOnly: true},
 		"jenkins_list_queue":            {readOnly: true},
 		"jenkins_download_artifact":     {destructive: ptrBool(false)},
 		"jenkins_trigger_build":         {destructive: ptrBool(false)},
@@ -277,6 +279,7 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_watch_build":           "Watch Build",
 		"jenkins_trigger_build":         "Trigger Build",
 		"jenkins_get_queue_item":        "Get Queue Item",
+		"jenkins_watch_queue_item":      "Watch Queue Item",
 		"jenkins_list_queue":            "List Queue",
 		"jenkins_cancel_queue_item":     "Cancel Queue Item",
 		"jenkins_cancel_build":          "Cancel Build",
