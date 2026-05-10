@@ -40,6 +40,7 @@ var expectedJobs = []string{
 	"example-freestyle",
 	"example-junit",
 	"example-warnings",
+	"example-artifacts",
 	"example-pipeline",
 }
 

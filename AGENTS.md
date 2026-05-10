@@ -62,5 +62,5 @@
 
 ### Critical Considerations
 - **CSRF:** The HTTP client automatically handles crumbs. Do not implement manual crumb fetching in the API layer.
-- **Mutations:** Mutating tools must check `deps.Config.Mutations.Enabled` before proceeding.
+- **Mutations:** Jenkins-mutating tools must check `deps.Config.Mutations.Enabled` before proceeding. `jenkins_download_artifact` is a local file side-effect tool, not a Jenkins mutation; it is intentionally not gated by `mutations.enabled`, even though it is annotated as non-destructive instead of read-only because it writes to the configured local artifact directory.
 - **Audit:** Emit audit events for all mutating operations using the `emit` helper in `tools.go`.
