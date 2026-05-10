@@ -103,7 +103,7 @@ Jenkins-mutating tools are disabled by default. Enable them only for trusted dep
 
 Jenkins permissions are still authoritative. The server does not bypass Jenkins authorization.
 
-`jenkins_download_artifact` is not gated by `mutations.enabled` because it does not change Jenkins state. It writes downloaded artifacts to the configured local artifact directory.
+`jenkins_download_artifact` is not gated by `mutations.enabled` because it does not change Jenkins state. It writes downloaded artifacts to the configured local artifact directory and is annotated as non-destructive, not read-only, to reflect that local file side effect.
 
 ## Log and Response Limits
 

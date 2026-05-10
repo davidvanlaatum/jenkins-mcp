@@ -28,7 +28,7 @@
 
 ## Local File Tools
 
-- `jenkins_download_artifact`: writes an artifact into the configured safe local directory. This does not change Jenkins state.
+- `jenkins_download_artifact`: writes an artifact into the configured safe local directory. This does not change Jenkins state and does not require `mutations.enabled`; it is annotated as a non-destructive side-effect tool because it writes to local disk.
 
 ## Jenkins-Mutating Tools
 
@@ -36,7 +36,7 @@
 - `jenkins_cancel_queue_item`: cancels a queued Jenkins item.
 - `jenkins_cancel_build`: stops a running build.
 
-Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured.
+Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger and cancel attempts emit JSONL audit events when `audit.path` is configured. Artifact downloads are local file side effects rather than Jenkins mutations, so they remain available when Jenkins mutations are disabled.
 
 ## Diagnostics Logging
 

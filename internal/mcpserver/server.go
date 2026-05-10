@@ -242,7 +242,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_node_log", "Get Pipeline Node Log", "Fetch bounded log output for a Pipeline flow node id. Prefer this over jenkins_get_log for Pipeline builds to reduce noise and context size."), func(ctx context.Context, in jenkinstools.PipelineNodeLogRequest) (jenkinstools.PipelineNodeLogResponse, error) {
 		return jenkinstools.PipelineNodeLog(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe local artifact directory."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
+	addConfiguredTool(s, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe local artifact directory. This does not change Jenkins state and is not gated by mutations.enabled."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
 		return jenkinstools.DownloadArtifact(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_artifacts", "List Artifacts", "List artifacts for a Jenkins build without fetching artifact content."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.ListArtifactsResponse, error) {

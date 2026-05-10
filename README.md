@@ -35,14 +35,14 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_queue_item`: Inspect a Jenkins queue item by id.
 
 ### Local File Tools
-- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory.
+- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory. Does not require `mutations.enabled`.
 
 ### Jenkins-Mutating Tools
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item.
 - `jenkins_cancel_build`: Cancel a running Jenkins build.
 
-Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state, but it does write to the configured local artifact directory.
+Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state and is not gated by `mutations.enabled`, but it does write to the configured local artifact directory.
 
 > **Note:** When adding or modifying tools, ensure the tool definitions in `internal/mcpserver/server.go`, documentation in `docs/tools/jenkins.md`, and this list in `README.md` are all kept in sync.
 

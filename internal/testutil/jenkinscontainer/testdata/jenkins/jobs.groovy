@@ -46,6 +46,25 @@ EOF
     }
 }
 
+freeStyleJob('example-artifacts') {
+    description('Buildable freestyle job that publishes text and binary artifacts for jenkins-mcp integration tests.')
+    steps {
+        shell('''
+mkdir -p artifacts/nested
+cat > artifacts/report.txt <<'EOF'
+hello from artifact fixture
+EOF
+cat > artifacts/nested/details.txt <<'EOF'
+nested artifact fixture
+EOF
+printf '\\377\\376\\000\\001binary-fixture' > artifacts/blob.bin
+'''.stripIndent())
+    }
+    publishers {
+        archiveArtifacts('artifacts/**/*')
+    }
+}
+
 pipelineJob('example-pipeline') {
     description('Buildable pipeline job created by Job DSL for jenkins-mcp integration tests.')
     definition {

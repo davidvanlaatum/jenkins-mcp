@@ -12,3 +12,8 @@ new DslScriptLoader(jobManagement).runScript(script)
 ['example-freestyle', 'example-pipeline'].each { jobName ->
     Jenkins.instance.getItemByFullName(jobName)?.scheduleBuild2(0)
 }
+
+def artifactJob = Jenkins.instance.getItemByFullName('example-artifacts')
+if (artifactJob != null && artifactJob.getLastBuild() == null) {
+    artifactJob.scheduleBuild2(0).get()
+}
