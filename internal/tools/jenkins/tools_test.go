@@ -573,6 +573,184 @@ func TestGetJobReturnsDerivedStatusAndDisabledState(t *testing.T) {
 	r.True(*got.Job.Disabled, "job disabled")
 }
 
+func TestGetJobConfigReturnsRedactedXMLAndSummary(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/github-org/api/json":
+			writeJSON(w, `{
+				"name":"github-org",
+				"fullName":"github-org",
+				"url":"https://jenkins.example.com/job/github-org/",
+				"_class":"jenkins.branch.OrganizationFolder",
+				"buildable":false,
+				"inQueue":false,
+				"property":[{"parameterDefinitions":[
+					{"_class":"hudson.model.StringParameterDefinition","name":"BRANCH","defaultValue":"main"},
+					{"_class":"hudson.model.PasswordParameterDefinition","name":"API_TOKEN","defaultValue":"fallback-secret-token"}
+				]}]
+			}`)
+		case "/job/github-org/config.xml":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `<?xml version='1.1' encoding='UTF-8'?>
+				<jenkins.branch.OrganizationFolder plugin="branch-api">
+					<description>GitHub org</description>
+					<definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition">
+						<script>
+							<!-- secret-comment-in-script -->
+							<?jenkins secret-processing-instruction?>
+							<step arg="secret-descendant-attribute"/>
+							echo "secret-token-in-script"
+						</script>
+					</definition>
+				<navigators>
+					<org.jenkinsci.plugins.github_branch_source.GitHubSCMNavigator plugin="github-branch-source">
+						<repoOwner>example-org</repoOwner>
+						<remote>https://user:secret-url-token@github.com/example-org/repo.git?access_token=secret-query-token&amp;branch=main</remote>
+						<credentialsId>github-token</credentialsId>
+						<repository>https://user:secret-repository-token@github.com/example-org/repository.git?token=secret-repository-query-token&amp;branch=main</repository>
+						<passphrase>ssh-private-key-passphrase</passphrase>
+						<accessKey>AKIASECRETACCESSKEY</accessKey>
+						<cloudCredential accessKeyId="AKIASECRETATTRIBUTE"/>
+						<value defaultValue="secret-from-default-value-attribute" value="secret-from-value-attribute">secret-from-generic-value</value>
+						<serverName>https://user:secret-server-token@api.github.com/org?token=secret-server-query-token&amp;region=au</serverName>
+						<traits>
+							<org.jenkinsci.plugins.github_branch_source.BranchDiscoveryTrait/>
+						</traits>
+					</org.jenkinsci.plugins.github_branch_source.GitHubSCMNavigator>
+				</navigators>
+				<projectFactories>
+					<org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory>
+						<scriptPath>ci/Jenkinsfile</scriptPath>
+					</org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory>
+				</projectFactories>
+				<triggers>
+					<com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger plugin="cloudbees-folder"/>
+				</triggers>
+			</jenkins.branch.OrganizationFolder>`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := GetJobConfig(t.Context(), deps, JobConfigRequest{Job: "github-org", Mode: "both", MaxBytes: 4096})
+	r.NoError(err, "GetJobConfig() error")
+	config := got.Config
+	r.True(config.ConfigAccessible, "config accessible")
+	r.Equal("config.xml", config.Source, "source")
+	r.Equal("both", config.Mode, "mode")
+	r.Equal("organizationFolder", config.Summary.Kind, "kind")
+	r.Equal("ci/Jenkinsfile", config.Summary.ScriptPath, "script path")
+	r.NotEmpty(config.XML, "xml")
+	r.NotContains(config.XML, "github-token", "credentials id should be redacted")
+	r.NotContains(config.XML, "secret-token-in-script", "pipeline script body should be redacted")
+	r.NotContains(config.XML, "secret-comment-in-script", "comments in sensitive subtrees should be redacted")
+	r.NotContains(config.XML, "secret-processing-instruction", "processing instructions in sensitive subtrees should be redacted")
+	r.NotContains(config.XML, "secret-descendant-attribute", "descendant attributes in sensitive subtrees should be redacted")
+	r.NotContains(config.XML, "secret-from-generic-value", "generic value fields should be redacted")
+	r.NotContains(config.XML, "secret-from-default-value-attribute", "default value attributes should be redacted")
+	r.NotContains(config.XML, "secret-from-value-attribute", "value attributes should be redacted")
+	r.NotContains(config.XML, "secret-url-token", "URL userinfo should be redacted")
+	r.NotContains(config.XML, "secret-query-token", "URL query secrets should be redacted")
+	r.NotContains(config.XML, "secret-server-token", "serverName URL userinfo should be redacted")
+	r.NotContains(config.XML, "secret-server-query-token", "serverName URL query secrets should be redacted")
+	r.NotContains(config.XML, "secret-repository-token", "repository URL userinfo should be redacted")
+	r.NotContains(config.XML, "secret-repository-query-token", "repository URL query secrets should be redacted")
+	r.NotContains(config.XML, "ssh-private-key-passphrase", "passphrases should be redacted")
+	r.NotContains(config.XML, "AKIASECRETACCESSKEY", "access key elements should be redacted")
+	r.NotContains(config.XML, "AKIASECRETATTRIBUTE", "access key attributes should be redacted")
+	r.Contains(config.XML, "[REDACTED]", "xml should show redaction placeholder")
+	r.Contains(config.Warnings[0].Message, "Sensitive and high-risk", "redaction warning")
+	r.NotNil(config.Summary.Buildable, "buildable should be preserved from api/json fallback")
+	r.False(*config.Summary.Buildable, "buildable")
+	r.Len(config.Summary.Parameters, 2, "parameters should be preserved from api/json fallback")
+	r.Equal("BRANCH", config.Summary.Parameters[0].Name, "parameter name")
+	r.Equal("main", config.Summary.Parameters[0].Default, "non-sensitive parameter default")
+	r.Equal("API_TOKEN", config.Summary.Parameters[1].Name, "sensitive parameter name")
+	r.Equal("[REDACTED]", config.Summary.Parameters[1].Default, "sensitive parameter default")
+	r.Len(config.Summary.Sources, 1, "sources")
+	r.Equal("navigator", config.Summary.Sources[0].Kind, "source kind")
+	r.Equal("example-org", config.Summary.Sources[0].RepoOwner, "repo owner")
+	r.Contains(config.Summary.Sources[0].Remote, "github.com/example-org/repo.git", "summary remote should preserve repository location")
+	r.Contains(config.Summary.Sources[0].Remote, "branch=main", "summary remote should preserve non-sensitive query parameters")
+	r.NotContains(config.Summary.Sources[0].Remote, "secret-url-token", "summary remote should redact URL userinfo")
+	r.NotContains(config.Summary.Sources[0].Remote, "secret-query-token", "summary remote should redact URL query secrets")
+	r.Contains(config.Summary.Sources[0].ServerURL, "api.github.com/org", "summary server URL should preserve server location")
+	r.Contains(config.Summary.Sources[0].ServerURL, "region=au", "summary server URL should preserve non-sensitive query parameters")
+	r.NotContains(config.Summary.Sources[0].ServerURL, "secret-server-token", "summary server URL should redact URL userinfo")
+	r.NotContains(config.Summary.Sources[0].ServerURL, "secret-server-query-token", "summary server URL should redact URL query secrets")
+	r.Contains(config.Summary.Sources[0].Repository, "github.com/example-org/repository.git", "summary repository should preserve repository location")
+	r.Contains(config.Summary.Sources[0].Repository, "branch=main", "summary repository should preserve non-sensitive query parameters")
+	r.NotContains(config.Summary.Sources[0].Repository, "secret-repository-token", "summary repository should redact URL userinfo")
+	r.NotContains(config.Summary.Sources[0].Repository, "secret-repository-query-token", "summary repository should redact URL query secrets")
+	r.Equal("[REDACTED]", config.Summary.Sources[0].CredentialsID, "summary credentials id")
+	r.Len(config.Summary.ProjectFactories, 1, "project factories")
+	r.Len(config.Summary.Triggers, 1, "triggers")
+}
+
+func TestGetJobConfigFallsBackWhenConfigXMLForbidden(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/job/main/api/json":
+			writeJSON(w, `{
+				"name":"main",
+				"fullName":"app/main",
+				"url":"https://jenkins.example.com/job/app/job/main/",
+				"_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob",
+				"buildable":true,
+				"inQueue":false,
+				"property":[{"parameterDefinitions":[
+					{"_class":"hudson.model.StringParameterDefinition","name":"BRANCH","defaultValue":"main"},
+					{"_class":"hudson.model.PasswordParameterDefinition","name":"PASSWORD","defaultValue":"fallback-secret-password","choices":["fallback-secret-choice"]},
+					{"_class":"hudson.model.ChoiceParameterDefinition","name":"API_TOKEN","defaultValue":"fallback-secret-token","choices":["fallback-secret-token-choice"]},
+					{"_class":"hudson.model.ChoiceParameterDefinition","name":"REPO_URL","defaultValue":"https://user:secret-url-token@github.com/example/app.git?token=secret-query-token&branch=main","choices":["https://user:secret-choice-token@github.com/example/app.git?token=secret-choice-query-token&branch=main","main"]}
+				]}]
+			}`)
+		case "/job/app/job/main/config.xml":
+			http.Error(w, `missing Extended Read permission <password>body-secret</password> https://user:secret-body-token@github.com/example/app.git?token=secret-body-query-token `+strings.Repeat("deployment-detail ", 100), http.StatusForbidden)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := GetJobConfig(t.Context(), deps, JobConfigRequest{Job: "app/main"})
+	r.NoError(err, "GetJobConfig() error")
+	config := got.Config
+	r.False(config.ConfigAccessible, "config accessible")
+	r.Equal("api/json", config.Source, "source")
+	r.Equal("branchJob", config.Summary.Kind, "kind")
+	r.NotEmpty(config.AccessError, "access error")
+	r.Len(config.Warnings, 1, "warnings")
+	r.Equal("config_permission_denied", config.Warnings[0].Code, "warning code")
+	r.Contains(config.Warnings[0].Detail, "body omitted", "warning detail should not include raw config.xml response body")
+	r.NotContains(config.Warnings[0].Detail, "body-secret", "warning detail should not leak reflected XML secrets")
+	r.NotContains(config.Warnings[0].Detail, "secret-body-token", "warning detail should not leak URL userinfo")
+	r.NotContains(config.Warnings[0].Detail, "secret-body-query-token", "warning detail should not leak URL query tokens")
+	r.LessOrEqual(len(config.Warnings[0].Detail), 160, "warning detail should be bounded")
+	r.Len(config.Summary.Parameters, 4, "parameters")
+	r.Equal("BRANCH", config.Summary.Parameters[0].Name, "parameter name")
+	r.Equal("main", config.Summary.Parameters[0].Default, "non-sensitive parameter default")
+	r.Equal("PASSWORD", config.Summary.Parameters[1].Name, "sensitive parameter name")
+	r.Equal("[REDACTED]", config.Summary.Parameters[1].Default, "sensitive parameter default")
+	r.Empty(config.Summary.Parameters[1].Choices, "sensitive password parameter choices should be cleared")
+	r.Equal("API_TOKEN", config.Summary.Parameters[2].Name, "sensitive choice parameter name")
+	r.Equal("[REDACTED]", config.Summary.Parameters[2].Default, "sensitive choice parameter default")
+	r.Empty(config.Summary.Parameters[2].Choices, "sensitive token parameter choices should be cleared")
+	r.Equal("REPO_URL", config.Summary.Parameters[3].Name, "url parameter name")
+	r.NotContains(fmt.Sprint(config.Summary.Parameters[3].Default), "secret-url-token", "URL default userinfo should be redacted")
+	r.NotContains(fmt.Sprint(config.Summary.Parameters[3].Default), "secret-query-token", "URL default query secrets should be redacted")
+	r.Contains(fmt.Sprint(config.Summary.Parameters[3].Default), "branch=main", "URL default should preserve safe query parameters")
+	r.Len(config.Summary.Parameters[3].Choices, 2, "non-sensitive choices should be preserved")
+	r.NotContains(config.Summary.Parameters[3].Choices[0], "secret-choice-token", "URL choice userinfo should be redacted")
+	r.NotContains(config.Summary.Parameters[3].Choices[0], "secret-choice-query-token", "URL choice query secrets should be redacted")
+	r.Contains(config.Summary.Parameters[3].Choices[0], "branch=main", "URL choice should preserve safe query parameters")
+	r.Equal("main", config.Summary.Parameters[3].Choices[1], "plain choice should be preserved")
+}
+
 func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 	r := require.New(t)
 

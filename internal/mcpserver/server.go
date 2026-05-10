@@ -212,6 +212,9 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_job", "Get Job", "Get Jenkins job metadata, recent build references, and parameter definitions."), func(ctx context.Context, in jenkinstools.JobRequest) (jenkinstools.GetJobResponse, error) {
 		return jenkinstools.GetJob(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, readOnlyTool("jenkins_get_job_config", "Get Job Config", "Inspect Jenkins job configuration as a structured summary or best-effort redacted config.xml. Falls back to safe job metadata when config.xml is not readable, such as without Job Configure or Extended Read permissions."), func(ctx context.Context, in jenkinstools.JobConfigRequest) (jenkinstools.GetJobConfigResponse, error) {
+		return jenkinstools.GetJobConfig(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job with cursor pagination. Build summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
 		return jenkinstools.ListBuilds(ctx, s.deps, in)
 	})

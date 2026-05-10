@@ -54,6 +54,13 @@ type JobRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 }
+
+type JobConfigRequest struct {
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Mode       string `json:"mode,omitempty" jsonschema:"Configuration output mode: summary returns structured metadata, xml returns best-effort redacted config.xml text, both returns both; defaults to summary"`
+	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum redacted XML bytes to return for xml or both mode; defaults to the configured inline response limit"`
+}
 type BuildRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
@@ -503,6 +510,10 @@ type GetJobResponse struct {
 	Job model.JobDetail `json:"job" jsonschema:"Detailed Jenkins job metadata"`
 }
 
+type GetJobConfigResponse struct {
+	Config model.JobConfig `json:"config" jsonschema:"Jenkins job configuration inspection result with redacted XML or structured summary"`
+}
+
 func GetJob(ctx context.Context, deps Deps, in JobRequest) (GetJobResponse, error) {
 	if err := validation.JobPath(in.Job); err != nil {
 		return GetJobResponse{}, err
@@ -513,6 +524,29 @@ func GetJob(ctx context.Context, deps Deps, in JobRequest) (GetJobResponse, erro
 	}
 	job, err := api.GetJob(ctx, in.Job)
 	return GetJobResponse{Job: job}, err
+}
+
+func GetJobConfig(ctx context.Context, deps Deps, in JobConfigRequest) (GetJobConfigResponse, error) {
+	if err := validation.JobPath(in.Job); err != nil {
+		return GetJobConfigResponse{}, err
+	}
+	mode := strings.ToLower(strings.TrimSpace(in.Mode))
+	if mode == "" {
+		mode = "summary"
+	}
+	if mode != "summary" && mode != "xml" && mode != "both" {
+		return GetJobConfigResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid job config mode", map[string]any{"mode": in.Mode, "allowed": []string{"summary", "xml", "both"}})
+	}
+	maxBytes := in.MaxBytes
+	if maxBytes <= 0 || maxBytes > deps.Config.Limits.InlineBytes {
+		maxBytes = deps.Config.Limits.InlineBytes
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return GetJobConfigResponse{}, err
+	}
+	config, err := api.GetJobConfig(ctx, in.Job, mode, maxBytes)
+	return GetJobConfigResponse{Config: config}, err
 }
 
 func GetBuild(ctx context.Context, deps Deps, in BuildRequest) (GetBuildResponse, error) {
