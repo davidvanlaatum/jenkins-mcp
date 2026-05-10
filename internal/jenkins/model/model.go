@@ -56,6 +56,63 @@ type JobDetail struct {
 	Parameters      []ParameterDefinition `json:"parameters,omitempty" jsonschema:"Build parameter definitions for this job"`
 }
 
+type JobConfig struct {
+	Job              Job              `json:"job" jsonschema:"Jenkins job associated with the inspected configuration"`
+	Mode             string           `json:"mode" jsonschema:"Configuration inspection mode used for the response: summary, xml, or both"`
+	ConfigAccessible bool             `json:"configAccessible" jsonschema:"Whether Jenkins allowed reading the job config.xml endpoint"`
+	Source           string           `json:"source" jsonschema:"Source used for the returned configuration information, such as config.xml or api/json fallback"`
+	Summary          JobConfigSummary `json:"summary" jsonschema:"Structured summary extracted from job configuration or fallback job metadata"`
+	XML              string           `json:"xml,omitempty" jsonschema:"Best-effort redacted config.xml content when mode requests XML output; plugin-specific fields may still require careful review"`
+	Bytes            int              `json:"bytes,omitempty" jsonschema:"Number of bytes in the redacted XML content before tool-level truncation"`
+	Truncated        bool             `json:"truncated" jsonschema:"Whether the redacted XML content was truncated to the requested or configured byte limit"`
+	AccessError      string           `json:"accessError,omitempty" jsonschema:"Permission or retrieval error from config.xml when fallback metadata was returned"`
+	Warnings         []ConfigWarning  `json:"warnings,omitempty" jsonschema:"Warnings about partial access, redaction, truncation, or parse limitations"`
+}
+
+type JobConfigSummary struct {
+	RootElement          string                `json:"rootElement,omitempty" jsonschema:"Root XML element name from config.xml, when readable"`
+	RootClass            string                `json:"rootClass,omitempty" jsonschema:"Class attribute from the root XML element, when present"`
+	Plugin               string                `json:"plugin,omitempty" jsonschema:"Plugin attribute from the root XML element, when present"`
+	Kind                 string                `json:"kind" jsonschema:"Derived Jenkins job configuration kind, such as branchJob, multibranchProject, organizationFolder, folder, pipeline, freestyle, or unknown"`
+	Description          string                `json:"description,omitempty" jsonschema:"Job description from config XML or fallback job metadata"`
+	Disabled             *bool                 `json:"disabled,omitempty" jsonschema:"Whether the job is disabled, when represented in config XML or job metadata"`
+	Buildable            *bool                 `json:"buildable,omitempty" jsonschema:"Whether Jenkins considers the job buildable from fallback job metadata"`
+	ScriptPath           string                `json:"scriptPath,omitempty" jsonschema:"Pipeline script path such as Jenkinsfile when found in config XML"`
+	DefinitionClass      string                `json:"definitionClass,omitempty" jsonschema:"Pipeline definition class from config XML when found"`
+	OrphanedItemStrategy string                `json:"orphanedItemStrategy,omitempty" jsonschema:"Multibranch or organization folder orphaned item strategy class when found"`
+	Sources              []ConfigSource        `json:"sources,omitempty" jsonschema:"SCM sources, branch sources, or organization navigators discovered in config XML"`
+	Traits               []ConfigComponent     `json:"traits,omitempty" jsonschema:"Branch source or navigator traits discovered in config XML"`
+	Triggers             []ConfigComponent     `json:"triggers,omitempty" jsonschema:"Configured trigger components discovered in config XML"`
+	JobProperties        []ConfigComponent     `json:"jobProperties,omitempty" jsonschema:"Configured job property components discovered in config XML or fallback metadata"`
+	ProjectFactories     []ConfigComponent     `json:"projectFactories,omitempty" jsonschema:"Organization folder or multibranch project factories discovered in config XML"`
+	Parameters           []ParameterDefinition `json:"parameters,omitempty" jsonschema:"Build parameter definitions from config XML fallback metadata when available"`
+}
+
+type ConfigSource struct {
+	Kind          string   `json:"kind" jsonschema:"Source kind such as branchSource, navigator, scm, or unknown"`
+	Class         string   `json:"class,omitempty" jsonschema:"Jenkins class name for the source or navigator"`
+	Plugin        string   `json:"plugin,omitempty" jsonschema:"Plugin attribute associated with the source or navigator"`
+	ID            string   `json:"id,omitempty" jsonschema:"Source identifier when present in config XML"`
+	Remote        string   `json:"remote,omitempty" jsonschema:"SCM remote URL when present in config XML"`
+	CredentialsID string   `json:"credentialsId,omitempty" jsonschema:"Redacted Jenkins credentials id when present in config XML"`
+	RepoOwner     string   `json:"repoOwner,omitempty" jsonschema:"Repository owner or organization from branch source or navigator config"`
+	Repository    string   `json:"repository,omitempty" jsonschema:"Repository name from branch source config"`
+	ServerURL     string   `json:"serverUrl,omitempty" jsonschema:"SCM server or API URL when present in config XML"`
+	Traits        []string `json:"traits,omitempty" jsonschema:"Trait class names attached to this source or navigator"`
+}
+
+type ConfigComponent struct {
+	Name   string `json:"name,omitempty" jsonschema:"XML element name for the configuration component"`
+	Class  string `json:"class,omitempty" jsonschema:"Jenkins class name for the configuration component"`
+	Plugin string `json:"plugin,omitempty" jsonschema:"Plugin attribute associated with the configuration component"`
+}
+
+type ConfigWarning struct {
+	Code    string `json:"code" jsonschema:"Machine-readable warning code for configuration inspection"`
+	Message string `json:"message" jsonschema:"Human-readable warning message for configuration inspection"`
+	Detail  string `json:"detail,omitempty" jsonschema:"Additional warning detail when available"`
+}
+
 type ParameterDefinition struct {
 	Name        string   `json:"name" jsonschema:"Jenkins build parameter name"`
 	Type        string   `json:"type,omitempty" jsonschema:"Jenkins build parameter type"`
