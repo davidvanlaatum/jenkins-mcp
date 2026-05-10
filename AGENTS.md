@@ -13,6 +13,7 @@
 ### Branching, Reviews, and CI
 - All code changes must be made on a feature branch using the pattern `feature/<short-name-or-issue-number>`.
 - Before editing files, verify the current branch. If it is not already a task-specific feature branch for the requested work, create or switch to one; do not silently reuse an unrelated or generic feature branch.
+- When the user says something to the effect of "pick up the next issue", treat it as a request to pick up the next GitHub issue: identify the next appropriate candidate issue, ask and resolve any necessary clarifying questions or status-workflow questions, then mark the issue in progress and start work.
 - Code changes should be delivered through a merge request/pull request; do not merge directly into the default branch unless explicitly instructed.
 - Pull request descriptions for issue-driven work should mention the issue they fix using a GitHub closing keyword such as `Fixes #23`.
 - Do not push branches, create merge requests, merge, or close merge requests unless explicitly asked.
