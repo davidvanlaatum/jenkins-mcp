@@ -25,6 +25,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
 - `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes.
+- `jenkins_watch_queue_item`: Long-poll a Jenkins queue item watcher until it changes, receives an executable build, is cancelled, disappears, or times out.
 - `jenkins_get_coverage`: Fetch coverage summary from common Jenkins coverage plugin endpoints.
 - `jenkins_get_issues`: Fetch Warnings NG or analysis issue summary from common Jenkins plugins.
 - `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.
