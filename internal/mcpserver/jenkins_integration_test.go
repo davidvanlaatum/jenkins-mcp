@@ -23,6 +23,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	_, api := jenkins.Controller(t, "admin")
 	freestyleBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-freestyle")
 	pipelineBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-pipeline")
+	warningsBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-warnings")
 
 	t.Run("list jobs", func(t *testing.T) {
 		r := require.New(t)
@@ -144,6 +145,61 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		})
 		r.NoError(err, "CallTool() missing artifact")
 		r.True(missing.IsError, "missing artifact should be returned as a structured tool error")
+	})
+
+	t.Run("warnings ng issues", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		build := callIntegrationTool[struct {
+			Build struct {
+				WarningsNGSummary struct {
+					Available bool `json:"available"`
+					Tools     []struct {
+						ID    string `json:"id"`
+						Name  string `json:"name"`
+						Total int    `json:"total"`
+					} `json:"tools"`
+				} `json:"warningsNgSummary"`
+			} `json:"build"`
+		}](t, clientSession, "jenkins_get_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-warnings",
+			"build":      warningsBuild,
+		})
+		r.True(build.Build.WarningsNGSummary.Available, "warnings summary should be available")
+		r.NotEmpty(build.Build.WarningsNGSummary.Tools, "warnings tools")
+
+		toolID := build.Build.WarningsNGSummary.Tools[0].ID
+		page := callIntegrationTool[struct {
+			Page struct {
+				Available bool `json:"available"`
+				Items     []struct {
+					Severity    string `json:"severity"`
+					Message     string `json:"message"`
+					File        string `json:"file"`
+					Line        int    `json:"line"`
+					Fingerprint string `json:"fingerprint"`
+				} `json:"items"`
+			} `json:"page"`
+			HasMore bool `json:"hasMore"`
+			Limit   int  `json:"limit"`
+		}](t, clientSession, "jenkins_list_issues", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-warnings",
+			"build":      warningsBuild,
+			"tool":       toolID,
+			"limit":      50,
+		})
+		r.True(page.Page.Available, "warnings page should be available")
+		r.NotEmpty(page.Page.Items, "warnings issues")
+		r.Equal(50, page.Limit, "limit")
+		issue := page.Page.Items[0]
+		r.NotEmpty(issue.Message, "issue message")
+		r.NotEmpty(issue.File, "issue file")
+		r.NotEmpty(issue.Fingerprint, "issue fingerprint")
+		r.Greater(issue.Line, 0, "issue line")
 	})
 
 	t.Run("list jobs filters and empty result", func(t *testing.T) {

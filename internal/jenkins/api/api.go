@@ -395,6 +395,10 @@ func (a *API) GetBuild(ctx context.Context, job string, number int) (model.Build
 		}
 		build.ChangeSets = append(build.ChangeSets, out)
 	}
+	warningsSummary := a.WarningsNGSummary(ctx, job, number)
+	if warningsSummary.Available {
+		build.WarningsNGSummary = &warningsSummary
+	}
 	return build, nil
 }
 
@@ -737,21 +741,213 @@ func (a *API) CoverageReport(ctx context.Context, job string, number int) (model
 	return model.CoverageReport{Available: false, CheckedEndpoints: candidates}, nil
 }
 
-func (a *API) IssuesReport(ctx context.Context, job string, number int) (model.IssuesReport, error) {
-	candidates := []string{
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ngResult/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ngResult/analysis/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/analysisResult/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/recordIssues/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings/api/json",
+type warningsNGSummaryJSON struct {
+	Tools []warningsNGToolJSON `json:"tools"`
+}
+
+type warningsNGToolJSON struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	LatestURL       string `json:"latestUrl"`
+	Size            int    `json:"size"`
+	TotalSize       int    `json:"totalSize"`
+	Total           int    `json:"total"`
+	NewSize         int    `json:"newSize"`
+	New             int    `json:"new"`
+	FixedSize       int    `json:"fixedSize"`
+	Fixed           int    `json:"fixed"`
+	OutstandingSize int    `json:"outstandingSize"`
+	Outstanding     int    `json:"outstanding"`
+	ErrorSize       int    `json:"errorSize"`
+	HighSize        int    `json:"highSize"`
+	NormalSize      int    `json:"normalSize"`
+	LowSize         int    `json:"lowSize"`
+}
+
+type warningsNGIssuesJSON struct {
+	Size      int                  `json:"size"`
+	TotalSize int                  `json:"totalSize"`
+	Issues    []issueJSON          `json:"issues"`
+	Tools     []warningsNGToolJSON `json:"tools"`
+}
+
+type issueJSON struct {
+	AddedAt      int    `json:"addedAt"`
+	AuthorEmail  string `json:"authorEmail"`
+	AuthorName   string `json:"authorName"`
+	BaseName     string `json:"baseName"`
+	Severity     string `json:"severity"`
+	Category     string `json:"category"`
+	Type         string `json:"type"`
+	Message      string `json:"message"`
+	Description  string `json:"description"`
+	File         string `json:"file"`
+	FileName     string `json:"fileName"`
+	FilePath     string `json:"filePath"`
+	Package      string `json:"package"`
+	PackageName  string `json:"packageName"`
+	Module       string `json:"module"`
+	ModuleName   string `json:"moduleName"`
+	Line         int    `json:"line"`
+	LineStart    int    `json:"lineStart"`
+	LineEnd      int    `json:"lineEnd"`
+	LineNumber   int    `json:"lineNumber"`
+	Column       int    `json:"column"`
+	ColumnStart  int    `json:"columnStart"`
+	ColumnEnd    int    `json:"columnEnd"`
+	ColumnNumber int    `json:"columnNumber"`
+	Fingerprint  string `json:"fingerprint"`
+	Reference    string `json:"reference"`
+	Origin       string `json:"origin"`
+	OriginName   string `json:"originName"`
+	Commit       string `json:"commit"`
+}
+
+func (a *API) WarningsNGSummary(ctx context.Context, job string, number int) model.IssuesSummary {
+	candidates := []string{urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ng/api/json"}
+	var raw warningsNGSummaryJSON
+	if err := a.client.GetJSON(ctx, candidates[0], nil, &raw); err != nil {
+		return model.IssuesSummary{Available: false, CheckedEndpoints: candidates, Message: optionalWarningsMessage(err)}
 	}
-	for _, candidate := range candidates {
-		var raw map[string]any
-		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
-			return model.IssuesReport{Available: true, Endpoint: candidate, CheckedEndpoints: candidates, Summary: raw}, nil
+	tools := issueToolSummaries(raw.Tools)
+	if len(tools) == 0 {
+		return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Message: "Warnings NG is available but did not report any issue tools."}
+	}
+	return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Tools: tools}
+}
+
+func (a *API) ListIssues(ctx context.Context, job string, number int, tool string, offset int, limit int) (model.IssuesPage, error) {
+	summary := a.WarningsNGSummary(ctx, job, number)
+	page := model.IssuesPage{
+		Available:        summary.Available,
+		Endpoint:         summary.Endpoint,
+		CheckedEndpoints: append([]string{}, summary.CheckedEndpoints...),
+		Tools:            summary.Tools,
+		Message:          summary.Message,
+	}
+	if !summary.Available {
+		return page, nil
+	}
+
+	selected := strings.TrimSpace(tool)
+	if selected == "" {
+		if len(summary.Tools) != 1 {
+			if len(summary.Tools) > 1 {
+				page.Message = "Multiple Warnings NG tools are available; provide a tool selector to list issues for one tool."
+			}
+			return page, nil
+		}
+		selected = summary.Tools[0].ID
+	}
+
+	endpoint := warningsNGIssuesEndpoint(job, number, selected)
+	page.CheckedEndpoints = append(page.CheckedEndpoints, endpoint)
+	var raw warningsNGIssuesJSON
+	tree := fmt.Sprintf("size,totalSize,issues[addedAt,authorEmail,authorName,baseName,severity,category,type,message,description,file,fileName,filePath,package,packageName,module,moduleName,line,lineStart,lineEnd,lineNumber,column,columnStart,columnEnd,columnNumber,fingerprint,reference,origin,originName,commit]{%d,%d}", offset, offset+limit)
+	if err := a.client.GetJSON(ctx, endpoint, url.Values{"tree": {tree}}, &raw); err != nil {
+		if isOptionalMissing(err) {
+			page.Endpoint = endpoint
+			page.Message = optionalWarningsMessage(err)
+			return page, nil
+		}
+		return model.IssuesPage{}, err
+	}
+	page.Available = true
+	page.Endpoint = endpoint
+	page.Message = ""
+	page.Items = issuesFromJSON(raw.Issues)
+	return page, nil
+}
+
+func warningsNGIssuesEndpoint(job string, number int, tool string) string {
+	return urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/" + url.PathEscape(strings.Trim(tool, "/")) + "/all/api/json"
+}
+
+func issueToolSummaries(tools []warningsNGToolJSON) []model.IssueToolSummary {
+	out := make([]model.IssueToolSummary, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, model.IssueToolSummary{
+			ID:          firstNonEmpty(tool.ID, strings.Trim(tool.URL, "/")),
+			Name:        tool.Name,
+			URL:         tool.URL,
+			LatestURL:   tool.LatestURL,
+			Total:       firstPositive(tool.Total, tool.TotalSize, tool.Size),
+			New:         firstPositive(tool.New, tool.NewSize),
+			Fixed:       firstPositive(tool.Fixed, tool.FixedSize),
+			Outstanding: firstPositive(tool.Outstanding, tool.OutstandingSize),
+			Error:       tool.ErrorSize,
+			High:        tool.HighSize,
+			Normal:      tool.NormalSize,
+			Low:         tool.LowSize,
+		})
+	}
+	return out
+}
+
+func issuesFromJSON(issues []issueJSON) []model.Issue {
+	out := make([]model.Issue, 0, len(issues))
+	for _, issue := range issues {
+		out = append(out, model.Issue{
+			Severity:    issue.Severity,
+			Category:    issue.Category,
+			Type:        issue.Type,
+			Message:     firstNonEmpty(issue.Message, issue.Description),
+			Description: issue.Description,
+			File:        firstNonEmpty(issue.File, issue.FileName, issue.FilePath),
+			BaseName:    issue.BaseName,
+			Package:     firstNonEmpty(issue.Package, issue.PackageName),
+			Module:      firstNonEmpty(issue.Module, issue.ModuleName),
+			Line:        firstPositive(issue.Line, issue.LineStart, issue.LineNumber),
+			LineEnd:     issue.LineEnd,
+			ColumnStart: firstPositive(issue.ColumnStart, issue.Column, issue.ColumnNumber),
+			ColumnEnd:   issue.ColumnEnd,
+			Fingerprint: issue.Fingerprint,
+			Reference:   issue.Reference,
+			Origin:      issue.Origin,
+			OriginName:  issue.OriginName,
+			AuthorName:  issue.AuthorName,
+			AuthorEmail: issue.AuthorEmail,
+			Commit:      issue.Commit,
+			AddedAt:     issue.AddedAt,
+		})
+	}
+	return out
+}
+
+func optionalWarningsMessage(err error) string {
+	if isOptionalMissing(err) {
+		return "Warnings NG data is not available for this build."
+	}
+	return err.Error()
+}
+
+func isOptionalMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	if e, ok := err.(*apperrors.Error); ok {
+		return e.Code == apperrors.CodeNotFound || e.Code == apperrors.CodeUnsupported
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
 		}
 	}
-	return model.IssuesReport{Available: false, CheckedEndpoints: candidates}, nil
+	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]string) (string, error) {
