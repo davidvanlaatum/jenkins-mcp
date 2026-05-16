@@ -4,6 +4,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -52,6 +53,86 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(names, "example-warnings", "Warnings NG job")
 		r.Contains(names, "example-artifacts", "artifact job")
 		r.Contains(names, "example-watch-lifecycle", "watch lifecycle job")
+	})
+
+	t.Run("job config inspection", func(t *testing.T) {
+		r := require.New(t)
+		adminSession, adminCleanup := connectIntegrationMCP(t, jenkins, "admin")
+		defer adminCleanup()
+
+		summary := callIntegrationTool[struct {
+			Config model.JobConfig `json:"config"`
+		}](t, adminSession, "jenkins_get_job_config", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-config-inspection",
+		})
+		r.Equal("summary", summary.Config.Mode, "summary mode")
+		r.True(summary.Config.ConfigAccessible, "summary config accessible")
+		r.Equal("config.xml", summary.Config.Source, "summary source")
+		r.Empty(summary.Config.XML, "summary mode should not include XML")
+		r.Equal("freestyle", summary.Config.Summary.Kind, "summary kind")
+		r.Equal("project", summary.Config.Summary.RootElement, "summary root element")
+		r.Contains(summary.Config.Summary.Description, "job config inspection", "summary description")
+		r.Len(summary.Config.Summary.Parameters, 4, "summary parameters")
+		assertConfigParameterRedaction(t, summary.Config.Summary.Parameters)
+
+		xmlOnly := callIntegrationTool[struct {
+			Config model.JobConfig `json:"config"`
+		}](t, adminSession, "jenkins_get_job_config", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-config-inspection",
+			"mode":       "xml",
+			"maxBytes":   65536,
+		})
+		r.Equal("xml", xmlOnly.Config.Mode, "xml mode")
+		r.True(xmlOnly.Config.ConfigAccessible, "xml config accessible")
+		r.NotEmpty(xmlOnly.Config.XML, "xml output")
+		r.False(xmlOnly.Config.Truncated, "xml output should fit")
+		r.Contains(xmlOnly.Config.XML, "[REDACTED]", "xml should include redaction marker")
+		for _, secret := range []string{
+			"fixture-password-secret",
+			"fixture-choice-secret",
+			"fixture-url-secret",
+			"fixture-query-secret",
+			"fixture-command-secret",
+		} {
+			r.NotContains(xmlOnly.Config.XML, secret, "redacted XML should not expose fixture secret")
+		}
+		r.Contains(configWarningCodes(xmlOnly.Config.Warnings), "xml_redacted", "xml redaction warning")
+		r.Contains(configWarningCodes(xmlOnly.Config.Warnings), "xml_best_effort_redaction", "xml best-effort warning")
+
+		both := callIntegrationTool[struct {
+			Config model.JobConfig `json:"config"`
+		}](t, adminSession, "jenkins_get_job_config", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"mode":       "both",
+			"maxBytes":   65536,
+		})
+		r.Equal("both", both.Config.Mode, "both mode")
+		r.True(both.Config.ConfigAccessible, "pipeline config accessible")
+		r.Equal("branchJob", both.Config.Summary.Kind, "pipeline config kind")
+		r.Contains(both.Config.Summary.DefinitionClass, "CpsFlowDefinition", "pipeline definition class")
+		r.NotEmpty(both.Config.XML, "both mode XML")
+		r.NotContains(both.Config.XML, "hello from pipeline", "pipeline script should be redacted")
+
+		noConfigSession, noConfigCleanup := connectIntegrationMCP(t, jenkins, "no-config-access")
+		defer noConfigCleanup()
+		fallback := callIntegrationTool[struct {
+			Config model.JobConfig `json:"config"`
+		}](t, noConfigSession, "jenkins_get_job_config", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-config-inspection",
+			"mode":       "both",
+		})
+		r.Equal("both", fallback.Config.Mode, "fallback mode")
+		r.False(fallback.Config.ConfigAccessible, "fallback config accessible")
+		r.Equal("api/json", fallback.Config.Source, "fallback source")
+		r.Empty(fallback.Config.XML, "fallback should not include XML")
+		r.NotEmpty(fallback.Config.AccessError, "fallback access error")
+		r.Equal("freestyle", fallback.Config.Summary.Kind, "fallback summary kind")
+		r.Contains(configWarningCodes(fallback.Config.Warnings), "config_permission_denied", "fallback warning")
+		assertConfigParameterRedaction(t, fallback.Config.Summary.Parameters)
 	})
 
 	t.Run("permission-specific behavior", func(t *testing.T) {
@@ -919,6 +1000,46 @@ func integrationToolErrorText(result *mcp.CallToolResult) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func assertConfigParameterRedaction(t *testing.T, parameters []model.ParameterDefinition) {
+	t.Helper()
+
+	r := require.New(t)
+	byName := map[string]model.ParameterDefinition{}
+	for _, parameter := range parameters {
+		byName[parameter.Name] = parameter
+	}
+	r.Contains(byName, "BRANCH", "branch parameter")
+	if byName["BRANCH"].Default != nil {
+		r.Equal("main", byName["BRANCH"].Default, "branch default")
+	}
+	r.Contains(byName, "DEPLOY_PASSWORD", "password parameter")
+	if byName["DEPLOY_PASSWORD"].Default != nil {
+		r.Equal("[REDACTED]", byName["DEPLOY_PASSWORD"].Default, "password default")
+	}
+	r.Empty(byName["DEPLOY_PASSWORD"].Choices, "password choices")
+	r.Contains(byName, "API_TOKEN", "token parameter")
+	if byName["API_TOKEN"].Default != nil {
+		r.Equal("[REDACTED]", byName["API_TOKEN"].Default, "token default")
+	}
+	r.Empty(byName["API_TOKEN"].Choices, "token choices")
+	r.Contains(byName, "REPO_URL", "URL parameter")
+	if byName["REPO_URL"].Default != nil {
+		defaultValue := fmt.Sprint(byName["REPO_URL"].Default)
+		r.Contains(defaultValue, "example.com/acme/app.git", "URL default repository")
+		r.Contains(defaultValue, "branch=main", "URL default safe query")
+		r.NotContains(defaultValue, "fixture-url-secret", "URL default userinfo")
+		r.NotContains(defaultValue, "fixture-query-secret", "URL default query token")
+	}
+}
+
+func configWarningCodes(warnings []model.ConfigWarning) []string {
+	codes := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		codes = append(codes, warning.Code)
+	}
+	return codes
 }
 
 func watchQueueUntilTerminal(t *testing.T, clientSession *mcp.ClientSession, id int64, state string, waitTimeoutMs int64) queueWatchToolResult {

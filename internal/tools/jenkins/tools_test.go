@@ -1187,6 +1187,7 @@ func TestGetJobConfigReturnsRedactedXMLAndSummary(t *testing.T) {
 	r.NotContains(config.XML, "AKIASECRETATTRIBUTE", "access key attributes should be redacted")
 	r.Contains(config.XML, "[REDACTED]", "xml should show redaction placeholder")
 	r.Contains(config.Warnings[0].Message, "Sensitive and high-risk", "redaction warning")
+	r.Contains(config.Warnings[0].Message, "choice lists", "redaction warning should mention choice lists")
 	r.NotNil(config.Summary.Buildable, "buildable should be preserved from api/json fallback")
 	r.False(*config.Summary.Buildable, "buildable")
 	r.Len(config.Summary.Parameters, 2, "parameters should be preserved from api/json fallback")
