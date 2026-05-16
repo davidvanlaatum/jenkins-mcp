@@ -297,7 +297,7 @@ func redactXML(raw []byte) ([]byte, []model.ConfigWarning) {
 	if redacted {
 		warnings = append(warnings, model.ConfigWarning{
 			Code:    "xml_redacted",
-			Message: "Sensitive and high-risk config.xml fields such as credentials, tokens, passwords, secrets, scripts, commands, generic values, and URL credentials were redacted.",
+			Message: "Sensitive and high-risk config.xml fields such as credentials, tokens, passwords, secrets, scripts, commands, generic values, choice lists, and URL credentials were redacted.",
 		})
 	}
 	return out.Bytes(), warnings
@@ -316,7 +316,7 @@ func isSensitiveName(name string) bool {
 func isHighRiskValueName(name string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "-", ""), "_", ""))
 	switch normalized {
-	case "script", "groovyscript", "command", "commands", "commandline", "propertiescontent", "value", "defaultvalue":
+	case "script", "groovyscript", "command", "commands", "commandline", "propertiescontent", "value", "defaultvalue", "choices":
 		return true
 	default:
 		return false

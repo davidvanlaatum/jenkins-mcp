@@ -140,6 +140,45 @@ echo "finished watch lifecycle fixture"
     }
 }
 
+freeStyleJob('example-config-inspection') {
+    description('Parameterized freestyle job used for job config inspection integration tests.')
+    steps {
+        shell('''
+echo "fixture-command-secret"
+'''.stripIndent())
+    }
+    configure { project ->
+        project / 'properties' / 'hudson.model.ParametersDefinitionProperty' / 'parameterDefinitions' << 'hudson.model.StringParameterDefinition' {
+            name('BRANCH')
+            defaultValue('main')
+            description('Branch to build.')
+            trim(false)
+        }
+        project / 'properties' / 'hudson.model.ParametersDefinitionProperty' / 'parameterDefinitions' << 'hudson.model.StringParameterDefinition' {
+            name('DEPLOY_PASSWORD')
+            defaultValue('fixture-password-secret')
+            description('Deployment password.')
+            trim(false)
+        }
+        project / 'properties' / 'hudson.model.ParametersDefinitionProperty' / 'parameterDefinitions' << 'hudson.model.ChoiceParameterDefinition' {
+            name('API_TOKEN')
+            description('Token-like choice parameter.')
+            choices(class: 'java.util.Arrays$ArrayList') {
+                a(class: 'string-array') {
+                    string('fixture-choice-secret')
+                    string('safe-choice')
+                }
+            }
+        }
+        project / 'properties' / 'hudson.model.ParametersDefinitionProperty' / 'parameterDefinitions' << 'hudson.model.StringParameterDefinition' {
+            name('REPO_URL')
+            defaultValue('https://user:fixture-url-secret@example.com/acme/app.git?token=fixture-query-secret&branch=main')
+            description('Repository URL.')
+            trim(false)
+        }
+    }
+}
+
 pipelineJob('example-pipeline') {
     description('Buildable pipeline job created by Job DSL for jenkins-mcp integration tests.')
     definition {

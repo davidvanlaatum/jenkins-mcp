@@ -43,6 +43,7 @@ var expectedJobs = []string{
 	"example-warnings",
 	"example-coverage",
 	"example-artifacts",
+	"example-config-inspection",
 	"example-pipeline",
 	"example-watch-lifecycle",
 }
