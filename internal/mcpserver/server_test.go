@@ -131,7 +131,6 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_get_build",
 		"jenkins_get_capabilities",
 		"jenkins_get_changes",
-		"jenkins_get_coverage",
 		"jenkins_get_job",
 		"jenkins_get_job_config",
 		"jenkins_get_log",
@@ -198,7 +197,6 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_get_pipeline_node_log": {readOnly: true},
 		"jenkins_list_artifacts":        {readOnly: true},
 		"jenkins_read_artifact":         {readOnly: true},
-		"jenkins_get_coverage":          {readOnly: true},
 		"jenkins_list_issues":           {readOnly: true},
 		"jenkins_get_changes":           {readOnly: true},
 		"jenkins_watch_build":           {readOnly: true},
@@ -273,7 +271,6 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_download_artifact":     "Download Artifact",
 		"jenkins_list_artifacts":        "List Artifacts",
 		"jenkins_read_artifact":         "Read Artifact",
-		"jenkins_get_coverage":          "Get Coverage",
 		"jenkins_list_issues":           "List Issues",
 		"jenkins_get_changes":           "Get Changes",
 		"jenkins_watch_build":           "Watch Build",
@@ -422,6 +419,74 @@ func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
 		checked++
 	}
 	r.NotZero(checked, "tools checked")
+}
+
+func TestGetBuildOutputSchemaDescribesCoverageFields(t *testing.T) {
+	r := require.New(t)
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		r.NoError(err, "Tools()")
+		if tool.Name != "jenkins_get_build" {
+			continue
+		}
+		raw, err := json.Marshal(tool.OutputSchema)
+		r.NoError(err, "marshal output schema")
+		var schema any
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal output schema")
+		for _, property := range []string{"coverage", "summaries", "metrics", "errors", "checkedEndpoints"} {
+			r.True(schemaContainsDescribedProperty(schema, property), "output schema should describe %q", property)
+		}
+		return
+	}
+	r.Fail("jenkins_get_build tool not found")
+}
+
+func schemaContainsDescribedProperty(schema any, propertyName string) bool {
+	object, ok := schema.(map[string]any)
+	if !ok {
+		return false
+	}
+	if properties, ok := object["properties"].(map[string]any); ok {
+		if property, ok := properties[propertyName].(map[string]any); ok {
+			description, _ := property["description"].(string)
+			if description != "" {
+				return true
+			}
+		}
+	}
+	for _, value := range object {
+		switch value := value.(type) {
+		case map[string]any:
+			if schemaContainsDescribedProperty(value, propertyName) {
+				return true
+			}
+		case []any:
+			for _, item := range value {
+				if schemaContainsDescribedProperty(item, propertyName) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string, schema any) {

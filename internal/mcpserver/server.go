@@ -218,7 +218,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job with cursor pagination. Build summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
 		return jenkinstools.ListBuilds(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_get_build", "Get Build", "Get build details including result, causes, parameters, artifacts, and changes."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.GetBuildResponse, error) {
+	addConfiguredTool(s, readOnlyTool("jenkins_get_build", "Get Build", "Get build details including result, causes, parameters, artifacts, changes, and optional coverage summaries."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.GetBuildResponse, error) {
 		return jenkinstools.GetBuild(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_log", "Get Log", "Read a bounded progressive console log chunk. For Pipeline builds, prefer jenkins_get_pipeline_node_log to fetch logs for specific stages."), func(ctx context.Context, in jenkinstools.GetLogRequest) (jenkinstools.GetLogResponse, error) {
@@ -250,9 +250,6 @@ func (s *Server) register() {
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_read_artifact", "Read Artifact", "Read a small text Jenkins artifact inline, bounded by configured inline response limits."), func(ctx context.Context, in jenkinstools.ReadArtifactRequest) (jenkinstools.ReadArtifactResponse, error) {
 		return jenkinstools.ReadArtifact(ctx, s.deps, in)
-	})
-	addConfiguredTool(s, readOnlyTool("jenkins_get_coverage", "Get Coverage", "Fetch coverage summary from common Jenkins coverage plugin endpoints when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.CoverageResponse, error) {
-		return jenkinstools.Coverage(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_issues", "List Issues", "List paged Warnings NG issues for a Jenkins build, with typed tool discovery and issue fields."), func(ctx context.Context, in jenkinstools.ListIssuesRequest) (jenkinstools.ListIssuesResponse, error) {
 		return jenkinstools.ListIssues(ctx, s.deps, in)

@@ -558,6 +558,16 @@ func GetBuild(ctx context.Context, deps Deps, in BuildRequest) (GetBuildResponse
 		return GetBuildResponse{}, err
 	}
 	build, err := api.GetBuild(ctx, in.Job, in.Build)
+	if err != nil {
+		return GetBuildResponse{}, err
+	}
+	coverage, err := api.CoverageReport(ctx, in.Job, in.Build)
+	if err != nil {
+		return GetBuildResponse{}, err
+	}
+	if coverage.Available || len(coverage.Errors) > 0 {
+		build.Coverage = &coverage
+	}
 	return GetBuildResponse{Build: build}, err
 }
 
@@ -796,22 +806,6 @@ func ReadArtifact(ctx context.Context, deps Deps, in ReadArtifactRequest) (ReadA
 	}
 	artifact, err := api.ReadArtifact(ctx, in.Job, in.Build, in.RelativePath, maxBytes)
 	return ReadArtifactResponse{Artifact: artifact}, err
-}
-
-type CoverageResponse struct {
-	Report model.CoverageReport `json:"report" jsonschema:"Coverage plugin availability and summary data"`
-}
-
-func Coverage(ctx context.Context, deps Deps, in BuildRequest) (CoverageResponse, error) {
-	if err := validateBuild(in.Job, in.Build); err != nil {
-		return CoverageResponse{}, err
-	}
-	api, err := apiFor(deps, in.Controller)
-	if err != nil {
-		return CoverageResponse{}, err
-	}
-	report, err := api.CoverageReport(ctx, in.Job, in.Build)
-	return CoverageResponse{Report: report}, err
 }
 
 type ListIssuesRequest struct {

@@ -16,7 +16,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
 - `jenkins_get_job_config`: Inspect Jenkins job configuration as a structured summary, best-effort redacted `config.xml`, or both. Falls back to safe job metadata when `config.xml` is not readable, such as when the caller lacks Job Configure or Extended Read permissions.
 - `jenkins_list_builds`: List recent builds for a Jenkins job, with cursor pagination and extended summaries including result, description, displayName, id, queueId, estimatedDuration, and keepLog. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
-- `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, changes, and typed Warnings NG summary data when available.
+- `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, changes, typed Warnings NG summary data when available, and optional typed coverage summaries from common coverage plugin endpoints.
 - `jenkins_get_log`: Read a bounded progressive console log chunk. For Pipeline builds, prefer `jenkins_get_pipeline_node_log`.
 - `jenkins_search_log`: Search a bounded console log chunk for text and return matching lines.
 - `jenkins_tail_log`: Read the tail of a Jenkins console log using progressive log offsets.
@@ -26,7 +26,6 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
 - `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes.
 - `jenkins_watch_queue_item`: Long-poll a Jenkins queue item watcher until it changes, receives an executable build, is cancelled, disappears, or times out.
-- `jenkins_get_coverage`: Fetch coverage summary from common Jenkins coverage plugin endpoints.
 - `jenkins_list_issues`: List paged, typed Warnings NG issues for a build. The response includes discovered tools so callers can select a tool when a build has multiple Warnings NG results.
 - `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.
 - `jenkins_list_artifacts`: List artifacts for a Jenkins build.

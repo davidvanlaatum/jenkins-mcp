@@ -82,7 +82,7 @@ FR28: AI agents can retrieve test stdout/stderr or related failure output where 
 
 FR29: AI agents can retrieve coverage summaries where supported by Jenkins plugins.
 
-FR30: AI agents receive clear unsupported-capability responses when coverage data is unavailable.
+FR30: AI agents can distinguish missing coverage plugin data from server failure because folded build responses omit unavailable coverage without failing.
 
 FR31: AI agents can retrieve `recordIssues` / Warnings NG issue summaries where available.
 
@@ -306,7 +306,7 @@ FR26: Epic 5 - retrieve JUnit test summaries.
 FR27: Epic 5 - retrieve individual failed test details.
 FR28: Epic 5 - retrieve test stdout/stderr or related failure output.
 FR29: Epic 5 - retrieve coverage summaries.
-FR30: Epic 5 - return unsupported-capability responses for unavailable coverage data.
+FR30: Epic 5 - omit unavailable folded coverage data without failing build lookups.
 FR31: Epic 5 - retrieve `recordIssues` / Warnings NG issue summaries.
 FR32: Epic 5 - retrieve individual static-analysis issue details.
 FR33: Epic 5 - return unsupported-capability responses for unavailable issue data.
@@ -867,7 +867,7 @@ AI agents can collect the non-log evidence needed for diagnosis: JUnit failures,
 
 ### Story 5.1: Retrieve JUnit Test Summaries
 
-**Requirements covered:** FR26, FR30
+**Requirements covered:** FR26
 
 As an AI agent,
 I want to retrieve JUnit test summaries for a build,
@@ -912,9 +912,9 @@ So that I can understand whether coverage data contributed to the failure.
 **Acceptance Criteria:**
 
 **Given** a build with coverage plugin data
-**When** the agent calls `jenkins_get_coverage`
-**Then** the server returns bounded normalized coverage summary data with metrics available from Jenkins, such as line, branch, instruction, class, method, or package coverage where supported
-**And** unsupported or missing coverage plugin data returns `unsupported_capability` with fallback guidance
+**When** the agent calls `jenkins_get_build`
+**Then** the build response includes optional bounded normalized coverage summary data with metrics available from Jenkins, such as line, branch, instruction, class, method, or package coverage where supported
+**And** missing coverage plugin data does not fail the build lookup
 **And** coverage response shape remains stable even when Jenkins plugins expose different metric sets
 **And** raw coverage plugin JSON/XML is not exposed directly
 **And** fixtures cover coverage present, coverage missing, partial metrics, unsupported plugin, and permission-denied cases
@@ -1023,7 +1023,7 @@ So that I can adapt diagnosis when a plugin or data source is unavailable.
 **When** the server responds
 **Then** the response includes diagnostic metadata that helps the agent choose fallback evidence sources where known
 **And** fallback metadata only references enabled server tools and discovered/likely Jenkins capabilities
-**And** unsupported coverage, issue, test, SCM, or artifact data is distinguishable from server failure
+**And** omitted folded coverage and unsupported issue, test, SCM, or artifact data are distinguishable from server failure
 **And** fallback suggestions use stable tool names and canonical identifiers
 **And** contract fixtures cover successful evidence with next suggestions, partial evidence, unsupported capability, and permission-limited evidence
 

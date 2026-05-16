@@ -1,6 +1,7 @@
 package jenkins
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -639,6 +640,414 @@ func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {
 	r.Equal(int64(3000), build.EstimatedDuration, "build estimated duration")
 	r.NotNil(build.KeepLog, "build keepLog")
 	r.True(*build.KeepLog, "build keepLog")
+}
+
+func TestGetBuildOmitsCoverageWhenNoCoverageEndpointsExist(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/43/api/json" {
+			http.NotFound(w, req)
+			return
+		}
+		writeJSON(w, `{
+			"id":"43",
+			"number":43,
+			"url":"https://jenkins.example.com/job/app/43/",
+			"result":"SUCCESS",
+			"building":false,
+			"artifacts":[],
+			"actions":[],
+			"changeSets":[]
+		}`)
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.Nil(got.Build.Coverage, "coverage should be omitted when all coverage endpoints are missing")
+}
+
+func TestGetBuildIncludesOneCoverageSummary(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			coverageTree := req.URL.Query().Get("tree")
+			if !strings.Contains(coverageTree, "lineCoverage[") || !strings.Contains(coverageTree, "healthReport[description,score]") {
+				http.Error(w, "missing bounded coverage tree projection", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, `{
+				"lineCoverage":{"covered":8,"missed":2},
+				"healthReport":[{"description":"Line coverage 80%","score":80}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.True(got.Build.Coverage.Available, "coverage available")
+	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
+	summary := got.Build.Coverage.Summaries[0]
+	r.Equal("coverage", summary.Source, "coverage source")
+	r.Equal("job/app/43/coverage/api/json", summary.Endpoint, "coverage endpoint")
+	r.Contains(summary.TopLevelFields, "lineCoverage", "top-level fields")
+	r.Len(summary.HealthReports, 1, "health reports")
+	r.Len(summary.Metrics, 1, "coverage metrics")
+	metric := summary.Metrics[0]
+	r.Equal("line", metric.Name, "metric name")
+	r.NotNil(metric.Covered, "metric covered")
+	r.Equal(float64(8), *metric.Covered, "metric covered")
+	r.NotNil(metric.Missed, "metric missed")
+	r.Equal(float64(2), *metric.Missed, "metric missed")
+	r.NotNil(metric.Total, "metric total")
+	r.Equal(float64(10), *metric.Total, "metric total")
+	r.NotNil(metric.Percentage, "metric percentage")
+	r.Equal(float64(80), *metric.Percentage, "metric percentage")
+}
+
+func TestGetBuildNamesRootCoverageMetricFromSource(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			writeJSON(w, `{"percentage":80}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.True(got.Build.Coverage.Available, "coverage available")
+	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
+	summary := got.Build.Coverage.Summaries[0]
+	r.Equal("coverage", summary.Source, "coverage source")
+	r.Len(summary.Metrics, 1, "coverage metrics")
+	metric := summary.Metrics[0]
+	r.Equal("coverage", metric.Name, "root metric name")
+	r.NotNil(metric.Percentage, "metric percentage")
+	r.Equal(float64(80), *metric.Percentage, "metric percentage")
+}
+
+func TestGetBuildNormalizesCoveragePluginApiShape(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			coverageTree := req.URL.Query().Get("tree")
+			for _, field := range []string{
+				"projectStatistics[*]",
+				"projectDelta[*]",
+				"modifiedFilesStatistics[*]",
+				"modifiedLinesStatistics[*]",
+				"modifiedFilesDelta[*]",
+				"modifiedLinesDelta[*]",
+				"qualityGates[",
+				"referenceBuild",
+			} {
+				if !strings.Contains(coverageTree, field) {
+					http.Error(w, "missing coverage tree field "+field, http.StatusBadRequest)
+					return
+				}
+			}
+			writeJSON(w, `{
+				"projectStatistics":{"line":"88.44%","branch":"72.5%","loc":"1234"},
+				"projectDelta":{"line":"+1.25%","loc":"-50"},
+				"modifiedFilesStatistics":{"line":"91.5%","complexity":"392"},
+				"modifiedLinesStatistics":{"line":"95.0%"},
+				"modifiedFilesDelta":{"line":"-2.5%"},
+				"modifiedLinesDelta":{"line":"+0.5%"},
+				"qualityGates":{"overallResult":"PASSED","resultItems":[{"qualityGate":"Line coverage","result":"PASSED","threshold":80,"value":"88.44%"}]},
+				"referenceBuild":"main #42"
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
+	summary := got.Build.Coverage.Summaries[0]
+	r.Contains(summary.TopLevelFields, "projectStatistics", "top-level fields")
+	r.Contains(summary.TopLevelFields, "qualityGates", "top-level fields")
+	r.Contains(summary.Details, model.CoverageDetail{Name: "referenceBuild", Value: "main #42"}, "coverage details")
+
+	metrics := map[string]model.CoverageMetric{}
+	for _, metric := range summary.Metrics {
+		metrics[metric.Name] = metric
+	}
+	projectLine := metrics["project.line"]
+	r.NotNil(projectLine.Percentage, "project line percentage")
+	r.Equal(float64(88.44), *projectLine.Percentage, "project line percentage")
+	projectLOC := metrics["project.loc"]
+	r.NotNil(projectLOC.Total, "project loc total")
+	r.Equal(float64(1234), *projectLOC.Total, "project loc total")
+	projectDeltaLine := metrics["projectDelta.line"]
+	r.NotNil(projectDeltaLine.Delta, "project delta line")
+	r.Equal(float64(1.25), *projectDeltaLine.Delta, "project delta line")
+	modifiedFilesComplexity := metrics["modifiedFiles.complexity"]
+	r.NotNil(modifiedFilesComplexity.Total, "modified files complexity")
+	r.Equal(float64(392), *modifiedFilesComplexity.Total, "modified files complexity")
+	qualityGate := metrics["Line coverage"]
+	r.Equal("PASSED", qualityGate.Status, "quality gate status")
+	r.NotNil(qualityGate.Percentage, "quality gate percentage")
+	r.Equal(float64(88.44), *qualityGate.Percentage, "quality gate percentage")
+}
+
+func TestGetBuildNormalizesNumericCoveragePluginPercentages(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			writeJSON(w, `{"projectStatistics":{"line":88.44,"branch":72.5,"loc":1234}}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
+
+	metrics := map[string]model.CoverageMetric{}
+	for _, metric := range got.Build.Coverage.Summaries[0].Metrics {
+		metrics[metric.Name] = metric
+	}
+	line := metrics["project.line"]
+	r.NotNil(line.Percentage, "line percentage")
+	r.Nil(line.Total, "line should not be treated as a total")
+	r.Equal(float64(88.44), *line.Percentage, "line percentage")
+	branch := metrics["project.branch"]
+	r.NotNil(branch.Percentage, "branch percentage")
+	r.Nil(branch.Total, "branch should not be treated as a total")
+	r.Equal(float64(72.5), *branch.Percentage, "branch percentage")
+	loc := metrics["project.loc"]
+	r.Nil(loc.Percentage, "loc should not be treated as a percentage")
+	r.NotNil(loc.Total, "loc total")
+	r.Equal(float64(1234), *loc.Total, "loc total")
+}
+
+func TestGetBuildOmitsMetriclessCoverageResponse(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			writeJSON(w, `{}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.Nil(got.Build.Coverage, "coverage should be omitted when projected coverage is metricless")
+}
+
+func TestGetBuildIncludesMultipleCoverageSummaries(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			writeJSON(w, `{"lineCoverage":{"percentage":75}}`)
+		case "/job/app/43/coverage/result/api/json":
+			writeJSON(w, `{"branchCoverage":{"covered":3,"missed":1}}`)
+		case "/job/app/43/jacoco/api/json":
+			writeJSON(w, `{"classCoverage":{"ratio":90}}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.True(got.Build.Coverage.Available, "coverage available")
+	r.Equal([]string{
+		"job/app/43/coverage/api/json",
+		"job/app/43/coverage/result/api/json",
+		"job/app/43/jacoco/api/json",
+	}, got.Build.Coverage.CheckedEndpoints, "checked endpoints")
+	r.Len(got.Build.Coverage.Summaries, 3, "coverage summaries")
+	r.Equal("coverage", got.Build.Coverage.Summaries[0].Source, "first source")
+	r.Equal("coverage-result", got.Build.Coverage.Summaries[1].Source, "second source")
+	r.Equal("jacoco", got.Build.Coverage.Summaries[2].Source, "third source")
+}
+
+func TestGetBuildDoesNotFailOnCoverageEndpointFailure(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			http.Error(w, "coverage plugin exploded", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.Coverage, "coverage")
+	r.False(got.Build.Coverage.Available, "coverage available")
+	r.Empty(got.Build.Coverage.Summaries, "coverage summaries")
+	r.Len(got.Build.Coverage.Errors, 1, "coverage errors")
+	r.Equal("job/app/43/coverage/api/json", got.Build.Coverage.Errors[0].Endpoint, "coverage error endpoint")
+	r.Equal("jenkins_error", got.Build.Coverage.Errors[0].Code, "coverage error code")
+}
+
+func TestGetBuildHonorsCancellationDuringCoverageProbe(t *testing.T) {
+	r := require.New(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	releaseCoverageHandler := make(chan struct{})
+	defer close(releaseCoverageHandler)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json":
+			cancel()
+			<-releaseCoverageHandler
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	_, err := GetBuild(ctx, deps, BuildRequest{Job: "app", Build: 43})
+	r.ErrorIs(err, context.Canceled, "GetBuild() should honor cancellation during optional coverage probing")
+}
+
+func TestListArtifactsDoesNotProbeCoverage(t *testing.T) {
+	r := require.New(t)
+
+	var coverageRequests atomic.Int64
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/job/app/43/api/json":
+			writeJSON(w, `{
+				"id":"43",
+				"number":43,
+				"url":"https://jenkins.example.com/job/app/43/",
+				"result":"SUCCESS",
+				"building":false,
+				"artifacts":[{"displayPath":"report.txt","fileName":"report.txt","relativePath":"report.txt"}],
+				"actions":[],
+				"changeSets":[]
+			}`)
+		case "/job/app/43/coverage/api/json", "/job/app/43/coverage/result/api/json", "/job/app/43/jacoco/api/json":
+			coverageRequests.Add(1)
+			http.Error(w, "coverage should not be probed", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := ListArtifacts(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	r.NoError(err, "ListArtifacts() error")
+	r.Len(got.Artifacts, 1, "artifacts")
+	r.Equal(int64(0), coverageRequests.Load(), "coverage probes")
 }
 
 func TestListJobsRejectsInvalidNameRegex(t *testing.T) {
