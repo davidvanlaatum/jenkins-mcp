@@ -21,9 +21,11 @@ import (
 func TestIntegrationJenkinsMCP(t *testing.T) {
 	jenkins := jenkinscontainer.Start(t)
 	_, api := jenkins.Controller(t, "admin")
-	freestyleBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-freestyle")
-	pipelineBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-pipeline")
-	warningsBuild := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-warnings")
+	freestyleBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-freestyle", jenkinscontainer.BuildResultSuccess)
+	junitBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-junit", jenkinscontainer.BuildResultUnstable)
+	coverageBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-coverage", jenkinscontainer.BuildResultSuccess)
+	pipelineBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-pipeline", jenkinscontainer.BuildResultSuccess)
+	warningsBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-warnings", jenkinscontainer.BuildResultSuccess)
 
 	t.Run("list jobs", func(t *testing.T) {
 		r := require.New(t)
@@ -43,13 +45,131 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(names, "example-freestyle", "freestyle job")
 		r.Contains(names, "example-pipeline", "pipeline job")
 		r.Contains(names, "example-junit", "JUnit job")
+		r.Contains(names, "example-coverage", "coverage job")
 		r.Contains(names, "example-warnings", "Warnings NG job")
 		r.Contains(names, "example-artifacts", "artifact job")
 	})
 
+	t.Run("junit test report", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		report := callIntegrationTool[struct {
+			Report struct {
+				TotalCount int `json:"totalCount"`
+				FailCount  int `json:"failCount"`
+				PassCount  int `json:"passCount"`
+				Suites     []struct {
+					Name  string `json:"name"`
+					Cases []struct {
+						ClassName    string `json:"className"`
+						Name         string `json:"name"`
+						Status       string `json:"status"`
+						ErrorDetails string `json:"errorDetails"`
+					} `json:"cases"`
+				} `json:"suites"`
+				Truncated bool `json:"truncated"`
+			} `json:"report"`
+		}](t, clientSession, "jenkins_get_test_report", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-junit",
+			"build":      junitBuild,
+			"failedOnly": true,
+			"limit":      1,
+		})
+		r.Equal(2, report.Report.TotalCount, "total test count")
+		r.Equal(1, report.Report.FailCount, "failed test count")
+		r.Equal(1, report.Report.PassCount, "passing test count")
+		r.False(report.Report.Truncated, "single failed case should fit")
+		r.Len(report.Report.Suites, 1, "suite count")
+		r.Len(report.Report.Suites[0].Cases, 1, "failed case count")
+		failed := report.Report.Suites[0].Cases[0]
+		r.Equal("example.JUnitTest", failed.ClassName, "failed class")
+		r.Equal("fails", failed.Name, "failed case")
+		r.Equal("FAILED", failed.Status, "failed status")
+		r.Contains(failed.ErrorDetails, "intentional fixture failure", "failure details")
+
+		missing, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
+			Name: "jenkins_get_test_report",
+			Arguments: map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+				"build":      freestyleBuild,
+			},
+		})
+		r.NoError(err, "CallTool() missing JUnit")
+		r.True(missing.IsError, "missing JUnit report should be returned as a structured tool error")
+	})
+
+	t.Run("coverage summary", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+
+		build := callIntegrationTool[struct {
+			Build struct {
+				Coverage *struct {
+					Available bool `json:"available"`
+					Summaries []struct {
+						Source  string `json:"source"`
+						Metrics []struct {
+							Name       string   `json:"name"`
+							Covered    *float64 `json:"covered"`
+							Missed     *float64 `json:"missed"`
+							Total      *float64 `json:"total"`
+							Percentage *float64 `json:"percentage"`
+						} `json:"metrics"`
+					} `json:"summaries"`
+				} `json:"coverage"`
+			} `json:"build"`
+		}](t, clientSession, "jenkins_get_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-coverage",
+			"build":      coverageBuild,
+		})
+		r.NotNil(build.Build.Coverage, "coverage should be included when plugin data is present")
+		r.True(build.Build.Coverage.Available, "coverage should be available")
+		r.NotEmpty(build.Build.Coverage.Summaries, "coverage summaries")
+		r.NotEmpty(build.Build.Coverage.Summaries[0].Metrics, "coverage metrics")
+
+		var lineMetric *struct {
+			Name       string   `json:"name"`
+			Covered    *float64 `json:"covered"`
+			Missed     *float64 `json:"missed"`
+			Total      *float64 `json:"total"`
+			Percentage *float64 `json:"percentage"`
+		}
+		for _, summary := range build.Build.Coverage.Summaries {
+			for i := range summary.Metrics {
+				if strings.Contains(strings.ToLower(summary.Metrics[i].Name), "line") && summary.Metrics[i].Percentage != nil {
+					lineMetric = &summary.Metrics[i]
+					break
+				}
+			}
+		}
+		r.NotNil(lineMetric, "line coverage percentage metric")
+		r.NotNil(lineMetric.Percentage, "line percentage")
+		r.Greater(*lineMetric.Percentage, float64(0), "line percentage")
+		r.Less(*lineMetric.Percentage, float64(100), "line percentage")
+
+		missing := callIntegrationTool[struct {
+			Build struct {
+				Coverage *struct {
+					Available bool `json:"available"`
+				} `json:"coverage"`
+			} `json:"build"`
+		}](t, clientSession, "jenkins_get_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+		})
+		r.Nil(missing.Build.Coverage, "metricless missing coverage should be omitted")
+	})
+
 	t.Run("artifact tools", func(t *testing.T) {
 		r := require.New(t)
-		buildNumber := jenkinscontainer.WaitForSuccessfulBuild(t, api, "example-artifacts")
+		buildNumber := jenkinscontainer.WaitForBuildResult(t, api, "example-artifacts", jenkinscontainer.BuildResultSuccess)
 
 		downloadDir := t.TempDir()
 		clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "read-only", func(cfg *config.Config) {
@@ -200,6 +320,25 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.NotEmpty(issue.File, "issue file")
 		r.NotEmpty(issue.Fingerprint, "issue fingerprint")
 		r.Greater(issue.Line, 0, "issue line")
+
+		missing := callIntegrationTool[struct {
+			Page struct {
+				Available bool   `json:"available"`
+				Message   string `json:"message"`
+				Items     []struct {
+					Message string `json:"message"`
+				} `json:"items"`
+			} `json:"page"`
+			HasMore bool `json:"hasMore"`
+		}](t, clientSession, "jenkins_list_issues", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-freestyle",
+			"build":      freestyleBuild,
+		})
+		r.False(missing.Page.Available, "Warnings NG should be unavailable for freestyle job without analysis results")
+		r.Empty(missing.Page.Items, "missing Warnings NG should not return issue items")
+		r.NotEmpty(missing.Page.Message, "missing Warnings NG should explain unavailable data")
+		r.False(missing.HasMore, "missing Warnings NG should not paginate")
 	})
 
 	t.Run("list jobs filters and empty result", func(t *testing.T) {
@@ -267,7 +406,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.True(job.Job.Buildable, "job should be buildable")
 		r.NotNil(job.Job.LastBuild, "last build")
 		r.Equal(freestyleBuild, job.Job.LastBuild.Number, "last build number")
-		r.Equal("SUCCESS", job.Job.LastBuild.Result, "last build result")
+		r.Equal(string(jenkinscontainer.BuildResultSuccess), job.Job.LastBuild.Result, "last build result")
 		r.Equal(freestyleBuild+1, job.Job.NextBuildNumber, "next build number")
 
 		builds := callIntegrationTool[struct {
@@ -284,7 +423,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal(1, builds.Limit, "build list limit")
 		r.False(builds.HasMore, "single build should not have another page")
 		r.Equal(freestyleBuild, builds.Items[0].Number, "build summary number")
-		r.Equal("SUCCESS", builds.Items[0].Result, "build summary result")
+		r.Equal(string(jenkinscontainer.BuildResultSuccess), builds.Items[0].Result, "build summary result")
 		r.False(builds.Items[0].Building, "build summary should be complete")
 		r.NotEmpty(builds.Items[0].URL, "build summary URL")
 
@@ -300,7 +439,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			} `json:"build"`
 		}](t, clientSession, "jenkins_get_build", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle", "build": freestyleBuild})
 		r.Equal(freestyleBuild, build.Build.Number, "build number")
-		r.Equal("SUCCESS", build.Build.Result, "build result")
+		r.Equal(string(jenkinscontainer.BuildResultSuccess), build.Build.Result, "build result")
 		r.False(build.Build.Building, "build should be complete")
 		r.Contains(build.Build.FullDisplayName, "example-freestyle", "build full display name")
 		r.NotEmpty(build.Build.Causes, "build causes")
@@ -400,14 +539,14 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"job":        "example-pipeline",
 			"build":      pipelineBuild,
 		})
-		r.Equal("SUCCESS", run.Run.Status, "pipeline run status")
+		r.Equal(string(jenkinscontainer.BuildResultSuccess), run.Run.Status, "pipeline run status")
 		r.NotEmpty(run.Run.Stages, "pipeline stages")
 
 		stageID := ""
 		for _, stage := range run.Run.Stages {
 			if stage.Name == "build" {
 				stageID = stage.ID
-				r.Equal("SUCCESS", stage.Status, "pipeline build stage status")
+				r.Equal(string(jenkinscontainer.BuildResultSuccess), stage.Status, "pipeline build stage status")
 				break
 			}
 		}
@@ -432,7 +571,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		})
 		r.Equal(stageID, stage.Stage.ID, "pipeline stage id")
 		r.Equal("build", stage.Stage.Name, "pipeline stage name")
-		r.Equal("SUCCESS", stage.Stage.Status, "pipeline stage status")
+		r.Equal(string(jenkinscontainer.BuildResultSuccess), stage.Stage.Status, "pipeline stage status")
 
 		nodeID := ""
 		for _, node := range stage.Stage.Nodes {

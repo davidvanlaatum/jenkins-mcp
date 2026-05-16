@@ -29,6 +29,16 @@ const (
 	port         = "8080/tcp"
 )
 
+type BuildResult string
+
+const (
+	BuildResultSuccess  BuildResult = "SUCCESS"
+	BuildResultUnstable BuildResult = "UNSTABLE"
+	BuildResultFailure  BuildResult = "FAILURE"
+	BuildResultAborted  BuildResult = "ABORTED"
+	BuildResultNotBuilt BuildResult = "NOT_BUILT"
+)
+
 var users = map[string]string{
 	"admin":            "admin-password",
 	"read-only":        "read-only-password",
@@ -40,6 +50,7 @@ var expectedJobs = []string{
 	"example-freestyle",
 	"example-junit",
 	"example-warnings",
+	"example-coverage",
 	"example-artifacts",
 	"example-pipeline",
 }
@@ -132,7 +143,7 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	r.Failf("wait for Job DSL-created jobs", "timed out waiting for jobs: %v", missing)
 }
 
-func WaitForSuccessfulBuild(t *testing.T, api *jenkinsapi.API, job string) int {
+func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result BuildResult) int {
 	t.Helper()
 
 	r := require.New(t)
@@ -153,7 +164,7 @@ func WaitForSuccessfulBuild(t *testing.T, api *jenkinsapi.API, job string) int {
 		build := builds[0]
 		lastSeen = build.Result
 		if !build.Building && build.Result != "" {
-			r.Equal("SUCCESS", build.Result, "%s integration build result", job)
+			r.Equal(string(result), build.Result, "%s integration build result", job)
 			return build.Number
 		}
 		time.Sleep(500 * time.Millisecond)

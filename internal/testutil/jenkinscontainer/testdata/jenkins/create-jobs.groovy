@@ -9,7 +9,7 @@ workspace.mkdirs()
 def jobManagement = new JenkinsJobManagement(System.out, [:], workspace)
 new DslScriptLoader(jobManagement).runScript(script)
 
-['example-freestyle', 'example-pipeline', 'example-warnings'].each { jobName ->
+['example-freestyle', 'example-pipeline', 'example-junit', 'example-warnings', 'example-coverage'].each { jobName ->
     Jenkins.instance.getItemByFullName(jobName)?.scheduleBuild2(0)
 }
 
