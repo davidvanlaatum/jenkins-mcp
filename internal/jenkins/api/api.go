@@ -1316,9 +1316,22 @@ func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]st
 		return "", err
 	}
 	if status < 200 || status > 399 {
-		return "", fmt.Errorf("jenkins returned HTTP %d", status)
+		return "", jenkinsHTTPError(status)
 	}
 	return headers.Get("Location"), nil
+}
+
+func jenkinsHTTPError(status int) error {
+	msg := fmt.Sprintf("Jenkins returned HTTP %d", status)
+	detail := map[string]any{"status": status}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return apperrors.Wrap(apperrors.CodePermissionDenied, msg, detail)
+	case http.StatusNotFound:
+		return apperrors.Wrap(apperrors.CodeNotFound, msg, detail)
+	default:
+		return apperrors.Wrap(apperrors.CodeJenkins, msg, detail)
+	}
 }
 
 func (a *API) QueueItem(ctx context.Context, id int64) (model.QueueItem, error) {

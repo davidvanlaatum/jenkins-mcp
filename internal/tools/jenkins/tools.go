@@ -1652,7 +1652,7 @@ func queueItemsEqual(a, b *model.QueueItem) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.ID != b.ID || a.URL != b.URL || a.Why != b.Why || a.Cancelled != b.Cancelled || a.TaskName != b.TaskName || a.TaskURL != b.TaskURL {
+	if a.ID != b.ID || a.URL != b.URL || a.Cancelled != b.Cancelled || a.TaskName != b.TaskName || a.TaskURL != b.TaskURL {
 		return false
 	}
 	if a.Executable == nil || b.Executable == nil {

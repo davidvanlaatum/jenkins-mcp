@@ -128,6 +128,18 @@ printf '\\377\\376\\000\\001binary-fixture' > artifacts/blob.bin
     }
 }
 
+freeStyleJob('example-watch-lifecycle') {
+    description('Quiet-period job used for queue and build watch lifecycle integration tests.')
+    quietPeriod(5)
+    steps {
+        shell('''
+echo "starting watch lifecycle fixture"
+sleep 2
+echo "finished watch lifecycle fixture"
+'''.stripIndent())
+    }
+}
+
 pipelineJob('example-pipeline') {
     description('Buildable pipeline job created by Job DSL for jenkins-mcp integration tests.')
     definition {

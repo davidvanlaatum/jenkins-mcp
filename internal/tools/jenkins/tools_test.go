@@ -1962,6 +1962,34 @@ func TestWatchQueueItemTimesOutWithoutStateChange(t *testing.T) {
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchQueueItem() state")
 }
 
+func TestWatchQueueItemIgnoresVolatileQueueWhyChanges(t *testing.T) {
+	r := require.New(t)
+
+	var requests int
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/queue/item/99/api/json":
+			requests++
+			writeJSON(w, fmt.Sprintf(`{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"In quiet period. Expires in %d sec","cancelled":false,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`, 10-requests))
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+		ID:            99,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 25,
+	})
+	r.NoError(err, "second WatchQueueItem() error")
+	r.Equal("queued", second.Watch.Status, "second WatchQueueItem() status")
+	r.True(second.Watch.TimedOut, "volatile why-only changes should not wake the watcher")
+	r.False(second.Watch.Terminal, "why-only changes should not make the queue item terminal")
+	r.Greater(requests, 2, "watcher should poll through why-only changes")
+}
+
 func TestWatchQueueItemReportsCancelledAndDisappearedStates(t *testing.T) {
 	r := require.New(t)
 
