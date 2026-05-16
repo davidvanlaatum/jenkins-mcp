@@ -54,6 +54,161 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(names, "example-watch-lifecycle", "watch lifecycle job")
 	})
 
+	t.Run("permission-specific behavior", func(t *testing.T) {
+		t.Run("admin can read config and mutate", func(t *testing.T) {
+			r := require.New(t)
+			clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "admin", func(cfg *config.Config) {
+				cfg.Mutations.Enabled = true
+			})
+			defer cleanup()
+
+			config := callIntegrationTool[struct {
+				Config struct {
+					ConfigAccessible bool   `json:"configAccessible"`
+					Source           string `json:"source"`
+					XML              string `json:"xml"`
+				} `json:"config"`
+			}](t, clientSession, "jenkins_get_job_config", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+				"mode":       "both",
+			})
+			r.True(config.Config.ConfigAccessible, "admin should read config.xml")
+			r.Equal("config.xml", config.Config.Source, "admin config source")
+			r.Contains(config.Config.XML, "Buildable freestyle job", "admin config XML")
+
+			trigger := callIntegrationTool[struct {
+				QueueURL  string `json:"queueUrl"`
+				Triggered bool   `json:"triggered"`
+			}](t, clientSession, "jenkins_trigger_build", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-artifacts",
+			})
+			r.True(trigger.Triggered, "admin should trigger builds")
+			r.NotEmpty(trigger.QueueURL, "admin trigger queue URL")
+		})
+
+		t.Run("read-only can read but cannot mutate", func(t *testing.T) {
+			r := require.New(t)
+			clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "read-only", func(cfg *config.Config) {
+				cfg.Mutations.Enabled = true
+			})
+			defer cleanup()
+
+			job := callIntegrationTool[struct {
+				Job struct {
+					Name string `json:"name"`
+				} `json:"job"`
+			}](t, clientSession, "jenkins_get_job", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+			})
+			r.Equal("example-freestyle", job.Job.Name, "read-only job name")
+
+			config := callIntegrationTool[struct {
+				Config struct {
+					ConfigAccessible bool `json:"configAccessible"`
+					Warnings         []struct {
+						Code string `json:"code"`
+					} `json:"warnings"`
+					Summary struct {
+						Kind string `json:"kind"`
+					} `json:"summary"`
+				} `json:"config"`
+			}](t, clientSession, "jenkins_get_job_config", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+				"mode":       "both",
+			})
+			r.False(config.Config.ConfigAccessible, "read-only should fall back when config.xml is not readable")
+			r.Equal("freestyle", config.Config.Summary.Kind, "read-only fallback summary kind")
+			r.Len(config.Config.Warnings, 1, "read-only fallback warning count")
+			r.Equal("config_permission_denied", config.Config.Warnings[0].Code, "read-only fallback warning code")
+
+			errPayload := callIntegrationToolError(t, clientSession, "jenkins_trigger_build", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+			})
+			r.Equal("permission_denied", string(errPayload.Error.Code), "read-only trigger error code")
+			r.NotEmpty(errPayload.Error.Message, "read-only trigger error message")
+		})
+
+		t.Run("build-only can read and trigger builds", func(t *testing.T) {
+			r := require.New(t)
+			clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "build-only", func(cfg *config.Config) {
+				cfg.Mutations.Enabled = true
+			})
+			defer cleanup()
+
+			builds := callIntegrationTool[struct {
+				Items []struct {
+					Number int `json:"number"`
+				} `json:"items"`
+			}](t, clientSession, "jenkins_list_builds", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+				"limit":      1,
+			})
+			r.Len(builds.Items, 1, "build-only should read builds")
+			r.Equal(freestyleBuild, builds.Items[0].Number, "build-only latest build")
+
+			trigger := callIntegrationTool[struct {
+				QueueURL  string `json:"queueUrl"`
+				Triggered bool   `json:"triggered"`
+			}](t, clientSession, "jenkins_trigger_build", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-artifacts",
+			})
+			r.True(trigger.Triggered, "build-only should trigger builds")
+			r.NotEmpty(trigger.QueueURL, "build-only trigger queue URL")
+		})
+
+		t.Run("no-config-access falls back safely and cannot mutate", func(t *testing.T) {
+			r := require.New(t)
+			clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "no-config-access", func(cfg *config.Config) {
+				cfg.Mutations.Enabled = true
+			})
+			defer cleanup()
+
+			config := callIntegrationTool[struct {
+				Config struct {
+					ConfigAccessible bool   `json:"configAccessible"`
+					Source           string `json:"source"`
+					XML              string `json:"xml"`
+					AccessError      string `json:"accessError"`
+					Warnings         []struct {
+						Code   string `json:"code"`
+						Detail string `json:"detail"`
+					} `json:"warnings"`
+					Summary struct {
+						Kind        string `json:"kind"`
+						Description string `json:"description"`
+					} `json:"summary"`
+				} `json:"config"`
+			}](t, clientSession, "jenkins_get_job_config", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+				"mode":       "both",
+			})
+			r.False(config.Config.ConfigAccessible, "no-config-access should not read config.xml")
+			r.Equal("api/json", config.Config.Source, "fallback config source")
+			r.Empty(config.Config.XML, "fallback should not expose config XML")
+			r.NotEmpty(config.Config.AccessError, "fallback access error")
+			r.Equal("freestyle", config.Config.Summary.Kind, "fallback summary kind")
+			r.Contains(config.Config.Summary.Description, "Buildable freestyle job", "fallback summary description")
+			r.Len(config.Config.Warnings, 1, "fallback warning count")
+			r.Equal("config_permission_denied", config.Config.Warnings[0].Code, "fallback warning code")
+			r.Contains(config.Config.Warnings[0].Detail, "body omitted", "fallback warning detail")
+
+			errPayload := callIntegrationToolError(t, clientSession, "jenkins_trigger_build", map[string]any{
+				"controller": jenkinscontainer.ControllerID,
+				"job":        "example-freestyle",
+			})
+			r.Equal("permission_denied", string(errPayload.Error.Code), "no-config-access trigger error code")
+			r.NotEmpty(errPayload.Error.Message, "no-config-access trigger error message")
+		})
+	})
+
 	t.Run("queue trigger and watch lifecycle", func(t *testing.T) {
 		r := require.New(t)
 		clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "build-only", func(cfg *config.Config) {
@@ -732,6 +887,28 @@ func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, 
 	r.NoError(err, "marshal %s structured content", name)
 	r.NoError(json.Unmarshal(payload, &got), "unmarshal %s structured content", name)
 	return got
+}
+
+func callIntegrationToolError(t *testing.T, clientSession *mcp.ClientSession, name string, args map[string]any) toolErrorResponse {
+	t.Helper()
+
+	r := require.New(t)
+	result, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	r.NoError(err, "CallTool(%s)", name)
+	r.True(result.IsError, "CallTool(%s) IsError", name)
+	r.Nil(result.StructuredContent, "CallTool(%s) structured content", name)
+	r.Len(result.Content, 1, "CallTool(%s) content", name)
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	r.True(ok, "CallTool(%s) content type", name)
+
+	var payload toolErrorResponse
+	r.NoError(json.Unmarshal([]byte(textContent.Text), &payload), "unmarshal %s structured error", name)
+	r.NotEmpty(payload.Error.Code, "CallTool(%s) error code", name)
+	r.NotEmpty(payload.Error.Message, "CallTool(%s) error message", name)
+	return payload
 }
 
 func integrationToolErrorText(result *mcp.CallToolResult) string {
