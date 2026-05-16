@@ -15,17 +15,18 @@ import (
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/testutil/jenkinscontainer"
 )
 
 func TestIntegrationJenkinsMCP(t *testing.T) {
 	jenkins := jenkinscontainer.Start(t)
 	_, api := jenkins.Controller(t, "admin")
-	freestyleBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-freestyle", jenkinscontainer.BuildResultSuccess)
-	junitBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-junit", jenkinscontainer.BuildResultUnstable)
-	coverageBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-coverage", jenkinscontainer.BuildResultSuccess)
-	pipelineBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-pipeline", jenkinscontainer.BuildResultSuccess)
-	warningsBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-warnings", jenkinscontainer.BuildResultSuccess)
+	freestyleBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-freestyle", model.BuildResultSuccess)
+	junitBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-junit", model.BuildResultUnstable)
+	coverageBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-coverage", model.BuildResultSuccess)
+	pipelineBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-pipeline", model.BuildResultSuccess)
+	warningsBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-warnings", model.BuildResultSuccess)
 
 	t.Run("list jobs", func(t *testing.T) {
 		r := require.New(t)
@@ -169,7 +170,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 
 	t.Run("artifact tools", func(t *testing.T) {
 		r := require.New(t)
-		buildNumber := jenkinscontainer.WaitForBuildResult(t, api, "example-artifacts", jenkinscontainer.BuildResultSuccess)
+		buildNumber := jenkinscontainer.WaitForBuildResult(t, api, "example-artifacts", model.BuildResultSuccess)
 
 		downloadDir := t.TempDir()
 		clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "read-only", func(cfg *config.Config) {
@@ -396,8 +397,8 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 				Buildable       bool   `json:"buildable"`
 				NextBuildNumber int    `json:"nextBuildNumber"`
 				LastBuild       *struct {
-					Number int    `json:"number"`
-					Result string `json:"result"`
+					Number int               `json:"number"`
+					Result model.BuildResult `json:"result"`
 				} `json:"lastBuild"`
 			} `json:"job"`
 		}](t, clientSession, "jenkins_get_job", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle"})
@@ -406,15 +407,15 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.True(job.Job.Buildable, "job should be buildable")
 		r.NotNil(job.Job.LastBuild, "last build")
 		r.Equal(freestyleBuild, job.Job.LastBuild.Number, "last build number")
-		r.Equal(string(jenkinscontainer.BuildResultSuccess), job.Job.LastBuild.Result, "last build result")
+		r.Equal(model.BuildResultSuccess, job.Job.LastBuild.Result, "last build result")
 		r.Equal(freestyleBuild+1, job.Job.NextBuildNumber, "next build number")
 
 		builds := callIntegrationTool[struct {
 			Items []struct {
-				Number   int    `json:"number"`
-				Result   string `json:"result"`
-				Building bool   `json:"building"`
-				URL      string `json:"url"`
+				Number   int               `json:"number"`
+				Result   model.BuildResult `json:"result"`
+				Building bool              `json:"building"`
+				URL      string            `json:"url"`
 			} `json:"items"`
 			HasMore bool `json:"hasMore"`
 			Limit   int  `json:"limit"`
@@ -423,23 +424,23 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal(1, builds.Limit, "build list limit")
 		r.False(builds.HasMore, "single build should not have another page")
 		r.Equal(freestyleBuild, builds.Items[0].Number, "build summary number")
-		r.Equal(string(jenkinscontainer.BuildResultSuccess), builds.Items[0].Result, "build summary result")
+		r.Equal(model.BuildResultSuccess, builds.Items[0].Result, "build summary result")
 		r.False(builds.Items[0].Building, "build summary should be complete")
 		r.NotEmpty(builds.Items[0].URL, "build summary URL")
 
 		build := callIntegrationTool[struct {
 			Build struct {
-				Number          int    `json:"number"`
-				Result          string `json:"result"`
-				Building        bool   `json:"building"`
-				FullDisplayName string `json:"fullDisplayName"`
+				Number          int               `json:"number"`
+				Result          model.BuildResult `json:"result"`
+				Building        bool              `json:"building"`
+				FullDisplayName string            `json:"fullDisplayName"`
 				Causes          []struct {
 					ShortDescription string `json:"shortDescription"`
 				} `json:"causes"`
 			} `json:"build"`
 		}](t, clientSession, "jenkins_get_build", map[string]any{"controller": jenkinscontainer.ControllerID, "job": "example-freestyle", "build": freestyleBuild})
 		r.Equal(freestyleBuild, build.Build.Number, "build number")
-		r.Equal(string(jenkinscontainer.BuildResultSuccess), build.Build.Result, "build result")
+		r.Equal(model.BuildResultSuccess, build.Build.Result, "build result")
 		r.False(build.Build.Building, "build should be complete")
 		r.Contains(build.Build.FullDisplayName, "example-freestyle", "build full display name")
 		r.NotEmpty(build.Build.Causes, "build causes")
@@ -527,11 +528,11 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 
 		run := callIntegrationTool[struct {
 			Run struct {
-				Status string `json:"status"`
+				Status model.PipelineStatus `json:"status"`
 				Stages []struct {
-					ID     string `json:"id"`
-					Name   string `json:"name"`
-					Status string `json:"status"`
+					ID     string               `json:"id"`
+					Name   string               `json:"name"`
+					Status model.PipelineStatus `json:"status"`
 				} `json:"stages"`
 			} `json:"run"`
 		}](t, clientSession, "jenkins_get_pipeline_run", map[string]any{
@@ -539,14 +540,14 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"job":        "example-pipeline",
 			"build":      pipelineBuild,
 		})
-		r.Equal(string(jenkinscontainer.BuildResultSuccess), run.Run.Status, "pipeline run status")
+		r.Equal(model.PipelineStatusSuccess, run.Run.Status, "pipeline run status")
 		r.NotEmpty(run.Run.Stages, "pipeline stages")
 
 		stageID := ""
 		for _, stage := range run.Run.Stages {
 			if stage.Name == "build" {
 				stageID = stage.ID
-				r.Equal(string(jenkinscontainer.BuildResultSuccess), stage.Status, "pipeline build stage status")
+				r.Equal(model.PipelineStatusSuccess, stage.Status, "pipeline build stage status")
 				break
 			}
 		}
@@ -554,9 +555,9 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 
 		stage := callIntegrationTool[struct {
 			Stage struct {
-				ID     string `json:"id"`
-				Name   string `json:"name"`
-				Status string `json:"status"`
+				ID     string               `json:"id"`
+				Name   string               `json:"name"`
+				Status model.PipelineStatus `json:"status"`
 				Nodes  []struct {
 					ID     string `json:"id"`
 					Name   string `json:"name"`
@@ -571,7 +572,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		})
 		r.Equal(stageID, stage.Stage.ID, "pipeline stage id")
 		r.Equal("build", stage.Stage.Name, "pipeline stage name")
-		r.Equal(string(jenkinscontainer.BuildResultSuccess), stage.Stage.Status, "pipeline stage status")
+		r.Equal(model.PipelineStatusSuccess, stage.Stage.Status, "pipeline stage status")
 
 		nodeID := ""
 		for _, node := range stage.Stage.Nodes {

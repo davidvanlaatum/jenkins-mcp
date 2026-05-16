@@ -19,6 +19,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 )
 
 //go:embed testdata/jenkins/*
@@ -27,16 +28,6 @@ var testImageFiles embed.FS
 const (
 	ControllerID = "integration"
 	port         = "8080/tcp"
-)
-
-type BuildResult string
-
-const (
-	BuildResultSuccess  BuildResult = "SUCCESS"
-	BuildResultUnstable BuildResult = "UNSTABLE"
-	BuildResultFailure  BuildResult = "FAILURE"
-	BuildResultAborted  BuildResult = "ABORTED"
-	BuildResultNotBuilt BuildResult = "NOT_BUILT"
 )
 
 var users = map[string]string{
@@ -143,7 +134,7 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	r.Failf("wait for Job DSL-created jobs", "timed out waiting for jobs: %v", missing)
 }
 
-func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result BuildResult) int {
+func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result model.BuildResult) int {
 	t.Helper()
 
 	r := require.New(t)
@@ -162,9 +153,9 @@ func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result Bu
 			continue
 		}
 		build := builds[0]
-		lastSeen = build.Result
+		lastSeen = string(build.Result)
 		if !build.Building && build.Result != "" {
-			r.Equal(string(result), build.Result, "%s integration build result", job)
+			r.Equal(result, build.Result, "%s integration build result", job)
 			return build.Number
 		}
 		time.Sleep(500 * time.Millisecond)

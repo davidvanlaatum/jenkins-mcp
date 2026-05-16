@@ -937,13 +937,13 @@ type watchTargetState struct {
 }
 
 type watchBuildState struct {
-	Building bool   `json:"building"`
-	Result   string `json:"result,omitempty"`
+	Building bool              `json:"building"`
+	Result   model.BuildResult `json:"result,omitempty"`
 }
 
 type watchRunState struct {
-	Status          string `json:"status,omitempty"`
-	WaitingForInput bool   `json:"waitingForInput,omitempty"`
+	Status          model.PipelineStatus `json:"status,omitempty"`
+	WaitingForInput bool                 `json:"waitingForInput,omitempty"`
 }
 
 type watchPendingInputState struct {
@@ -954,9 +954,9 @@ type watchPendingInputState struct {
 }
 
 type watchStageState struct {
-	ID     string `json:"id,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Status string `json:"status,omitempty"`
+	ID     string               `json:"id,omitempty"`
+	Name   string               `json:"name,omitempty"`
+	Status model.PipelineStatus `json:"status,omitempty"`
 }
 
 func WatchBuild(ctx context.Context, deps Deps, in WatchBuildRequest) (WatchBuildResponse, error) {
@@ -1311,10 +1311,10 @@ func pipelineRunFromState(state *watchState) *model.PipelineRun {
 	}
 	run := &model.PipelineRun{
 		Status:          state.Run.Status,
-		WaitingForInput: state.Run.WaitingForInput || strings.EqualFold(state.Run.Status, "PAUSED_PENDING_INPUT") || len(state.Inputs) > 0,
+		WaitingForInput: state.Run.WaitingForInput || state.Run.Status == model.PipelineStatusPausedPendingInput || len(state.Inputs) > 0,
 	}
 	for _, stage := range state.Stages {
-		if strings.EqualFold(stage.Status, "PAUSED_PENDING_INPUT") {
+		if stage.Status == model.PipelineStatusPausedPendingInput {
 			run.WaitingForInput = true
 			break
 		}

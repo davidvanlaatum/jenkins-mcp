@@ -122,19 +122,29 @@ type ParameterDefinition struct {
 	Required    bool     `json:"required,omitempty" jsonschema:"Whether the parameter is required before triggering a build"`
 }
 
+type BuildResult string
+
+const (
+	BuildResultSuccess  BuildResult = "SUCCESS"
+	BuildResultUnstable BuildResult = "UNSTABLE"
+	BuildResultFailure  BuildResult = "FAILURE"
+	BuildResultAborted  BuildResult = "ABORTED"
+	BuildResultNotBuilt BuildResult = "NOT_BUILT"
+)
+
 type BuildSummary struct {
-	ID                string `json:"id,omitempty" jsonschema:"Jenkins build id string"`
-	Number            int    `json:"number" jsonschema:"Jenkins build number"`
-	URL               string `json:"url" jsonschema:"Jenkins build URL"`
-	Result            string `json:"result,omitempty" jsonschema:"Jenkins build result such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or null while building"`
-	Building          bool   `json:"building" jsonschema:"Whether the build is currently running"`
-	Timestamp         int64  `json:"timestamp,omitempty" jsonschema:"Build start timestamp in Unix epoch milliseconds"`
-	Duration          int64  `json:"duration,omitempty" jsonschema:"Build duration in milliseconds"`
-	Description       string `json:"description,omitempty" jsonschema:"Jenkins build description"`
-	DisplayName       string `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
-	QueueID           int64  `json:"queueId,omitempty" jsonschema:"Jenkins queue item id that created this build, when available"`
-	EstimatedDuration int64  `json:"estimatedDuration,omitempty" jsonschema:"Estimated build duration in milliseconds"`
-	KeepLog           *bool  `json:"keepLog,omitempty" jsonschema:"Whether Jenkins is configured to keep this build log indefinitely"`
+	ID                string      `json:"id,omitempty" jsonschema:"Jenkins build id string"`
+	Number            int         `json:"number" jsonschema:"Jenkins build number"`
+	URL               string      `json:"url" jsonschema:"Jenkins build URL"`
+	Result            BuildResult `json:"result,omitempty" jsonschema:"Jenkins build result such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or null while building"`
+	Building          bool        `json:"building" jsonschema:"Whether the build is currently running"`
+	Timestamp         int64       `json:"timestamp,omitempty" jsonschema:"Build start timestamp in Unix epoch milliseconds"`
+	Duration          int64       `json:"duration,omitempty" jsonschema:"Build duration in milliseconds"`
+	Description       string      `json:"description,omitempty" jsonschema:"Jenkins build description"`
+	DisplayName       string      `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
+	QueueID           int64       `json:"queueId,omitempty" jsonschema:"Jenkins queue item id that created this build, when available"`
+	EstimatedDuration int64       `json:"estimatedDuration,omitempty" jsonschema:"Estimated build duration in milliseconds"`
+	KeepLog           *bool       `json:"keepLog,omitempty" jsonschema:"Whether Jenkins is configured to keep this build log indefinitely"`
 }
 
 type BuildReference struct {
@@ -244,7 +254,7 @@ type QueueWatch struct {
 type PipelineRun struct {
 	ID                  string               `json:"id,omitempty" jsonschema:"Pipeline run id reported by Jenkins"`
 	Name                string               `json:"name,omitempty" jsonschema:"Pipeline run name"`
-	Status              string               `json:"status,omitempty" jsonschema:"Pipeline run status"`
+	Status              PipelineStatus       `json:"status,omitempty" jsonschema:"Pipeline run status"`
 	WaitingForInput     bool                 `json:"waitingForInput" jsonschema:"Whether the Pipeline run is currently paused waiting for Jenkins input-step approval"`
 	PendingInputActions []PendingInputAction `json:"pendingInputActions,omitempty" jsonschema:"Pending Jenkins Pipeline input-step actions for this run"`
 	PendingInputError   string               `json:"pendingInputError,omitempty" jsonschema:"Error encountered while fetching optional pending input-step actions, when stage data is still available"`
@@ -254,6 +264,19 @@ type PipelineRun struct {
 	Stages              []PipelineStage      `json:"stages,omitempty" jsonschema:"Pipeline stage summaries"`
 }
 
+type PipelineStatus string
+
+const (
+	PipelineStatusSuccess            PipelineStatus = "SUCCESS"
+	PipelineStatusFailed             PipelineStatus = "FAILED"
+	PipelineStatusFailure            PipelineStatus = "FAILURE"
+	PipelineStatusUnstable           PipelineStatus = "UNSTABLE"
+	PipelineStatusAborted            PipelineStatus = "ABORTED"
+	PipelineStatusNotExecuted        PipelineStatus = "NOT_EXECUTED"
+	PipelineStatusInProgress         PipelineStatus = "IN_PROGRESS"
+	PipelineStatusPausedPendingInput PipelineStatus = "PAUSED_PENDING_INPUT"
+)
+
 type PendingInputAction struct {
 	ID         string `json:"id,omitempty" jsonschema:"Jenkins Pipeline input-step id"`
 	Message    string `json:"message,omitempty" jsonschema:"Input-step prompt message shown by Jenkins"`
@@ -262,12 +285,12 @@ type PendingInputAction struct {
 }
 
 type PipelineStage struct {
-	ID         string `json:"id,omitempty" jsonschema:"Pipeline stage id"`
-	Name       string `json:"name,omitempty" jsonschema:"Pipeline stage name"`
-	Status     string `json:"status,omitempty" jsonschema:"Pipeline stage status"`
-	StartTime  int64  `json:"startTimeMillis,omitempty" jsonschema:"Pipeline stage start time in Unix epoch milliseconds"`
-	DurationMS int64  `json:"durationMillis,omitempty" jsonschema:"Pipeline stage duration in milliseconds"`
-	PauseMS    int64  `json:"pauseMillis,omitempty" jsonschema:"Pipeline stage paused duration in milliseconds"`
+	ID         string         `json:"id,omitempty" jsonschema:"Pipeline stage id"`
+	Name       string         `json:"name,omitempty" jsonschema:"Pipeline stage name"`
+	Status     PipelineStatus `json:"status,omitempty" jsonschema:"Pipeline stage status"`
+	StartTime  int64          `json:"startTimeMillis,omitempty" jsonschema:"Pipeline stage start time in Unix epoch milliseconds"`
+	DurationMS int64          `json:"durationMillis,omitempty" jsonschema:"Pipeline stage duration in milliseconds"`
+	PauseMS    int64          `json:"pauseMillis,omitempty" jsonschema:"Pipeline stage paused duration in milliseconds"`
 }
 
 type PipelineStageDetail struct {
@@ -276,24 +299,24 @@ type PipelineStageDetail struct {
 }
 
 type PipelineNode struct {
-	ID                   string   `json:"id,omitempty" jsonschema:"Pipeline flow node id"`
-	Name                 string   `json:"name,omitempty" jsonschema:"Pipeline flow node name"`
-	Status               string   `json:"status,omitempty" jsonschema:"Pipeline flow node status"`
-	ParameterDescription string   `json:"parameterDescription,omitempty" jsonschema:"Pipeline flow node parameter description"`
-	StartTime            int64    `json:"startTimeMillis,omitempty" jsonschema:"Pipeline flow node start time in Unix epoch milliseconds"`
-	DurationMS           int64    `json:"durationMillis,omitempty" jsonschema:"Pipeline flow node duration in milliseconds"`
-	PauseMS              int64    `json:"pauseMillis,omitempty" jsonschema:"Pipeline flow node paused duration in milliseconds"`
-	ParentNodes          []string `json:"parentNodes,omitempty" jsonschema:"Parent Pipeline flow node ids"`
-	HasLog               bool     `json:"hasLog" jsonschema:"Whether this Pipeline flow node has log output"`
+	ID                   string         `json:"id,omitempty" jsonschema:"Pipeline flow node id"`
+	Name                 string         `json:"name,omitempty" jsonschema:"Pipeline flow node name"`
+	Status               PipelineStatus `json:"status,omitempty" jsonschema:"Pipeline flow node status"`
+	ParameterDescription string         `json:"parameterDescription,omitempty" jsonschema:"Pipeline flow node parameter description"`
+	StartTime            int64          `json:"startTimeMillis,omitempty" jsonschema:"Pipeline flow node start time in Unix epoch milliseconds"`
+	DurationMS           int64          `json:"durationMillis,omitempty" jsonschema:"Pipeline flow node duration in milliseconds"`
+	PauseMS              int64          `json:"pauseMillis,omitempty" jsonschema:"Pipeline flow node paused duration in milliseconds"`
+	ParentNodes          []string       `json:"parentNodes,omitempty" jsonschema:"Parent Pipeline flow node ids"`
+	HasLog               bool           `json:"hasLog" jsonschema:"Whether this Pipeline flow node has log output"`
 }
 
 type PipelineNodeLog struct {
-	NodeID     string `json:"nodeId" jsonschema:"Pipeline flow node id"`
-	NodeStatus string `json:"nodeStatus,omitempty" jsonschema:"Pipeline flow node status"`
-	Text       string `json:"text,omitempty" jsonschema:"Pipeline node log text"`
-	Length     int64  `json:"length" jsonschema:"Number of log bytes returned"`
-	HasMore    bool   `json:"hasMore" jsonschema:"Whether more node log output may be available"`
-	Truncated  bool   `json:"truncated" jsonschema:"Whether node log output was truncated by limits"`
+	NodeID     string         `json:"nodeId" jsonschema:"Pipeline flow node id"`
+	NodeStatus PipelineStatus `json:"nodeStatus,omitempty" jsonschema:"Pipeline flow node status"`
+	Text       string         `json:"text,omitempty" jsonschema:"Pipeline node log text"`
+	Length     int64          `json:"length" jsonschema:"Number of log bytes returned"`
+	HasMore    bool           `json:"hasMore" jsonschema:"Whether more node log output may be available"`
+	Truncated  bool           `json:"truncated" jsonschema:"Whether node log output was truncated by limits"`
 }
 
 type ArtifactContent struct {
