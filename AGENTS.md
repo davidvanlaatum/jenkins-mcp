@@ -16,6 +16,7 @@
 - When the user says something to the effect of "pick up the next issue", treat it as a request to pick up the next GitHub issue: identify the next appropriate candidate issue, ask and resolve any necessary clarifying questions or status-workflow questions, then mark the issue in progress and start work.
 - Code changes should be delivered through a merge request/pull request; do not merge directly into the default branch unless explicitly instructed.
 - Pull request descriptions for issue-driven work should mention the issue they fix using a GitHub closing keyword such as `Fixes #23`.
+- Create pull requests as ready for review by default; only create a draft pull request when the user explicitly asks for a draft.
 - Do not push branches, create merge requests, merge, or close merge requests unless explicitly asked.
 - Do not commit, amend commits, or force-push unless explicitly asked. Treat amending and force-pushing as exceptional; prefer new follow-up commits after a pull request exists unless the user specifically asks to amend/squash. For follow-up changes on an existing pull request, ask before updating the commit or branch unless the user has clearly requested that update.
 - Keep changes scoped to the requested task and avoid unrelated refactors or drive-by fixes.
