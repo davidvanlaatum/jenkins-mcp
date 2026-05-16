@@ -46,6 +46,69 @@ EOF
     }
 }
 
+pipelineJob('example-coverage') {
+    description('Buildable pipeline job that publishes coverage results for jenkins-mcp integration tests.')
+    definition {
+        cps {
+            script('''
+pipeline {
+    agent any
+    stages {
+        stage('coverage') {
+            steps {
+                sh """
+mkdir -p coverage
+cat > coverage/jacoco.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<report name="example">
+  <package name="example">
+    <class name="example/Covered" sourcefilename="Covered.java">
+      <method name="covered" desc="()V" line="1">
+        <counter type="INSTRUCTION" missed="0" covered="4"/>
+        <counter type="LINE" missed="0" covered="1"/>
+        <counter type="METHOD" missed="0" covered="1"/>
+      </method>
+      <method name="missed" desc="()V" line="2">
+        <counter type="INSTRUCTION" missed="3" covered="0"/>
+        <counter type="LINE" missed="1" covered="0"/>
+        <counter type="METHOD" missed="1" covered="0"/>
+      </method>
+      <counter type="INSTRUCTION" missed="3" covered="4"/>
+      <counter type="LINE" missed="1" covered="1"/>
+      <counter type="METHOD" missed="1" covered="1"/>
+      <counter type="CLASS" missed="0" covered="1"/>
+    </class>
+    <sourcefile name="Covered.java">
+      <line nr="1" mi="0" ci="4" mb="0" cb="0"/>
+      <line nr="2" mi="3" ci="0" mb="0" cb="0"/>
+      <counter type="INSTRUCTION" missed="3" covered="4"/>
+      <counter type="LINE" missed="1" covered="1"/>
+      <counter type="METHOD" missed="1" covered="1"/>
+      <counter type="CLASS" missed="0" covered="1"/>
+    </sourcefile>
+    <counter type="INSTRUCTION" missed="3" covered="4"/>
+    <counter type="LINE" missed="1" covered="1"/>
+    <counter type="METHOD" missed="1" covered="1"/>
+    <counter type="CLASS" missed="0" covered="1"/>
+  </package>
+  <counter type="INSTRUCTION" missed="3" covered="4"/>
+  <counter type="LINE" missed="1" covered="1"/>
+  <counter type="METHOD" missed="1" covered="1"/>
+  <counter type="CLASS" missed="0" covered="1"/>
+</report>
+EOF
+"""
+                recordCoverage tools: [[parser: 'JACOCO', pattern: 'coverage/jacoco.xml']]
+            }
+        }
+    }
+}
+'''.stripIndent())
+            sandbox()
+        }
+    }
+}
+
 freeStyleJob('example-artifacts') {
     description('Buildable freestyle job that publishes text and binary artifacts for jenkins-mcp integration tests.')
     steps {

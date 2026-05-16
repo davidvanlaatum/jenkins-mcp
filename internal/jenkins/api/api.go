@@ -185,16 +185,16 @@ func jobStateFromColor(color string) string {
 }
 
 func normalizeBuildResult(result string) string {
-	switch strings.ToUpper(strings.TrimSpace(result)) {
-	case "SUCCESS":
+	switch model.BuildResult(strings.ToUpper(strings.TrimSpace(result))) {
+	case model.BuildResultSuccess:
 		return "success"
-	case "FAILURE":
+	case model.BuildResultFailure:
 		return "failed"
-	case "UNSTABLE":
+	case model.BuildResultUnstable:
 		return "unstable"
-	case "ABORTED":
+	case model.BuildResultAborted:
 		return "aborted"
-	case "NOT_BUILT":
+	case model.BuildResultNotBuilt:
 		return "not_built"
 	case "":
 		return ""
@@ -539,7 +539,7 @@ func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.Pi
 	run := model.PipelineRun{
 		ID:         raw.ID,
 		Name:       raw.Name,
-		Status:     raw.Status,
+		Status:     model.PipelineStatus(raw.Status),
 		StartTime:  raw.StartTime,
 		EndTime:    raw.EndTime,
 		DurationMS: raw.DurationMillis,
@@ -548,7 +548,7 @@ func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.Pi
 		run.Stages = append(run.Stages, model.PipelineStage{
 			ID:         stage.ID,
 			Name:       stage.Name,
-			Status:     stage.Status,
+			Status:     model.PipelineStatus(stage.Status),
 			StartTime:  stage.StartTime,
 			DurationMS: stage.DurationMillis,
 			PauseMS:    stage.PauseMillis,
@@ -589,12 +589,12 @@ func (a *API) PipelinePendingInputActions(ctx context.Context, job string, numbe
 	return actions, nil
 }
 
-func pipelineWaitingForInput(status string, stages []model.PipelineStage, pending []model.PendingInputAction) bool {
-	if strings.EqualFold(status, "PAUSED_PENDING_INPUT") || len(pending) > 0 {
+func pipelineWaitingForInput(status model.PipelineStatus, stages []model.PipelineStage, pending []model.PendingInputAction) bool {
+	if status == model.PipelineStatusPausedPendingInput || len(pending) > 0 {
 		return true
 	}
 	for _, stage := range stages {
-		if strings.EqualFold(stage.Status, "PAUSED_PENDING_INPUT") {
+		if stage.Status == model.PipelineStatusPausedPendingInput {
 			return true
 		}
 	}
@@ -644,7 +644,7 @@ func (a *API) PipelineStage(ctx context.Context, job string, number int, stageID
 		PipelineStage: model.PipelineStage{
 			ID:         raw.ID,
 			Name:       raw.Name,
-			Status:     raw.Status,
+			Status:     model.PipelineStatus(raw.Status),
 			StartTime:  raw.StartTime,
 			DurationMS: raw.DurationMillis,
 			PauseMS:    raw.PauseMillis,
@@ -654,7 +654,7 @@ func (a *API) PipelineStage(ctx context.Context, job string, number int, stageID
 		detail.Nodes = append(detail.Nodes, model.PipelineNode{
 			ID:                   node.ID,
 			Name:                 node.Name,
-			Status:               node.Status,
+			Status:               model.PipelineStatus(node.Status),
 			ParameterDescription: node.ParameterDescription,
 			StartTime:            node.StartTime,
 			DurationMS:           node.DurationMillis,
@@ -688,7 +688,7 @@ func (a *API) PipelineNodeLog(ctx context.Context, job string, number int, nodeI
 	}
 	return model.PipelineNodeLog{
 		NodeID:     raw.NodeID,
-		NodeStatus: raw.NodeStatus,
+		NodeStatus: model.PipelineStatus(raw.NodeStatus),
 		Text:       raw.Text,
 		Length:     raw.Length,
 		HasMore:    raw.HasMore,
@@ -1402,7 +1402,7 @@ func summary(b buildJSON) model.BuildSummary {
 		ID:                b.ID,
 		Number:            b.Number,
 		URL:               b.URL,
-		Result:            b.Result,
+		Result:            model.BuildResult(b.Result),
 		Building:          b.Building,
 		Timestamp:         b.Timestamp,
 		Duration:          b.Duration,

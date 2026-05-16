@@ -556,7 +556,7 @@ func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
 	r.Equal(int64(3000), build.EstimatedDuration, "first build estimated duration")
 	r.NotNil(build.KeepLog, "first build keepLog")
 	r.True(*build.KeepLog, "first build keepLog")
-	r.Equal("SUCCESS", build.Result, "first build result")
+	r.Equal(model.BuildResultSuccess, build.Result, "first build result")
 	r.True(first.HasMore, "first page hasMore")
 	r.True(first.Truncated, "first page truncated")
 	r.NotEmpty(first.NextCursor, "first page next cursor")
@@ -1370,7 +1370,7 @@ func TestWatchBuildReturnsWhenStageStatusChanges(t *testing.T) {
 	r.NotEqual(first.Watch.State, second.Watch.State, "second WatchBuild() did not advance state")
 	r.NotNil(second.Watch.Pipeline, "second WatchBuild() pipeline")
 	r.GreaterOrEqual(len(second.Watch.Pipeline.Stages), 2, "second WatchBuild() pipeline stages")
-	r.Equal("IN_PROGRESS", second.Watch.Pipeline.Stages[1].Status, "second WatchBuild() pipeline stage status")
+	r.Equal(model.PipelineStatusInProgress, second.Watch.Pipeline.Stages[1].Status, "second WatchBuild() pipeline stage status")
 }
 
 func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
@@ -1405,7 +1405,7 @@ func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
 	r.False(second.Watch.TimedOut, "second WatchBuild() timed out despite a pipeline run-status transition")
 	r.NotEqual(first.Watch.State, second.Watch.State, "second WatchBuild() did not advance state on pipeline run-status change")
 	r.NotNil(second.Watch.Pipeline, "second WatchBuild() pipeline")
-	r.Equal("PAUSED_PENDING_INPUT", second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
+	r.Equal(model.PipelineStatusPausedPendingInput, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
 }
 
 func TestPipelineRunReportsPendingInputActions(t *testing.T) {
@@ -1540,7 +1540,7 @@ func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStatus(t *testing.T
 	r := require.New(t)
 
 	got := pipelineRunFromState(&watchState{
-		Run: watchRunState{Status: "PAUSED_PENDING_INPUT"},
+		Run: watchRunState{Status: model.PipelineStatusPausedPendingInput},
 	})
 	r.NotNil(got, "pipelineRunFromState() returned nil")
 	r.True(got.WaitingForInput, "waitingForInput for status %q", got.Status)
@@ -1550,7 +1550,7 @@ func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStage(t *testing.T)
 	r := require.New(t)
 
 	got := pipelineRunFromState(&watchState{
-		Stages: []watchStageState{{ID: "1", Name: "Deploy", Status: "PAUSED_PENDING_INPUT"}},
+		Stages: []watchStageState{{ID: "1", Name: "Deploy", Status: model.PipelineStatusPausedPendingInput}},
 	})
 	r.NotNil(got, "pipelineRunFromState() returned nil")
 	r.True(got.WaitingForInput, "waitingForInput for stages %+v", got.Stages)

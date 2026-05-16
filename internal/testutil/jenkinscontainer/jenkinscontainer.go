@@ -19,6 +19,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 )
 
 //go:embed testdata/jenkins/*
@@ -40,6 +41,7 @@ var expectedJobs = []string{
 	"example-freestyle",
 	"example-junit",
 	"example-warnings",
+	"example-coverage",
 	"example-artifacts",
 	"example-pipeline",
 }
@@ -132,7 +134,7 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	r.Failf("wait for Job DSL-created jobs", "timed out waiting for jobs: %v", missing)
 }
 
-func WaitForSuccessfulBuild(t *testing.T, api *jenkinsapi.API, job string) int {
+func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result model.BuildResult) int {
 	t.Helper()
 
 	r := require.New(t)
@@ -151,9 +153,9 @@ func WaitForSuccessfulBuild(t *testing.T, api *jenkinsapi.API, job string) int {
 			continue
 		}
 		build := builds[0]
-		lastSeen = build.Result
+		lastSeen = string(build.Result)
 		if !build.Building && build.Result != "" {
-			r.Equal("SUCCESS", build.Result, "%s integration build result", job)
+			r.Equal(result, build.Result, "%s integration build result", job)
 			return build.Number
 		}
 		time.Sleep(500 * time.Millisecond)
