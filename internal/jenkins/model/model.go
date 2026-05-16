@@ -146,14 +146,15 @@ type BuildReference struct {
 
 type Build struct {
 	BuildSummary
-	Description     string          `json:"description,omitempty" jsonschema:"Jenkins build description"`
-	DisplayName     string          `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
-	FullDisplayName string          `json:"fullDisplayName,omitempty" jsonschema:"Full Jenkins build display name including job context"`
-	Causes          []Cause         `json:"causes,omitempty" jsonschema:"Causes that triggered the build"`
-	Parameters      map[string]any  `json:"parameters,omitempty" jsonschema:"Build parameter values keyed by parameter name"`
-	Artifacts       []Artifact      `json:"artifacts,omitempty" jsonschema:"Artifacts published by the build"`
-	ChangeSets      []ChangeSet     `json:"changeSets,omitempty" jsonschema:"SCM change sets associated with the build"`
-	Coverage        *CoverageReport `json:"coverage,omitempty" jsonschema:"Optional coverage summaries discovered from common Jenkins coverage plugin endpoints"`
+	Description       string          `json:"description,omitempty" jsonschema:"Jenkins build description"`
+	DisplayName       string          `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
+	FullDisplayName   string          `json:"fullDisplayName,omitempty" jsonschema:"Full Jenkins build display name including job context"`
+	Causes            []Cause         `json:"causes,omitempty" jsonschema:"Causes that triggered the build"`
+	Parameters        map[string]any  `json:"parameters,omitempty" jsonschema:"Build parameter values keyed by parameter name"`
+	Artifacts         []Artifact      `json:"artifacts,omitempty" jsonschema:"Artifacts published by the build"`
+	ChangeSets        []ChangeSet     `json:"changeSets,omitempty" jsonschema:"SCM change sets associated with the build"`
+	Coverage          *CoverageReport `json:"coverage,omitempty" jsonschema:"Optional coverage summaries discovered from common Jenkins coverage plugin endpoints"`
+	WarningsNGSummary *IssuesSummary  `json:"warningsNgSummary,omitempty" jsonschema:"Typed Warnings NG summary discovered from the build-level warnings-ng endpoint, when available"`
 }
 type Cause struct {
 	ShortDescription string `json:"shortDescription" jsonschema:"Human-readable Jenkins cause description"`
@@ -345,11 +346,60 @@ type CoverageEndpointError struct {
 	Message  string `json:"message" jsonschema:"Human-readable error message for the non-fatal coverage endpoint failure"`
 }
 
-type IssuesReport struct {
-	Available        bool           `json:"available" jsonschema:"Whether issue data was found"`
-	Endpoint         string         `json:"endpoint,omitempty" jsonschema:"Jenkins endpoint that returned issue data"`
-	CheckedEndpoints []string       `json:"checkedEndpoints,omitempty" jsonschema:"Jenkins issue or analysis endpoints checked"`
-	Summary          map[string]any `json:"summary,omitempty" jsonschema:"Issue summary returned by the Jenkins plugin"`
+type IssuesSummary struct {
+	Available        bool               `json:"available" jsonschema:"Whether Warnings NG data was found for the build"`
+	Endpoint         string             `json:"endpoint,omitempty" jsonschema:"Jenkins endpoint that returned Warnings NG discovery data"`
+	CheckedEndpoints []string           `json:"checkedEndpoints,omitempty" jsonschema:"Jenkins Warnings NG endpoints checked"`
+	Tools            []IssueToolSummary `json:"tools,omitempty" jsonschema:"Warnings NG tools discovered for this build"`
+	Message          string             `json:"message,omitempty" jsonschema:"Human-readable explanation when Warnings NG data is unavailable or empty"`
+}
+
+type IssueToolSummary struct {
+	ID          string `json:"id,omitempty" jsonschema:"Warnings NG tool id used to request issue details"`
+	Name        string `json:"name,omitempty" jsonschema:"Human-readable Warnings NG tool name"`
+	URL         string `json:"url,omitempty" jsonschema:"Tool result URL or relative path reported by Jenkins"`
+	LatestURL   string `json:"latestUrl,omitempty" jsonschema:"Latest tool result URL reported by Jenkins, when present"`
+	Total       int    `json:"total,omitempty" jsonschema:"Total number of issues reported for this tool, when available"`
+	New         int    `json:"new,omitempty" jsonschema:"Number of new issues reported for this tool, when available"`
+	Fixed       int    `json:"fixed,omitempty" jsonschema:"Number of fixed issues reported for this tool, when available"`
+	Outstanding int    `json:"outstanding,omitempty" jsonschema:"Number of outstanding issues reported for this tool, when available"`
+	Error       int    `json:"error,omitempty" jsonschema:"Number of error-severity issues reported for this tool, when available"`
+	High        int    `json:"high,omitempty" jsonschema:"Number of high-severity issues reported for this tool, when available"`
+	Normal      int    `json:"normal,omitempty" jsonschema:"Number of normal-severity issues reported for this tool, when available"`
+	Low         int    `json:"low,omitempty" jsonschema:"Number of low-severity issues reported for this tool, when available"`
+}
+
+type Issue struct {
+	Severity    string `json:"severity,omitempty" jsonschema:"Issue severity reported by Warnings NG"`
+	Category    string `json:"category,omitempty" jsonschema:"Issue category reported by Warnings NG"`
+	Type        string `json:"type,omitempty" jsonschema:"Issue type reported by Warnings NG"`
+	Message     string `json:"message,omitempty" jsonschema:"Issue message or description"`
+	Description string `json:"description,omitempty" jsonschema:"Detailed issue description reported by Warnings NG, when available"`
+	File        string `json:"file,omitempty" jsonschema:"Source file path associated with the issue"`
+	BaseName    string `json:"baseName,omitempty" jsonschema:"Base source file name associated with the issue, when available"`
+	Package     string `json:"package,omitempty" jsonschema:"Package or namespace associated with the issue"`
+	Module      string `json:"module,omitempty" jsonschema:"Module associated with the issue"`
+	Line        int    `json:"line,omitempty" jsonschema:"Source line number associated with the issue"`
+	LineEnd     int    `json:"lineEnd,omitempty" jsonschema:"Ending source line number associated with the issue, when available"`
+	ColumnStart int    `json:"columnStart,omitempty" jsonschema:"Starting source column number associated with the issue, when available"`
+	ColumnEnd   int    `json:"columnEnd,omitempty" jsonschema:"Ending source column number associated with the issue, when available"`
+	Fingerprint string `json:"fingerprint,omitempty" jsonschema:"Stable Warnings NG issue fingerprint, when available"`
+	Reference   string `json:"reference,omitempty" jsonschema:"Reference URL or identifier associated with the issue, when available"`
+	Origin      string `json:"origin,omitempty" jsonschema:"Warnings NG origin or tool id associated with the issue, when available"`
+	OriginName  string `json:"originName,omitempty" jsonschema:"Human-readable Warnings NG origin name associated with the issue, when available"`
+	AuthorName  string `json:"authorName,omitempty" jsonschema:"SCM author name associated with the issue, when available"`
+	AuthorEmail string `json:"authorEmail,omitempty" jsonschema:"SCM author email associated with the issue, when available"`
+	Commit      string `json:"commit,omitempty" jsonschema:"SCM commit associated with the issue, when available"`
+	AddedAt     int    `json:"addedAt,omitempty" jsonschema:"Warnings NG added-at build number or timestamp associated with the issue, when available"`
+}
+
+type IssuesPage struct {
+	Available        bool               `json:"available" jsonschema:"Whether Warnings NG issue data was available"`
+	Endpoint         string             `json:"endpoint,omitempty" jsonschema:"Jenkins endpoint used to return this issue page"`
+	CheckedEndpoints []string           `json:"checkedEndpoints,omitempty" jsonschema:"Jenkins Warnings NG endpoints checked"`
+	Tools            []IssueToolSummary `json:"tools,omitempty" jsonschema:"Warnings NG tools discovered for this build"`
+	Items            []Issue            `json:"items,omitempty" jsonschema:"Warnings NG issues returned for this page"`
+	Message          string             `json:"message,omitempty" jsonschema:"Human-readable explanation when Warnings NG data is unavailable or empty"`
 }
 
 type BuildWatch struct {

@@ -930,7 +930,7 @@ So that I can understand whether build quality findings explain the failure.
 **Acceptance Criteria:**
 
 **Given** a build with Warnings NG or equivalent issue data
-**When** the agent calls `jenkins_get_issues`
+**When** the agent calls `jenkins_list_issues`
 **Then** the server returns bounded issue summary data including totals, severity/category where available, tool/source where available, and affected files where available
 **And** the agent can retrieve individual issue details where Jenkins exposes them
 **And** large issue lists use the shared pagination shape

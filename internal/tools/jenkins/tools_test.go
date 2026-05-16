@@ -101,6 +101,121 @@ func TestCapabilitiesCanSkipPluginDiscovery(t *testing.T) {
 	r.Empty(warning.Error, "warning error")
 }
 
+func TestGetBuildIncludesWarningsNGSummary(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/api/json":
+			writeJSON(w, `{"number":42,"url":"https://jenkins.example.com/job/app/42/","result":"UNSTABLE","building":false,"artifacts":[],"actions":[],"changeSets":[]}`)
+		case "/job/app/42/warnings-ng/api/json":
+			writeJSON(w, `{"tools":[{"id":"golint","name":"Go Lint","url":"golint","size":3,"newSize":1,"fixedSize":2,"outstandingSize":3}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "GetBuild() error")
+	r.NotNil(got.Build.WarningsNGSummary, "warnings summary")
+	r.True(got.Build.WarningsNGSummary.Available, "warnings summary available")
+	r.Len(got.Build.WarningsNGSummary.Tools, 1, "warnings tools")
+	tool := got.Build.WarningsNGSummary.Tools[0]
+	r.Equal("golint", tool.ID, "tool id")
+	r.Equal("Go Lint", tool.Name, "tool name")
+	r.Equal(3, tool.Total, "tool total")
+	r.Equal(1, tool.New, "tool new")
+}
+
+func TestListIssuesDiscoversToolsWhenToolOmitted(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/warnings-ng/api/json":
+			writeJSON(w, `{"tools":[{"id":"golint","name":"Go Lint","url":"golint","size":3},{"id":"govet","name":"Go Vet","url":"govet","size":2}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42})
+	r.NoError(err, "ListIssues() error")
+	r.True(got.Page.Available, "page available")
+	r.Len(got.Page.Tools, 2, "tools")
+	r.Empty(got.Page.Items, "items")
+	r.Contains(got.Page.Message, "Multiple Warnings NG tools", "message")
+}
+
+func TestListIssuesReturnsTypedPagedIssues(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/warnings-ng/api/json":
+			writeJSON(w, `{"tools":[{"id":"golint","name":"Go Lint","url":"golint","size":3}]}`)
+		case "/job/app/42/golint/all/api/json":
+			tree := r.URL.Query().Get("tree")
+			if strings.Contains(tree, "{1,3}") {
+				writeJSON(w, `{"issues":[{"severity":"LOW","category":"style","type":"lint","message":"second","fileName":"main.go","lineStart":12,"lineEnd":13,"columnStart":2,"columnEnd":4,"fingerprint":"fp2","reference":"ref2","origin":"golint"}]}`)
+				return
+			}
+			writeJSON(w, `{"issues":[{"addedAt":42,"authorEmail":"dev@example.com","authorName":"Dev","baseName":"main.go","severity":"HIGH","category":"bug","type":"lint","message":"first","description":"details","fileName":"main.go","packageName":"main","moduleName":"app","lineStart":10,"lineEnd":11,"columnStart":3,"columnEnd":8,"fingerprint":"fp1","reference":"ref1","origin":"golint","originName":"Go Lint","commit":"abc123"},{"severity":"LOW","category":"style","type":"lint","message":"second","fileName":"main.go","lineStart":12,"lineEnd":13,"columnStart":2,"columnEnd":4,"fingerprint":"fp2","reference":"ref2","origin":"golint"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	first, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1})
+	r.NoError(err, "first ListIssues() error")
+	r.True(first.HasMore, "first page has more")
+	r.True(first.Truncated, "first page truncated")
+	r.NotEmpty(first.NextCursor, "next cursor")
+	r.Len(first.Page.Items, 1, "first page items")
+	issue := first.Page.Items[0]
+	r.Equal("HIGH", issue.Severity, "severity")
+	r.Equal("bug", issue.Category, "category")
+	r.Equal("lint", issue.Type, "type")
+	r.Equal("first", issue.Message, "message")
+	r.Equal("details", issue.Description, "description")
+	r.Equal("main.go", issue.File, "file")
+	r.Equal("main.go", issue.BaseName, "base name")
+	r.Equal("main", issue.Package, "package")
+	r.Equal("app", issue.Module, "module")
+	r.Equal(10, issue.Line, "line")
+	r.Equal(11, issue.LineEnd, "line end")
+	r.Equal(3, issue.ColumnStart, "column start")
+	r.Equal(8, issue.ColumnEnd, "column end")
+	r.Equal("fp1", issue.Fingerprint, "fingerprint")
+	r.Equal("ref1", issue.Reference, "reference")
+	r.Equal("golint", issue.Origin, "origin")
+	r.Equal("Go Lint", issue.OriginName, "origin name")
+	r.Equal("Dev", issue.AuthorName, "author name")
+	r.Equal("dev@example.com", issue.AuthorEmail, "author email")
+	r.Equal("abc123", issue.Commit, "commit")
+	r.Equal(42, issue.AddedAt, "added at")
+
+	second, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1, Cursor: first.NextCursor})
+	r.NoError(err, "second ListIssues() error")
+	r.False(second.HasMore, "second page has more")
+	r.Len(second.Page.Items, 1, "second page items")
+	r.Equal("second", second.Page.Items[0].Message, "second page message")
+}
+
+func TestListIssuesMissingWarningsNGIsGraceful(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+
+	got, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42})
+	r.NoError(err, "ListIssues() error")
+	r.False(got.Page.Available, "page available")
+	r.Empty(got.Page.Items, "items")
+	r.Contains(got.Page.Message, "not available", "message")
+}
+
 func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
 	r := require.New(t)
 

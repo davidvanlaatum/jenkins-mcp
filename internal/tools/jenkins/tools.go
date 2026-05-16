@@ -808,20 +808,85 @@ func ReadArtifact(ctx context.Context, deps Deps, in ReadArtifactRequest) (ReadA
 	return ReadArtifactResponse{Artifact: artifact}, err
 }
 
-type IssuesResponse struct {
-	Report model.IssuesReport `json:"report" jsonschema:"Static analysis or warnings plugin availability and summary data"`
+type ListIssuesRequest struct {
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number"`
+	Tool       string `json:"tool,omitempty" jsonschema:"Optional Warnings NG tool id or URL segment to list issues for; when omitted, the response returns discovered tools and lists issues only if exactly one tool is available"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of issues to return; defaults to 50 and is capped at 200"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_issues response"`
 }
 
-func Issues(ctx context.Context, deps Deps, in BuildRequest) (IssuesResponse, error) {
+type ListIssuesResponse struct {
+	Page       model.IssuesPage `json:"page" jsonschema:"Warnings NG issue discovery data and issue items for this page"`
+	NextCursor string           `json:"nextCursor,omitempty" jsonschema:"Opaque cursor to request the next page when hasMore is true"`
+	HasMore    bool             `json:"hasMore" jsonschema:"Whether additional issues are available after this page"`
+	Truncated  bool             `json:"truncated" jsonschema:"Whether additional issues were omitted from this page due to the requested or configured limit"`
+	Limit      int              `json:"limit" jsonschema:"Maximum number of issues requested for this page after applying server caps"`
+}
+
+func ListIssues(ctx context.Context, deps Deps, in ListIssuesRequest) (ListIssuesResponse, error) {
 	if err := validateBuild(in.Job, in.Build); err != nil {
-		return IssuesResponse{}, err
+		return ListIssuesResponse{}, err
 	}
 	api, err := apiFor(deps, in.Controller)
 	if err != nil {
-		return IssuesResponse{}, err
+		return ListIssuesResponse{}, err
 	}
-	report, err := api.IssuesReport(ctx, in.Job, in.Build)
-	return IssuesResponse{Report: report}, err
+	limit := pagination.BoundLimit(in.Limit, 50, 200)
+	cursorSignature, err := listIssuesCursorSignature(in)
+	if err != nil {
+		return ListIssuesResponse{}, err
+	}
+	offset, gotSignature, err := pagination.DecodeCursor(in.Cursor, listIssuesCursorKind)
+	if err != nil {
+		return ListIssuesResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid list issues cursor", map[string]any{"cursor": in.Cursor, "reason": err.Error()})
+	}
+	if gotSignature != "" && gotSignature != cursorSignature {
+		return ListIssuesResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "list issues cursor does not match request", map[string]any{"cursor": in.Cursor})
+	}
+	page, err := api.ListIssues(ctx, in.Job, in.Build, in.Tool, offset, limit+1)
+	if err != nil {
+		return ListIssuesResponse{}, err
+	}
+	return listIssuesPage(page, offset, limit, cursorSignature)
+}
+
+const listIssuesCursorKind = "jenkins_list_issues"
+
+func listIssuesPage(page model.IssuesPage, offset int, limit int, signature string) (ListIssuesResponse, error) {
+	hasMore := len(page.Items) > limit
+	if hasMore {
+		page.Items = page.Items[:limit]
+	}
+	nextCursor := ""
+	if hasMore {
+		var err error
+		nextCursor, err = pagination.EncodeCursor(listIssuesCursorKind, offset+limit, signature)
+		if err != nil {
+			return ListIssuesResponse{}, err
+		}
+	}
+	return ListIssuesResponse{Page: page, NextCursor: nextCursor, HasMore: hasMore, Truncated: hasMore, Limit: limit}, nil
+}
+
+func listIssuesCursorSignature(in ListIssuesRequest) (string, error) {
+	body, err := json.Marshal(struct {
+		Controller string `json:"controller,omitempty"`
+		Job        string `json:"job"`
+		Build      int    `json:"build"`
+		Tool       string `json:"tool,omitempty"`
+	}{
+		Controller: in.Controller,
+		Job:        in.Job,
+		Build:      in.Build,
+		Tool:       strings.TrimSpace(in.Tool),
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
 type ChangesResponse struct {

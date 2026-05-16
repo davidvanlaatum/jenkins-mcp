@@ -251,8 +251,8 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_read_artifact", "Read Artifact", "Read a small text Jenkins artifact inline, bounded by configured inline response limits."), func(ctx context.Context, in jenkinstools.ReadArtifactRequest) (jenkinstools.ReadArtifactResponse, error) {
 		return jenkinstools.ReadArtifact(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_get_issues", "Get Issues", "Fetch Warnings NG or analysis issue summary from common Jenkins plugin endpoints when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.IssuesResponse, error) {
-		return jenkinstools.Issues(ctx, s.deps, in)
+	addConfiguredTool(s, readOnlyTool("jenkins_list_issues", "List Issues", "List paged Warnings NG issues for a Jenkins build, with typed tool discovery and issue fields."), func(ctx context.Context, in jenkinstools.ListIssuesRequest) (jenkinstools.ListIssuesResponse, error) {
+		return jenkinstools.ListIssues(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_changes", "Get Changes", "Fetch SCM change sets for a Jenkins build."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.ChangesResponse, error) {
 		return jenkinstools.Changes(ctx, s.deps, in)
