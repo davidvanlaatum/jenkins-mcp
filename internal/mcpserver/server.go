@@ -266,7 +266,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_queue_item", "Get Queue Item", "Inspect a Jenkins queue item by id."), func(ctx context.Context, in jenkinstools.QueueItemRequest) (jenkinstools.QueueItemResponse, error) {
 		return jenkinstools.QueueItem(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_watch_queue_item", "Watch Queue Item", "Bootstrap or long-poll a Jenkins queue item watcher. The first call without lastState returns immediately with watch.state; pass that state back as lastState on later calls to wait until the item changes, receives an executable build, is cancelled, disappears from the queue, or reaches waitTimeoutMs."), func(ctx context.Context, in jenkinstools.WatchQueueItemRequest) (jenkinstools.WatchQueueItemResponse, error) {
+	addConfiguredTool(s, readOnlyTool("jenkins_watch_queue_item", "Watch Queue Item", "Bootstrap or long-poll a Jenkins queue item watcher. The first call without lastState returns immediately with watch.state; pass that state back as lastState on later calls to wait until stable queue item fields change, the item receives an executable build, is cancelled, disappears from the queue, or reaches waitTimeoutMs. Jenkins why text changes, such as quiet-period countdowns, do not wake the long poll by themselves."), func(ctx context.Context, in jenkinstools.WatchQueueItemRequest) (jenkinstools.WatchQueueItemResponse, error) {
 		return jenkinstools.WatchQueueItem(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_queue", "List Queue", "List current Jenkins queue items."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.ListQueueResponse, error) {

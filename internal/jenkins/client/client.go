@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type Client struct {
 	username  string
 	token     string
 	http      *http.Client
+	jar       *resettableCookieJar
 	logger    *slog.Logger
 	crumb     *Crumb
 	crumbLock sync.Mutex
@@ -40,7 +42,11 @@ func New(cfg config.ControllerConfig, logger *slog.Logger) (*Client, error) {
 	if logger != nil {
 		logger.Debug("configured Jenkins controller", "controller", cfg.ID, "base_url", parsed.Redacted(), "base_path", parsed.EscapedPath())
 	}
-	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, http: &http.Client{Timeout: 30 * time.Second}, logger: logger}, nil
+	jar, err := newResettableCookieJar()
+	if err != nil {
+		return nil, err
+	}
+	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, jar: jar, logger: logger}, nil
 }
 func (c *Client) BaseURL() string { return c.base.String() }
 
@@ -68,13 +74,26 @@ func (c *Client) GetText(ctx context.Context, path string, query url.Values) (in
 }
 
 func (c *Client) Post(ctx context.Context, path string, query url.Values, form url.Values) (int, []byte, http.Header, error) {
+	encodedForm := ""
+	if form != nil {
+		encodedForm = form.Encode()
+	}
+	status, body, headers, err := c.postOnce(ctx, path, query, form != nil, encodedForm)
+	if err != nil || status != http.StatusForbidden {
+		return status, body, headers, err
+	}
+	c.clearCrumbSession()
+	return c.postOnce(ctx, path, query, form != nil, encodedForm)
+}
+
+func (c *Client) postOnce(ctx context.Context, path string, query url.Values, hasForm bool, encodedForm string) (int, []byte, http.Header, error) {
 	headers := http.Header{}
 	if err := c.addCrumb(ctx, headers); err != nil {
 		return 0, nil, nil, err
 	}
 	var body io.Reader
-	if form != nil {
-		body = strings.NewReader(form.Encode())
+	if hasForm {
+		body = strings.NewReader(encodedForm)
 		headers.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	return c.Do(ctx, http.MethodPost, path, query, body, headers)
@@ -160,6 +179,57 @@ func (c *Client) addCrumb(ctx context.Context, headers http.Header) error {
 	if c.crumb.RequestField != "" && c.crumb.Crumb != "" {
 		headers.Set(c.crumb.RequestField, c.crumb.Crumb)
 	}
+	return nil
+}
+
+func (c *Client) clearCrumbSession() {
+	c.crumbLock.Lock()
+	defer c.crumbLock.Unlock()
+
+	c.crumb = nil
+	if err := c.jar.Reset(); err != nil {
+		if c.logger != nil {
+			c.logger.Warn("failed to reset Jenkins cookie jar", "error", err)
+		}
+	}
+}
+
+type resettableCookieJar struct {
+	mu  sync.Mutex
+	jar *cookiejar.Jar
+}
+
+func newResettableCookieJar() (*resettableCookieJar, error) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &resettableCookieJar{jar: jar}, nil
+}
+
+func (j *resettableCookieJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	j.jar.SetCookies(u, cookies)
+}
+
+func (j *resettableCookieJar) Cookies(u *url.URL) []*http.Cookie {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	return j.jar.Cookies(u)
+}
+
+func (j *resettableCookieJar) Reset() error {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	j.jar = jar
 	return nil
 }
 

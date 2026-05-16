@@ -44,6 +44,7 @@ var expectedJobs = []string{
 	"example-coverage",
 	"example-artifacts",
 	"example-pipeline",
+	"example-watch-lifecycle",
 }
 
 type Fixture struct {

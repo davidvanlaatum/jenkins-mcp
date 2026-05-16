@@ -24,13 +24,10 @@ jenkins:
         - "Overall/Read:build-only"
         - "Job/Read:build-only"
         - "Job/Build:build-only"
+        - "Job/Cancel:build-only"
         - "Overall/Read:no-config-access"
         - "Job/Read:no-config-access"
 
 security:
   globalJobDslSecurityConfiguration:
     useScriptSecurity: false
-
-unclassified:
-  location:
-    url: "http://localhost:8080/"

@@ -4,8 +4,10 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -49,6 +51,112 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(names, "example-coverage", "coverage job")
 		r.Contains(names, "example-warnings", "Warnings NG job")
 		r.Contains(names, "example-artifacts", "artifact job")
+		r.Contains(names, "example-watch-lifecycle", "watch lifecycle job")
+	})
+
+	t.Run("queue trigger and watch lifecycle", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "build-only", func(cfg *config.Config) {
+			cfg.Mutations.Enabled = true
+			cfg.Watch.PollIntervalMs = 250
+			cfg.Watch.DefaultWaitTimeoutMs = 5000
+			cfg.Watch.MaxWaitTimeoutMs = 20000
+		})
+		defer cleanup()
+
+		trigger := callIntegrationTool[struct {
+			QueueURL  string `json:"queueUrl"`
+			Triggered bool   `json:"triggered"`
+		}](t, clientSession, "jenkins_trigger_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-watch-lifecycle",
+		})
+		r.True(trigger.Triggered, "build should be accepted")
+		queueID := queueIDFromLocation(t, trigger.QueueURL)
+
+		queue := callIntegrationTool[struct {
+			Items []struct {
+				ID       int64  `json:"id"`
+				TaskName string `json:"taskName"`
+			} `json:"items"`
+		}](t, clientSession, "jenkins_list_queue", map[string]any{"controller": jenkinscontainer.ControllerID})
+		r.True(queueContains(queue.Items, queueID), "list queue should include triggered item %d", queueID)
+
+		item := callIntegrationTool[struct {
+			Item struct {
+				ID       int64  `json:"id"`
+				TaskName string `json:"taskName"`
+			} `json:"item"`
+		}](t, clientSession, "jenkins_get_queue_item", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"id":         queueID,
+		})
+		r.Equal(queueID, item.Item.ID, "queue item id")
+		r.Equal("example-watch-lifecycle", item.Item.TaskName, "queue item task")
+
+		bootstrap := callIntegrationTool[queueWatchToolResult](t, clientSession, "jenkins_watch_queue_item", map[string]any{
+			"controller":    jenkinscontainer.ControllerID,
+			"id":            queueID,
+			"waitTimeoutMs": 1000,
+		})
+		r.NotEmpty(bootstrap.Watch.State, "queue watch state")
+		r.Equal("queued", bootstrap.Watch.Status, "initial queue watch status")
+		r.False(bootstrap.Watch.Terminal, "queued item should not be terminal")
+
+		executable := watchQueueUntilTerminal(t, clientSession, queueID, bootstrap.Watch.State, 15000)
+		r.Equal("executable", executable.Watch.Status, "queue item should resolve to an executable")
+		r.True(executable.Watch.Terminal, "executable queue item should be terminal")
+		r.NotNil(executable.Watch.Build, "queue watch build handoff")
+		r.Equal("example-watch-lifecycle", executable.Watch.Build.Job, "handoff build job")
+		r.Greater(executable.Watch.Build.Build, 0, "handoff build number")
+
+		build := callIntegrationTool[buildWatchToolResult](t, clientSession, "jenkins_watch_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        executable.Watch.Build.Job,
+			"build":      executable.Watch.Build.Build,
+		})
+		r.Equal(executable.Watch.Build.Build, build.Watch.Build.Number, "watch build number")
+		r.NotEmpty(build.Watch.State, "build watch state")
+		if !build.Watch.Complete {
+			build = callIntegrationTool[buildWatchToolResult](t, clientSession, "jenkins_watch_build", map[string]any{
+				"controller":    jenkinscontainer.ControllerID,
+				"job":           executable.Watch.Build.Job,
+				"build":         executable.Watch.Build.Build,
+				"lastState":     build.Watch.State,
+				"waitTimeoutMs": 10000,
+			})
+		}
+		r.True(build.Watch.Complete, "build should complete")
+		r.False(build.Watch.TimedOut, "build watch should return on completion")
+		r.Equal(model.BuildResultSuccess, build.Watch.Build.Result, "build result")
+
+		cancelTrigger := callIntegrationTool[struct {
+			QueueURL  string `json:"queueUrl"`
+			Triggered bool   `json:"triggered"`
+		}](t, clientSession, "jenkins_trigger_build", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-watch-lifecycle",
+		})
+		r.True(cancelTrigger.Triggered, "second build should be accepted")
+		cancelQueueID := queueIDFromLocation(t, cancelTrigger.QueueURL)
+		cancelBootstrap := callIntegrationTool[queueWatchToolResult](t, clientSession, "jenkins_watch_queue_item", map[string]any{
+			"controller":    jenkinscontainer.ControllerID,
+			"id":            cancelQueueID,
+			"waitTimeoutMs": 1000,
+		})
+		r.Equal("queued", cancelBootstrap.Watch.Status, "cancellation fixture should start queued")
+
+		cancelled := callIntegrationTool[struct {
+			Cancelled bool `json:"cancelled"`
+		}](t, clientSession, "jenkins_cancel_queue_item", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"id":         cancelQueueID,
+		})
+		r.True(cancelled.Cancelled, "queue cancellation should be accepted")
+
+		cancelWatch := watchQueueUntilTerminal(t, clientSession, cancelQueueID, cancelBootstrap.Watch.State, 5000)
+		r.True(cancelWatch.Watch.Terminal, "cancelled queue item should be terminal")
+		r.True(cancelWatch.Watch.Cancelled || cancelWatch.Watch.Disappeared, "cancelled item should be cancelled or disappear from Jenkins queue API")
 	})
 
 	t.Run("junit test report", func(t *testing.T) {
@@ -614,7 +722,9 @@ func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, 
 		Arguments: args,
 	})
 	r.NoError(err, "CallTool(%s)", name)
-	r.False(result.IsError, "CallTool(%s) IsError", name)
+	if result.IsError {
+		r.Failf("CallTool("+name+") IsError", "%s", integrationToolErrorText(result))
+	}
 	r.NotNil(result.StructuredContent, "CallTool(%s) structured content", name)
 
 	var got T
@@ -622,6 +732,96 @@ func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, 
 	r.NoError(err, "marshal %s structured content", name)
 	r.NoError(json.Unmarshal(payload, &got), "unmarshal %s structured content", name)
 	return got
+}
+
+func integrationToolErrorText(result *mcp.CallToolResult) string {
+	var parts []string
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			parts = append(parts, text.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func watchQueueUntilTerminal(t *testing.T, clientSession *mcp.ClientSession, id int64, state string, waitTimeoutMs int64) queueWatchToolResult {
+	t.Helper()
+
+	r := require.New(t)
+	for range 30 {
+		watch := callIntegrationTool[queueWatchToolResult](t, clientSession, "jenkins_watch_queue_item", map[string]any{
+			"controller":    jenkinscontainer.ControllerID,
+			"id":            id,
+			"lastState":     state,
+			"waitTimeoutMs": waitTimeoutMs,
+		})
+		r.NotEmpty(watch.Watch.State, "queue watch state")
+		if watch.Watch.Terminal {
+			return watch
+		}
+		r.False(watch.Watch.TimedOut, "queue watch should make progress before terminal state")
+		state = watch.Watch.State
+	}
+	r.FailNow("queue watch did not reach a terminal state")
+	return queueWatchToolResult{}
+}
+
+type queueWatchToolResult struct {
+	Watch struct {
+		State       string `json:"state"`
+		Status      string `json:"status"`
+		Terminal    bool   `json:"terminal"`
+		TimedOut    bool   `json:"timedOut"`
+		Cancelled   bool   `json:"cancelled"`
+		Disappeared bool   `json:"disappeared"`
+		Build       *struct {
+			Controller string `json:"controller"`
+			Job        string `json:"job"`
+			Build      int    `json:"build"`
+			URL        string `json:"url"`
+		} `json:"build"`
+	} `json:"watch"`
+}
+
+type buildWatchToolResult struct {
+	Watch struct {
+		State string `json:"state"`
+		Build struct {
+			Number int               `json:"number"`
+			Result model.BuildResult `json:"result"`
+		} `json:"build"`
+		Complete bool `json:"complete"`
+		TimedOut bool `json:"timedOut"`
+	} `json:"watch"`
+}
+
+func queueIDFromLocation(t *testing.T, location string) int64 {
+	t.Helper()
+
+	r := require.New(t)
+	r.NotEmpty(location, "trigger build queue location")
+	u, err := url.Parse(location)
+	r.NoError(err, "parse queue location")
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	r.GreaterOrEqual(len(parts), 3, "queue location path")
+	r.Equal("queue", parts[len(parts)-3], "queue location path")
+	r.Equal("item", parts[len(parts)-2], "queue location path")
+	id, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+	r.NoError(err, "parse queue id")
+	r.Greater(id, int64(0), "queue id")
+	return id
+}
+
+func queueContains(items []struct {
+	ID       int64  `json:"id"`
+	TaskName string `json:"taskName"`
+}, id int64) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func connectIntegrationMCP(t *testing.T, jenkins jenkinscontainer.Fixture, user string) (*mcp.ClientSession, func()) {
