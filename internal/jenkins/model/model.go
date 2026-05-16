@@ -146,13 +146,14 @@ type BuildReference struct {
 
 type Build struct {
 	BuildSummary
-	Description     string         `json:"description,omitempty" jsonschema:"Jenkins build description"`
-	DisplayName     string         `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
-	FullDisplayName string         `json:"fullDisplayName,omitempty" jsonschema:"Full Jenkins build display name including job context"`
-	Causes          []Cause        `json:"causes,omitempty" jsonschema:"Causes that triggered the build"`
-	Parameters      map[string]any `json:"parameters,omitempty" jsonschema:"Build parameter values keyed by parameter name"`
-	Artifacts       []Artifact     `json:"artifacts,omitempty" jsonschema:"Artifacts published by the build"`
-	ChangeSets      []ChangeSet    `json:"changeSets,omitempty" jsonschema:"SCM change sets associated with the build"`
+	Description     string          `json:"description,omitempty" jsonschema:"Jenkins build description"`
+	DisplayName     string          `json:"displayName,omitempty" jsonschema:"Jenkins build display name"`
+	FullDisplayName string          `json:"fullDisplayName,omitempty" jsonschema:"Full Jenkins build display name including job context"`
+	Causes          []Cause         `json:"causes,omitempty" jsonschema:"Causes that triggered the build"`
+	Parameters      map[string]any  `json:"parameters,omitempty" jsonschema:"Build parameter values keyed by parameter name"`
+	Artifacts       []Artifact      `json:"artifacts,omitempty" jsonschema:"Artifacts published by the build"`
+	ChangeSets      []ChangeSet     `json:"changeSets,omitempty" jsonschema:"SCM change sets associated with the build"`
+	Coverage        *CoverageReport `json:"coverage,omitempty" jsonschema:"Optional coverage summaries discovered from common Jenkins coverage plugin endpoints"`
 }
 type Cause struct {
 	ShortDescription string `json:"shortDescription" jsonschema:"Human-readable Jenkins cause description"`
@@ -303,10 +304,45 @@ type ArtifactContent struct {
 }
 
 type CoverageReport struct {
-	Available        bool           `json:"available" jsonschema:"Whether coverage data was found"`
-	Endpoint         string         `json:"endpoint,omitempty" jsonschema:"Jenkins endpoint that returned coverage data"`
-	CheckedEndpoints []string       `json:"checkedEndpoints,omitempty" jsonschema:"Jenkins coverage endpoints checked"`
-	Summary          map[string]any `json:"summary,omitempty" jsonschema:"Coverage summary returned by the Jenkins coverage plugin"`
+	Available        bool                    `json:"available" jsonschema:"Whether coverage data was found at any probed endpoint"`
+	CheckedEndpoints []string                `json:"checkedEndpoints,omitempty" jsonschema:"Jenkins coverage endpoints checked in deterministic probing order"`
+	Summaries        []CoverageSummary       `json:"summaries,omitempty" jsonschema:"Coverage summaries returned by Jenkins coverage-related plugin endpoints"`
+	Errors           []CoverageEndpointError `json:"errors,omitempty" jsonschema:"Non-fatal coverage endpoint errors encountered while probing optional coverage data"`
+}
+
+type CoverageSummary struct {
+	Source         string           `json:"source" jsonschema:"Stable coverage source identifier inferred from the Jenkins endpoint"`
+	Endpoint       string           `json:"endpoint" jsonschema:"Jenkins endpoint that returned this coverage summary"`
+	TopLevelFields []string         `json:"topLevelFields,omitempty" jsonschema:"Top-level JSON fields returned by the coverage endpoint, useful for identifying plugin response shape"`
+	Metrics        []CoverageMetric `json:"metrics,omitempty" jsonschema:"Normalized coverage metrics discovered in the endpoint response"`
+	HealthReports  []CoverageHealth `json:"healthReports,omitempty" jsonschema:"Jenkins health report entries returned with coverage data"`
+	Details        []CoverageDetail `json:"details,omitempty" jsonschema:"Bounded typed fallback details for useful coverage fields that are not full metric objects"`
+}
+
+type CoverageMetric struct {
+	Name       string   `json:"name" jsonschema:"Coverage metric name or type, such as line, branch, instruction, or class"`
+	Covered    *float64 `json:"covered,omitempty" jsonschema:"Covered count for this metric when reported"`
+	Missed     *float64 `json:"missed,omitempty" jsonschema:"Missed count for this metric when reported"`
+	Total      *float64 `json:"total,omitempty" jsonschema:"Total count for this metric when reported or derivable"`
+	Percentage *float64 `json:"percentage,omitempty" jsonschema:"Coverage percentage for this metric when reported or derivable"`
+	Delta      *float64 `json:"delta,omitempty" jsonschema:"Coverage delta for this metric when reported"`
+	Status     string   `json:"status,omitempty" jsonschema:"Coverage status or quality gate state for this metric when reported"`
+}
+
+type CoverageHealth struct {
+	Description string `json:"description,omitempty" jsonschema:"Human-readable Jenkins health report description"`
+	Score       *int   `json:"score,omitempty" jsonschema:"Jenkins health report score when reported"`
+}
+
+type CoverageDetail struct {
+	Name  string `json:"name" jsonschema:"Coverage detail field name"`
+	Value string `json:"value" jsonschema:"Bounded string representation of a useful non-metric coverage detail"`
+}
+
+type CoverageEndpointError struct {
+	Endpoint string `json:"endpoint" jsonschema:"Jenkins coverage endpoint that failed while probing optional coverage data"`
+	Code     string `json:"code" jsonschema:"Machine-readable error code for the non-fatal coverage endpoint failure"`
+	Message  string `json:"message" jsonschema:"Human-readable error message for the non-fatal coverage endpoint failure"`
 }
 
 type IssuesReport struct {

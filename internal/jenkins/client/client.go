@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -102,6 +103,9 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return 0, nil, nil, err
+		}
 		if c.logger != nil {
 			c.logger.Warn("Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}

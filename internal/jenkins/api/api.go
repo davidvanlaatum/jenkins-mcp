@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -723,18 +725,367 @@ func (a *API) ReadArtifact(ctx context.Context, job string, number int, rel stri
 }
 
 func (a *API) CoverageReport(ctx context.Context, job string, number int) (model.CoverageReport, error) {
-	candidates := []string{
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/coverage/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/coverage/result/api/json",
-		urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/jacoco/api/json",
-	}
+	candidates := coverageCandidates(job, number)
+	report := model.CoverageReport{CheckedEndpoints: candidates}
 	for _, candidate := range candidates {
 		var raw map[string]any
-		if err := a.client.GetJSON(ctx, candidate, nil, &raw); err == nil {
-			return model.CoverageReport{Available: true, Endpoint: candidate, CheckedEndpoints: candidates, Summary: raw}, nil
+		if err := a.client.GetJSON(ctx, candidate, coverageProbeQuery(), &raw); err != nil {
+			if shouldAbortCoverageProbe(ctx, err) {
+				return model.CoverageReport{}, err
+			}
+			if !isNotFoundError(err) {
+				report.Errors = append(report.Errors, coverageEndpointError(candidate, err))
+			}
+			continue
+		}
+		summary := normalizeCoverageSummary(candidate, raw)
+		if coverageSummaryUseful(summary) {
+			report.Summaries = append(report.Summaries, summary)
 		}
 	}
-	return model.CoverageReport{Available: false, CheckedEndpoints: candidates}, nil
+	report.Available = len(report.Summaries) > 0
+	return report, nil
+}
+
+func coverageCandidates(job string, number int) []string {
+	buildPath := urlx.JobPath(job) + "/" + strconv.Itoa(number)
+	return []string{
+		buildPath + "/coverage/api/json",
+		buildPath + "/coverage/result/api/json",
+		buildPath + "/jacoco/api/json",
+	}
+}
+
+const coverageProbeTree = "lineCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"branchCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"instructionCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"classCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"methodCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"complexityCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"packageCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"fileCoverage[name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus]," +
+	"projectStatistics[*],projectDelta[*],modifiedFilesStatistics[*],modifiedLinesStatistics[*],modifiedFilesDelta[*],modifiedLinesDelta[*]," +
+	"qualityGates[overallResult,resultItems[qualityGate,result,threshold,value]],referenceBuild," +
+	"healthReport[description,score]," +
+	"name,metric,type,covered,coveredCount,missed,missedCount,total,totalCount,percentage,percent,ratio,delta,change,status,state,qualityGateStatus"
+
+func coverageProbeQuery() url.Values {
+	return url.Values{"tree": {coverageProbeTree}}
+}
+
+func coverageEndpointError(endpoint string, err error) model.CoverageEndpointError {
+	if appErr, ok := err.(*apperrors.Error); ok {
+		return model.CoverageEndpointError{Endpoint: endpoint, Code: string(appErr.Code), Message: appErr.Message}
+	}
+	return model.CoverageEndpointError{Endpoint: endpoint, Code: string(apperrors.CodeJenkins), Message: err.Error()}
+}
+
+func normalizeCoverageSummary(endpoint string, raw map[string]any) model.CoverageSummary {
+	source := coverageSource(endpoint)
+	summary := model.CoverageSummary{
+		Source:         source,
+		Endpoint:       endpoint,
+		TopLevelFields: sortedKeys(raw),
+		HealthReports:  extractCoverageHealthReports(raw),
+		Details:        extractCoverageDetails(raw),
+	}
+	var metrics []model.CoverageMetric
+	collectCoverageMetrics(source, "", raw, &metrics)
+	summary.Metrics = metrics
+	return summary
+}
+
+func coverageSummaryUseful(summary model.CoverageSummary) bool {
+	return len(summary.Metrics) > 0 || len(summary.HealthReports) > 0 || len(summary.Details) > 0
+}
+
+func coverageSource(endpoint string) string {
+	switch {
+	case strings.Contains(endpoint, "/coverage/result/"):
+		return "coverage-result"
+	case strings.Contains(endpoint, "/coverage/"):
+		return "coverage"
+	case strings.Contains(endpoint, "/jacoco/"):
+		return "jacoco"
+	default:
+		return "unknown"
+	}
+}
+
+func sortedKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func extractCoverageHealthReports(raw map[string]any) []model.CoverageHealth {
+	values, ok := raw["healthReport"].([]any)
+	if !ok {
+		return nil
+	}
+	reports := make([]model.CoverageHealth, 0, len(values))
+	for _, value := range values {
+		entry, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		report := model.CoverageHealth{}
+		if description, ok := entry["description"].(string); ok {
+			report.Description = description
+		}
+		if score, ok := intFromAny(entry["score"]); ok {
+			report.Score = &score
+		}
+		if report.Description != "" || report.Score != nil {
+			reports = append(reports, report)
+		}
+	}
+	return reports
+}
+
+func extractCoverageDetails(raw map[string]any) []model.CoverageDetail {
+	keys := sortedKeys(raw)
+	details := make([]model.CoverageDetail, 0)
+	for _, key := range keys {
+		if len(details) >= 12 {
+			break
+		}
+		switch value := raw[key].(type) {
+		case string:
+			if value != "" {
+				details = append(details, model.CoverageDetail{Name: key, Value: limitCoverageDetail(value)})
+			}
+		case bool:
+			details = append(details, model.CoverageDetail{Name: key, Value: strconv.FormatBool(value)})
+		case float64:
+			details = append(details, model.CoverageDetail{Name: key, Value: strconv.FormatFloat(value, 'f', -1, 64)})
+		}
+	}
+	return details
+}
+
+func limitCoverageDetail(value string) string {
+	const maxDetailLen = 200
+	if len(value) <= maxDetailLen {
+		return value
+	}
+	return value[:maxDetailLen]
+}
+
+func collectCoverageMetrics(rootName, path string, value any, metrics *[]model.CoverageMetric) {
+	if len(*metrics) >= 64 {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		collectCoverageStatisticsMetrics(path, typed, metrics)
+		if metric, ok := coverageMetricFromMap(rootName, path, typed); ok {
+			*metrics = append(*metrics, metric)
+		}
+		for _, key := range sortedKeys(typed) {
+			nextPath := key
+			if path != "" {
+				nextPath = path + "." + key
+			}
+			collectCoverageMetrics(rootName, nextPath, typed[key], metrics)
+		}
+	case []any:
+		for _, item := range typed {
+			collectCoverageMetrics(rootName, path, item, metrics)
+		}
+	}
+}
+
+var coverageStatisticsMetricPrefixes = map[string]string{
+	"projectStatistics":       "project",
+	"projectDelta":            "projectDelta",
+	"modifiedFilesStatistics": "modifiedFiles",
+	"modifiedLinesStatistics": "modifiedLines",
+	"modifiedFilesDelta":      "modifiedFilesDelta",
+	"modifiedLinesDelta":      "modifiedLinesDelta",
+}
+
+func collectCoverageStatisticsMetrics(path string, values map[string]any, metrics *[]model.CoverageMetric) {
+	prefix, ok := coverageStatisticsMetricPrefixes[path]
+	if !ok {
+		return
+	}
+	isDelta := strings.HasSuffix(path, "Delta")
+	for _, key := range sortedKeys(values) {
+		if len(*metrics) >= 64 {
+			return
+		}
+		number, ok := floatFromAny(values[key])
+		if !ok {
+			continue
+		}
+		metric := model.CoverageMetric{Name: prefix + "." + key}
+		if isDelta {
+			metric.Delta = &number
+		} else if coverageStatisticIsPercentage(key, values[key]) {
+			metric.Percentage = &number
+		} else {
+			metric.Total = &number
+		}
+		*metrics = append(*metrics, metric)
+	}
+}
+
+var coveragePercentageStatisticKeys = map[string]struct{}{
+	"branch":       {},
+	"class":        {},
+	"conditional":  {},
+	"file":         {},
+	"instruction":  {},
+	"line":         {},
+	"method":       {},
+	"module":       {},
+	"mutation":     {},
+	"package":      {},
+	"statement":    {},
+	"testStrength": {},
+}
+
+func coverageStatisticIsPercentage(key string, value any) bool {
+	if _, ok := coveragePercentageStatisticKeys[strings.ToLower(key)]; ok {
+		return true
+	}
+	return coverageValueIsPercentage(value)
+}
+
+func coverageMetricFromMap(rootName, path string, values map[string]any) (model.CoverageMetric, bool) {
+	covered, hasCovered := floatFromFirst(values, "covered", "coveredCount")
+	missed, hasMissed := floatFromFirst(values, "missed", "missedCount")
+	total, hasTotal := floatFromFirst(values, "total", "totalCount")
+	percentageKeys := []string{"percentage", "percent", "ratio"}
+	if strings.HasPrefix(path, "qualityGates.") {
+		percentageKeys = append(percentageKeys, "value")
+	}
+	percentage, hasPercentage := floatFromFirst(values, percentageKeys...)
+	delta, hasDelta := floatFromFirst(values, "delta", "change")
+	if !hasTotal && hasCovered && hasMissed {
+		derivedTotal := covered + missed
+		total = derivedTotal
+		hasTotal = true
+	}
+	if !hasPercentage && hasCovered && hasTotal && total > 0 {
+		derivedPercentage := covered / total * 100
+		percentage = derivedPercentage
+		hasPercentage = true
+	}
+	if !hasCovered && !hasMissed && !hasTotal && !hasPercentage && !hasDelta {
+		return model.CoverageMetric{}, false
+	}
+	name := coverageMetricName(rootName, path, values)
+	metric := model.CoverageMetric{Name: name}
+	if hasCovered {
+		metric.Covered = &covered
+	}
+	if hasMissed {
+		metric.Missed = &missed
+	}
+	if hasTotal {
+		metric.Total = &total
+	}
+	if hasPercentage {
+		metric.Percentage = &percentage
+	}
+	if hasDelta {
+		metric.Delta = &delta
+	}
+	if status, ok := stringFromFirst(values, "status", "state", "qualityGateStatus", "result"); ok {
+		metric.Status = status
+	}
+	return metric, true
+}
+
+func coverageMetricName(rootName, path string, values map[string]any) string {
+	if name, ok := stringFromFirst(values, "name", "metric", "type", "qualityGate"); ok && name != "" {
+		return name
+	}
+	if path == "" {
+		if rootName != "" {
+			return rootName
+		}
+		return "coverage"
+	}
+	parts := strings.Split(path, ".")
+	name := parts[len(parts)-1]
+	name = strings.TrimSuffix(name, "Coverage")
+	name = strings.TrimSuffix(name, "coverage")
+	if name == "" {
+		return path
+	}
+	return name
+}
+
+func floatFromFirst(values map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if value, ok := floatFromAny(values[key]); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func stringFromFirst(values map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func floatFromAny(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		trimmed = strings.TrimSuffix(trimmed, "%")
+		trimmed = strings.TrimPrefix(trimmed, "+")
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func coverageValueIsPercentage(value any) bool {
+	text, ok := value.(string)
+	return ok && strings.Contains(text, "%")
+}
+
+func intFromAny(value any) (int, bool) {
+	number, ok := floatFromAny(value)
+	if !ok {
+		return 0, false
+	}
+	return int(number), true
+}
+
+func isNotFoundError(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	return ok && appErr.Code == apperrors.CodeNotFound
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func shouldAbortCoverageProbe(ctx context.Context, err error) bool {
+	return isContextError(err) && ctx.Err() != nil
 }
 
 func (a *API) IssuesReport(ctx context.Context, job string, number int) (model.IssuesReport, error) {

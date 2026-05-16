@@ -455,7 +455,6 @@ Examples:
 - `jenkins_get_build_log`
 - `jenkins_watch_build`
 - `jenkins_get_test_results`
-- `jenkins_get_coverage`
 - `jenkins_get_issues`
 - `jenkins_download_artifact`
 - `jenkins_trigger_build`
