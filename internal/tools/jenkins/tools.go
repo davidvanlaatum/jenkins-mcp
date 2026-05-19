@@ -951,7 +951,7 @@ type WatchBuildRequest struct {
 	Job           string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Build         int    `json:"build" jsonschema:"Jenkins build number"`
 	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque watch state token returned by a previous jenkins_watch_build call"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build completion, Pipeline stage-status changes, or pending input-step changes"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build completion, Pipeline stage-status changes, or pending input-step changes; MCP hosts may cancel the tool call sooner"`
 }
 type WatchBuildResponse struct {
 	Watch model.BuildWatch `json:"watch" jsonschema:"Current build watch state, progress, and completion status"`
@@ -1031,6 +1031,9 @@ func WatchBuild(ctx context.Context, deps Deps, in WatchBuildRequest) (WatchBuil
 
 	for {
 		build, pipelinePtr, current, pipelineDegraded, fatal, err := fetchWatchState(ctx, api, controllerID, in.Job, in.Build)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return WatchBuildResponse{}, watchContextError(ctxErr)
+		}
 		if fatal && err != nil {
 			return WatchBuildResponse{}, err
 		}
@@ -1393,7 +1396,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return watchContextError(ctx.Err())
 		default:
 			return nil
 		}
@@ -1402,10 +1405,17 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return watchContextError(ctx.Err())
 	case <-timer.C:
 		return nil
 	}
+}
+
+func watchContextError(err error) error {
+	if appErr, ok := apperrors.FromContext(err); ok {
+		return appErr
+	}
+	return err
 }
 
 type TriggerBuildRequest struct {
@@ -1477,7 +1487,7 @@ type WatchQueueItemRequest struct {
 	Controller    string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	ID            int64  `json:"id" jsonschema:"Jenkins queue item id to watch"`
 	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque queue watch state token returned by a previous jenkins_watch_queue_item call"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for queue assignment, cancellation, disappearance, or another queue state change"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for queue assignment, cancellation, disappearance, or another queue state change; MCP hosts may cancel the tool call sooner"`
 }
 type WatchQueueItemResponse struct {
 	Watch model.QueueWatch `json:"watch" jsonschema:"Current queue watch state, terminal status, and resolved build reference when available"`
@@ -1552,6 +1562,9 @@ func WatchQueueItem(ctx context.Context, deps Deps, in WatchQueueItemRequest) (W
 
 	for {
 		current, err := fetchQueueWatchState(ctx, deps.Config, api, controllerID, in.ID)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return WatchQueueItemResponse{}, watchContextError(ctxErr)
+		}
 		if err == nil {
 			consecutiveFailures = 0
 			changed := previous == nil || !queueWatchStatesEqual(*previous, current)

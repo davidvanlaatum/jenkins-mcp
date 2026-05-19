@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
@@ -1374,6 +1376,76 @@ func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() state")
 }
 
+func TestWatchBuildCallerDeadlineReturnsStructuredError(t *testing.T) {
+	r := require.New(t)
+
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/api/json":
+			writeJSON(w, `{"number":42,"url":"https://jenkins.example.com/job/app/42/","result":"","building":true,"timestamp":1,"duration":10,"artifacts":[],"actions":[],"changeSets":[]}`)
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Build","status":"IN_PROGRESS"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
+
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	_, err = WatchBuild(ctx, deps, WatchBuildRequest{
+		Job:           "app",
+		Build:         42,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 250,
+	})
+	r.Error(err, "WatchBuild() should return caller deadline error")
+	assertAppErrorCode(t, err, apperrors.CodeUnavailable)
+	r.True(errors.Is(err, context.DeadlineExceeded), "WatchBuild() error should preserve context deadline identity")
+	r.Contains(err.Error(), "context deadline", "WatchBuild() error message")
+}
+
+func TestWatchBuildCallerDeadlineDuringPendingInputFetchReturnsStructuredError(t *testing.T) {
+	r := require.New(t)
+
+	var pendingInputRequests int
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/42/api/json":
+			writeJSON(w, `{"number":42,"url":"https://jenkins.example.com/job/app/42/","result":"","building":true,"timestamp":1,"duration":10,"artifacts":[],"actions":[],"changeSets":[]}`)
+		case "/job/app/42/wfapi/describe":
+			writeJSON(w, `{"id":"42","name":"#42","status":"IN_PROGRESS","stages":[{"id":"1","name":"Build","status":"IN_PROGRESS"}]}`)
+		case "/job/app/42/wfapi/pendingInputActions":
+			pendingInputRequests++
+			if pendingInputRequests > 1 {
+				<-r.Context().Done()
+				return
+			}
+			writeJSON(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
+
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	r.NoError(err, "first WatchBuild() error")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	_, err = WatchBuild(ctx, deps, WatchBuildRequest{
+		Job:           "app",
+		Build:         42,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 250,
+	})
+	r.Error(err, "WatchBuild() should return caller deadline error")
+	assertAppErrorCode(t, err, apperrors.CodeUnavailable)
+	r.True(errors.Is(err, context.DeadlineExceeded), "WatchBuild() error should preserve context deadline identity")
+	r.Contains(err.Error(), "context deadline", "WatchBuild() error message")
+}
+
 func TestWatchBuildKeepsStateStableWhenOnlyDurationChanges(t *testing.T) {
 	r := require.New(t)
 
@@ -2030,6 +2102,40 @@ func TestWatchQueueItemTimesOutWithoutStateChange(t *testing.T) {
 	r.NoError(err, "second WatchQueueItem() error")
 	r.True(second.Watch.TimedOut, "second WatchQueueItem() timed out")
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchQueueItem() state")
+}
+
+func TestWatchQueueItemCallerDeadlineReturnsStructuredError(t *testing.T) {
+	r := require.New(t)
+
+	var queueRequests int
+	deps := newWatchTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/queue/item/99/api/json":
+			queueRequests++
+			if queueRequests > 1 {
+				<-r.Context().Done()
+				return
+			}
+			writeJSON(w, `{"id":99,"url":"https://jenkins.example.com/queue/item/99/","why":"Waiting for next executor","cancelled":false,"task":{"name":"app","url":"https://jenkins.example.com/job/app/"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
+
+	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	r.NoError(err, "first WatchQueueItem() error")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	_, err = WatchQueueItem(ctx, deps, WatchQueueItemRequest{
+		ID:            99,
+		LastState:     first.Watch.State,
+		WaitTimeoutMs: 250,
+	})
+	r.Error(err, "WatchQueueItem() should return caller deadline error")
+	assertAppErrorCode(t, err, apperrors.CodeUnavailable)
+	r.True(errors.Is(err, context.DeadlineExceeded), "WatchQueueItem() error should preserve context deadline identity")
+	r.Contains(err.Error(), "context deadline", "WatchQueueItem() error message")
 }
 
 func TestWatchQueueItemIgnoresVolatileQueueWhyChanges(t *testing.T) {

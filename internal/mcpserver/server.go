@@ -198,6 +198,9 @@ func normalizeError(err error) apperrors.Error {
 	if stderrors.As(err, &appErr) {
 		return *appErr
 	}
+	if appErr, ok := apperrors.FromContext(err); ok {
+		return *appErr
+	}
 	return apperrors.Error{Code: apperrors.CodeJenkins, Message: err.Error()}
 }
 
