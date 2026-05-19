@@ -68,6 +68,8 @@ Useful environment variables:
 - `JENKINS_MCP_UPDATE_MAX_DOWNLOAD_BYTES`: maximum release archive or checksum bytes the self-updater will download. Default `268435456`.
 - `JENKINS_MCP_PLUGIN_DISCOVERY`: set to `false` to stop `jenkins_get_capabilities` from querying Jenkins `pluginManager`. Default `true`.
 
+`jenkins_watch_build` and `jenkins_watch_queue_item` use `waitTimeoutMs` to bound one long-poll call, but the MCP host or client may enforce a shorter per-tool-call deadline. If the host cancels the call first, the server returns a structured `unavailable` error with a context deadline or cancellation message instead of a normal `watch.timedOut=true` response. Set `waitTimeoutMs` and `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS` below the host timeout; for conservative or unknown clients, use 25-45 second windows and repeat calls with the returned watch state.
+
 The server checks the GitHub releases API at startup and periodically logs a warning when a newer release is available. The cached result is also returned by `jenkins_get_capabilities` under `updates`, so MCP clients and agents can surface it without reading process logs. When `updates.updateAvailable` is `true`, the response includes `updates.notificationHint` instructing agents to notify the user with the current version, latest version, and release URL. Release checks are best-effort: failures are logged at debug level and do not affect MCP requests. Disable this in network-restricted deployments:
 
 ```json

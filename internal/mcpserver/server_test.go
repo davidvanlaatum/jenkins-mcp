@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
+	apperrors "github.com/david/jenkins-mcp/internal/errors"
 )
 
 func TestToolErrorsAreStructured(t *testing.T) {
@@ -53,6 +55,15 @@ func TestToolErrorsAreStructured(t *testing.T) {
 	err = json.Unmarshal([]byte(textContent.Text), &payload)
 	r.NoError(err, "structured error unmarshal")
 	r.Equal("mutation_disabled", payload.Error.Code, "error code")
+}
+
+func TestNormalizeErrorMapsContextDeadline(t *testing.T) {
+	r := require.New(t)
+
+	appErr := normalizeError(context.DeadlineExceeded)
+
+	r.Equal(apperrors.CodeUnavailable, appErr.Code, "error code")
+	r.Contains(appErr.Message, "context deadline", "error message")
 }
 
 func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
