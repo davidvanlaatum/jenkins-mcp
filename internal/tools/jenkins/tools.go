@@ -25,6 +25,7 @@ import (
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/pagination"
+	"github.com/david/jenkins-mcp/internal/selfupdate"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
 	"github.com/david/jenkins-mcp/internal/validation"
 )
@@ -34,6 +35,7 @@ type Deps struct {
 	Jenkins      map[string]*jenkinsapi.API
 	Audit        *audit.Logger
 	UpdateStatus func() updatecheck.Status
+	SelfUpdate   func(context.Context, bool) (selfupdate.Result, error)
 }
 
 const (
@@ -184,6 +186,41 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 		updates = deps.UpdateStatus()
 	}
 	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, CapabilityConfig: deps.Config.Capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, Updates: updates}, nil
+}
+
+type UpdateServerRequest struct {
+	Force bool `json:"force,omitempty" jsonschema:"Reinstall the latest release even when it is not newer than the current server version"`
+}
+
+type UpdateServerResponse struct {
+	Update selfupdate.Result `json:"update" jsonschema:"Self-update installation or staging result"`
+}
+
+func UpdateServer(ctx context.Context, deps Deps, in UpdateServerRequest) (UpdateServerResponse, error) {
+	if !deps.Config.Updates.SelfUpdateEnabled {
+		return UpdateServerResponse{}, apperrors.New(apperrors.CodeMutationDisabled, "server self-update tool is disabled")
+	}
+	if deps.SelfUpdate == nil {
+		return UpdateServerResponse{}, apperrors.New(apperrors.CodeUnsupported, "server self-update is not available")
+	}
+	result, err := deps.SelfUpdate(ctx, in.Force)
+	emit(deps, "", "update_server", selfUpdateAuditTarget(result), err)
+	return UpdateServerResponse{Update: result}, err
+}
+
+func selfUpdateAuditTarget(result selfupdate.Result) string {
+	path := result.InstalledPath
+	if path == "" {
+		path = result.StagedPath
+	}
+	version := result.LatestVersion
+	if version == "" {
+		version = "latest"
+	}
+	if path == "" {
+		return version
+	}
+	return fmt.Sprintf("%s %s", version, path)
 }
 
 type ListJobsRequest struct {
@@ -1745,6 +1782,9 @@ func validateBuild(job string, build int) error {
 	return validation.BuildNumber(build)
 }
 func emit(deps Deps, controller, action, target string, err error) {
+	if deps.Audit == nil {
+		return
+	}
 	if controller == "" {
 		controller = deps.Config.DefaultController
 	}

@@ -35,13 +35,14 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 
 ### Local File Tools
 - `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory. Does not require `mutations.enabled`.
+- `jenkins_update_server`: Download, verify, and install or stage the latest released server binary. Requires `updates.selfUpdateEnabled`.
 
 ### Jenkins-Mutating Tools
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item.
 - `jenkins_cancel_build`: Cancel a running Jenkins build.
 
-Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state and is not gated by `mutations.enabled`, but it does write to the configured local artifact directory.
+Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state and is not gated by `mutations.enabled`, but it does write to the configured local artifact directory. `jenkins_update_server` is also separate from Jenkins mutations; it is disabled unless `updates.selfUpdateEnabled` is true because it writes to the local server installation.
 
 > **Note:** When adding or modifying tools, ensure the tool definitions in `internal/mcpserver/server.go`, documentation in `docs/tools/jenkins.md`, and this list in `README.md` are all kept in sync.
 
@@ -52,6 +53,12 @@ export JENKINS_URL="https://jenkins.example.com"
 export JENKINS_USER="your-user"
 export JENKINS_TOKEN="your-api-token"
 go run ./cmd/jenkins-mcp-server
+```
+
+To explicitly update an installed binary from the latest GitHub release:
+
+```bash
+jenkins-mcp-server --self-update
 ```
 
 For request URL troubleshooting, enable debug logs:

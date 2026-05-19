@@ -50,3 +50,13 @@ Run a local snapshot build before tagging if you want to inspect generated archi
 ```bash
 goreleaser release --snapshot --clean --skip=publish
 ```
+
+## Self-Update
+
+Installed binaries can be updated explicitly from the latest GitHub release:
+
+```bash
+jenkins-mcp-server --self-update
+```
+
+The updater selects the archive matching the current operating system and architecture, verifies the published SHA-256 checksum, extracts only the expected `jenkins-mcp-server` binary, and then installs or stages it. Downloads are bounded by `updates.maxDownloadBytes`. macOS and Linux replace the current executable path with a verified temporary file. Windows stages `jenkins-mcp-server.exe.update` and a manifest next to the current executable so replacement can be completed after the IDE or MCP client exits.

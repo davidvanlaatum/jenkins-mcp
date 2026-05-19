@@ -29,8 +29,10 @@ type Result struct {
 
 type Status struct {
 	Enabled            bool   `json:"enabled" jsonschema:"Whether update checks are enabled"`
+	SelfUpdateEnabled  bool   `json:"selfUpdateEnabled" jsonschema:"Whether the jenkins_update_server tool is allowed to install or stage server updates"`
 	Repository         string `json:"repository" jsonschema:"GitHub repository checked for releases"`
 	CheckIntervalHours int64  `json:"checkIntervalHours" jsonschema:"Minimum interval between update checks in hours"`
+	MaxDownloadBytes   int64  `json:"maxDownloadBytes" jsonschema:"Maximum release asset or checksum bytes the self-updater will download"`
 	CurrentVersion     string `json:"currentVersion" jsonschema:"Current server version"`
 	LatestVersion      string `json:"latestVersion,omitempty" jsonschema:"Latest available release version, when known"`
 	ReleaseURL         string `json:"releaseUrl,omitempty" jsonschema:"URL for the latest available release"`
@@ -59,8 +61,10 @@ func New(cfg config.UpdateCheckConfig, version string, logger *slog.Logger) *Che
 		releaseURL: cfg.ReleaseURL(),
 		status: Status{
 			Enabled:            cfg.Enabled,
+			SelfUpdateEnabled:  cfg.SelfUpdateEnabled,
 			Repository:         cfg.Repository,
 			CheckIntervalHours: cfg.CheckIntervalHours,
+			MaxDownloadBytes:   cfg.MaxDownloadBytes,
 			CurrentVersion:     version,
 		},
 	}

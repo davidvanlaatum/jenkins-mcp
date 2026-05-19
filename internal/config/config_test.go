@@ -229,11 +229,58 @@ func TestLoadUpdateCheckFromEnvironment(t *testing.T) {
 		"JENKINS_MCP_UPDATE_CHECK=false",
 		"JENKINS_MCP_UPDATE_REPOSITORY=example/project",
 		"JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS=12",
+		"JENKINS_MCP_SELF_UPDATE=true",
+		"JENKINS_MCP_UPDATE_MAX_DOWNLOAD_BYTES=123456",
 	})
 	r.NoError(err, "Load()")
 	r.False(cfg.Updates.Enabled, "updates.enabled should be disabled by environment")
 	r.Equal("example/project", cfg.Updates.Repository, "updates.repository")
 	r.Equal(int64(12), cfg.Updates.CheckIntervalHours, "updates.checkIntervalHours")
+	r.True(cfg.Updates.SelfUpdateEnabled, "updates.selfUpdateEnabled")
+	r.Equal(int64(123456), cfg.Updates.MaxDownloadBytes, "updates.maxDownloadBytes")
+}
+
+func TestLoadSelfUpdateDoesNotRequireController(t *testing.T) {
+	r := require.New(t)
+
+	cfg, selfUpdate, force, err := LoadSelfUpdate([]string{"--self-update"}, []string{
+		"HOME=" + t.TempDir(),
+		"JENKINS_MCP_UPDATE_REPOSITORY=example/project",
+	})
+	r.NoError(err, "LoadSelfUpdate()")
+	r.Equal("example/project", cfg.Repository, "repository")
+	r.True(selfUpdate, "selfUpdate")
+	r.False(force, "force")
+}
+
+func TestLoadSelfUpdateParsesForceBoolForms(t *testing.T) {
+	r := require.New(t)
+
+	for _, args := range [][]string{
+		{"--self-update", "--force"},
+		{"--self-update", "--force=true"},
+		{"--self-update", "-force=true"},
+	} {
+		_, selfUpdate, force, err := LoadSelfUpdate(args, []string{
+			"HOME=" + t.TempDir(),
+			"JENKINS_MCP_UPDATE_REPOSITORY=example/project",
+		})
+		r.NoError(err, "LoadSelfUpdate(%v)", args)
+		r.True(selfUpdate, "selfUpdate for %v", args)
+		r.True(force, "force for %v", args)
+	}
+}
+
+func TestLoadSelfUpdateParsesExplicitFalse(t *testing.T) {
+	r := require.New(t)
+
+	_, selfUpdate, force, err := LoadSelfUpdate([]string{"--self-update=false", "--force=true"}, []string{
+		"HOME=" + t.TempDir(),
+		"JENKINS_MCP_UPDATE_REPOSITORY=example/project",
+	})
+	r.NoError(err, "LoadSelfUpdate()")
+	r.False(selfUpdate, "selfUpdate")
+	r.True(force, "force still parses")
 }
 
 func TestLoadCapabilityConfigFromEnvironment(t *testing.T) {

@@ -64,6 +64,8 @@ Useful environment variables:
 - `JENKINS_MCP_UPDATE_CHECK`: set to `false` to disable periodic GitHub release checks. Default `true`.
 - `JENKINS_MCP_UPDATE_REPOSITORY`: GitHub `owner/repo` used for release checks. Default `davidvanlaatum/jenkins-mcp`.
 - `JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS`: hours between release checks after startup. Default `24`.
+- `JENKINS_MCP_SELF_UPDATE`: set to `true` to enable the `jenkins_update_server` MCP tool. Default `false`.
+- `JENKINS_MCP_UPDATE_MAX_DOWNLOAD_BYTES`: maximum release archive or checksum bytes the self-updater will download. Default `268435456`.
 - `JENKINS_MCP_PLUGIN_DISCOVERY`: set to `false` to stop `jenkins_get_capabilities` from querying Jenkins `pluginManager`. Default `true`.
 
 The server checks the GitHub releases API at startup and periodically logs a warning when a newer release is available. The cached result is also returned by `jenkins_get_capabilities` under `updates`, so MCP clients and agents can surface it without reading process logs. When `updates.updateAvailable` is `true`, the response includes `updates.notificationHint` instructing agents to notify the user with the current version, latest version, and release URL. Release checks are best-effort: failures are logged at debug level and do not affect MCP requests. Disable this in network-restricted deployments:
@@ -72,6 +74,24 @@ The server checks the GitHub releases API at startup and periodically logs a war
 {
   "updates": {
     "enabled": false
+  }
+}
+```
+
+Run an explicit self-update from a shell with:
+
+```bash
+jenkins-mcp-server --self-update
+```
+
+The command uses the configured `updates.repository`, downloads the latest release archive for the current platform, verifies the published SHA-256 checksum, and then installs or stages the binary. Downloads are bounded by `updates.maxDownloadBytes` and fail before installation if the release archive or checksum asset is too large. On macOS and Linux it writes a verified temporary file beside the current executable and renames it over the current path. On Windows it stages `jenkins-mcp-server.exe.update` and a manifest beside the current executable; stop the IDE or MCP client and replace the executable manually with the staged file. In all cases, restart the IDE or MCP client before expecting the new version to be used.
+
+The same behavior is available to MCP clients through `jenkins_update_server` only when explicitly enabled:
+
+```json
+{
+  "updates": {
+    "selfUpdateEnabled": true
   }
 }
 ```

@@ -16,6 +16,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
+	"github.com/david/jenkins-mcp/internal/selfupdate"
 	jenkinstools "github.com/david/jenkins-mcp/internal/tools/jenkins"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
@@ -27,6 +28,7 @@ type Dependencies struct {
 	Logger       *slog.Logger
 	Version      string
 	UpdateStatus func() updatecheck.Status
+	SelfUpdate   func(context.Context, bool) (selfupdate.Result, error)
 }
 type Server struct {
 	raw    *mcp.Server
@@ -39,7 +41,7 @@ func New(deps Dependencies) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{raw: mcp.NewServer(&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version}, &mcp.ServerOptions{Logger: logger}), deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus}, logger: logger}
+	s := &Server{raw: mcp.NewServer(&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version}, &mcp.ServerOptions{Logger: logger}), deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate}, logger: logger}
 	s.register()
 	return s
 }
@@ -202,6 +204,9 @@ func normalizeError(err error) apperrors.Error {
 func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_capabilities", "Get Capabilities", "Discover configured Jenkins controllers, response limits, update-check status, optional capability warnings, capability discovery configuration, and whether mutating tools are enabled. If updates.updateAvailable is true, agents should notify the user using updates.notificationHint."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.CapabilitiesResponse, error) {
 		return jenkinstools.Capabilities(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, destructiveMutationTool("jenkins_update_server", "Update Server", "Download, verify, and install or stage the latest released jenkins-mcp-server binary. Disabled unless updates.selfUpdateEnabled is true."), func(ctx context.Context, in jenkinstools.UpdateServerRequest) (jenkinstools.UpdateServerResponse, error) {
+		return jenkinstools.UpdateServer(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_resolve_build_url", "Resolve Build URL", "Resolve a Jenkins build URL to controller, job path, and build number."), func(ctx context.Context, in jenkinstools.ResolveBuildURLRequest) (jenkinstools.ResolveBuildURLResponse, error) {
 		return jenkinstools.ResolveBuildURL(ctx, s.deps, in)
