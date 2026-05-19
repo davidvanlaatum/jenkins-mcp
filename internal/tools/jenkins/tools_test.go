@@ -322,9 +322,9 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 		tree := r.URL.Query().Get("tree")
 		treeCh <- tree
 		writeJSON(w, `{"jobs":[
-			{"name":"deploy-main","url":"https://jenkins.example.com/job/deploy-main/","color":"red_anime","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","lastBuild":{"number":12,"result":"","building":true},"lastCompletedBuild":{"number":11,"result":"FAILURE","building":false}},
-			{"name":"deploy-old","url":"https://jenkins.example.com/job/deploy-old/","color":"blue","_class":"hudson.model.FreeStyleProject","lastBuild":{"number":3,"result":"SUCCESS","building":false}},
-			{"name":"tests","url":"https://jenkins.example.com/job/tests/","color":"yellow","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob"}
+			{"name":"deploy-main","url":"https://jenkins.example.com/job/deploy-main/","color":"red_anime","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","buildable":true,"lastBuild":{"number":12,"result":"","building":true},"lastCompletedBuild":{"number":11,"result":"FAILURE","building":false}},
+			{"name":"deploy-old","url":"https://jenkins.example.com/job/deploy-old/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastBuild":{"number":3,"result":"SUCCESS","building":false}},
+			{"name":"tests","url":"https://jenkins.example.com/job/tests/","color":"yellow","_class":"org.jenkinsci.plugins.workflow.job.WorkflowJob","buildable":false}
 		]}`)
 	})
 
@@ -339,10 +339,12 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	tree := <-treeCh
 	r.Contains(tree, "lastBuild[number,result,building]", "tree query should include lastBuild status fields")
 	r.Contains(tree, "lastCompletedBuild[number,result,building]", "tree query should include lastCompletedBuild status fields")
+	r.Contains(tree, "buildable", "tree query should include buildable field")
 	r.Contains(tree, "disabled", "tree query should include disabled field")
 	r.Len(got.Items, 1, "ListJobs() items")
 	job := got.Items[0]
 	r.Equal("deploy-main", job.Name, "job name")
+	r.True(job.Buildable, "job buildable")
 	r.Equal("failed", job.Status, "job status")
 	r.True(job.Building, "job building")
 	r.Equal(100, got.Limit, "pagination limit")
