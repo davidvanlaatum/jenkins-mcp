@@ -149,6 +149,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_search_log",
 		"jenkins_tail_log",
 		"jenkins_trigger_build",
+		"jenkins_update_server",
 		"jenkins_watch_build",
 		"jenkins_watch_queue_item",
 	}
@@ -205,6 +206,7 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_list_queue":            {readOnly: true},
 		"jenkins_download_artifact":     {destructive: ptrBool(false)},
 		"jenkins_trigger_build":         {destructive: ptrBool(false)},
+		"jenkins_update_server":         {destructive: ptrBool(true)},
 		"jenkins_cancel_queue_item":     {destructive: ptrBool(true)},
 		"jenkins_cancel_build":          {destructive: ptrBool(true)},
 	}
@@ -269,6 +271,7 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_get_pipeline_stage":    "Get Pipeline Stage",
 		"jenkins_get_pipeline_node_log": "Get Pipeline Node Log",
 		"jenkins_download_artifact":     "Download Artifact",
+		"jenkins_update_server":         "Update Server",
 		"jenkins_list_artifacts":        "List Artifacts",
 		"jenkins_read_artifact":         "Read Artifact",
 		"jenkins_list_issues":           "List Issues",

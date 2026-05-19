@@ -9,15 +9,18 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
+	"github.com/david/jenkins-mcp/internal/selfupdate"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +45,70 @@ func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
 	r.True(got.Updates.UpdateAvailable, "updates.updateAvailable")
 	r.Equal("v1.2.4", got.Updates.LatestVersion, "updates.latestVersion")
 	r.NotEmpty(got.Updates.NotificationHint, "updates.notificationHint")
+}
+
+func TestUpdateServerRequiresSelfUpdatePolicy(t *testing.T) {
+	r := require.New(t)
+
+	_, err := UpdateServer(t.Context(), Deps{Config: config.Defaults()}, UpdateServerRequest{})
+	r.Error(err, "UpdateServer() should fail when disabled")
+	var appErr *apperrors.Error
+	r.ErrorAs(err, &appErr, "error type")
+	r.Equal(apperrors.CodeMutationDisabled, appErr.Code, "error code")
+}
+
+func TestUpdateServerCallsUpdaterWhenEnabled(t *testing.T) {
+	r := require.New(t)
+
+	got, err := UpdateServer(t.Context(), Deps{
+		Config: config.Config{Updates: config.UpdateCheckConfig{SelfUpdateEnabled: true}},
+		SelfUpdate: func(_ context.Context, force bool) (selfupdate.Result, error) {
+			r.True(force, "force")
+			return selfupdate.Result{LatestVersion: "v1.2.4", RestartRequired: true}, nil
+		},
+	}, UpdateServerRequest{Force: true})
+	r.NoError(err, "UpdateServer()")
+	r.Equal("v1.2.4", got.Update.LatestVersion, "latest version")
+	r.True(got.Update.RestartRequired, "restart required")
+}
+
+func TestUpdateServerAllowsNilAuditLogger(t *testing.T) {
+	r := require.New(t)
+
+	got, err := UpdateServer(t.Context(), Deps{
+		Config: config.Config{Updates: config.UpdateCheckConfig{SelfUpdateEnabled: true}},
+		SelfUpdate: func(_ context.Context, _ bool) (selfupdate.Result, error) {
+			return selfupdate.Result{LatestVersion: "v1.2.4"}, nil
+		},
+	}, UpdateServerRequest{})
+	r.NoError(err, "UpdateServer()")
+	r.Equal("v1.2.4", got.Update.LatestVersion, "latest version")
+}
+
+func TestUpdateServerEmitsAuditEvent(t *testing.T) {
+	r := require.New(t)
+
+	auditPath := t.TempDir() + "/audit.jsonl"
+	auditer, err := audit.New(config.AuditConfig{Path: auditPath})
+	r.NoError(err, "audit.New()")
+
+	_, err = UpdateServer(t.Context(), Deps{
+		Config: config.Config{
+			DefaultController: "default",
+			Updates:           config.UpdateCheckConfig{SelfUpdateEnabled: true},
+		},
+		Audit: auditer,
+		SelfUpdate: func(_ context.Context, _ bool) (selfupdate.Result, error) {
+			return selfupdate.Result{LatestVersion: "v1.2.4", InstalledPath: "/opt/bin/jenkins-mcp-server"}, nil
+		},
+	}, UpdateServerRequest{})
+	r.NoError(err, "UpdateServer()")
+
+	b, err := os.ReadFile(auditPath)
+	r.NoError(err, "ReadFile(audit)")
+	r.Contains(string(b), `"action":"update_server"`, "audit action")
+	r.Contains(string(b), `"target":"v1.2.4 /opt/bin/jenkins-mcp-server"`, "audit target")
+	r.Contains(string(b), `"outcome":"success"`, "audit outcome")
 }
 
 func TestCapabilitiesLabelsPluginDiscoveryFailureAsOptionalWarning(t *testing.T) {

@@ -15,6 +15,8 @@ import (
 )
 
 const maxUpdateCheckIntervalHours int64 = 24 * 30
+const defaultUpdateMaxDownloadBytes int64 = 256 * 1024 * 1024
+
 const starterConfig = `{
   "defaultController": "default",
   "controllers": [
@@ -110,6 +112,8 @@ type UpdateCheckConfig struct {
 	Enabled            bool   `json:"enabled"`
 	Repository         string `json:"repository"`
 	CheckIntervalHours int64  `json:"checkIntervalHours"`
+	SelfUpdateEnabled  bool   `json:"selfUpdateEnabled"`
+	MaxDownloadBytes   int64  `json:"maxDownloadBytes"`
 
 	enabledSet bool
 }
@@ -167,6 +171,51 @@ func Load(args []string, environ []string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func LoadSelfUpdate(args []string, environ []string) (UpdateCheckConfig, bool, bool, error) {
+	cfg := Defaults()
+	env := envMap(environ)
+
+	fs := flag.NewFlagSet("jenkins-mcp-server", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", env["JENKINS_MCP_CONFIG"], "config file")
+	selfUpdate := fs.Bool("self-update", false, "download and install the latest release")
+	force := fs.Bool("force", false, "reinstall the latest release even when versions match")
+	if err := fs.Parse(args); err != nil {
+		return UpdateCheckConfig{}, false, false, err
+	}
+
+	if *configPath != "" {
+		fileCfg, err := loadFile(*configPath)
+		if err != nil {
+			return UpdateCheckConfig{}, false, false, err
+		}
+		cfg = merge(cfg, fileCfg)
+	} else {
+		fileCfg, found, err := loadDefaultConfig(defaultConfigPaths(env))
+		if err != nil {
+			return UpdateCheckConfig{}, false, false, err
+		}
+		if found {
+			cfg = merge(cfg, fileCfg)
+		}
+	}
+
+	applyEnv(&cfg, env)
+	if !validGitHubRepository(cfg.Updates.Repository) {
+		return UpdateCheckConfig{}, false, false, errors.New("updates.repository must be in owner/repo format")
+	}
+	if cfg.Updates.CheckIntervalHours <= 0 {
+		return UpdateCheckConfig{}, false, false, errors.New("updates.checkIntervalHours must be positive")
+	}
+	if cfg.Updates.CheckIntervalHours > maxUpdateCheckIntervalHours {
+		return UpdateCheckConfig{}, false, false, fmt.Errorf("updates.checkIntervalHours must not exceed %d", maxUpdateCheckIntervalHours)
+	}
+	if cfg.Updates.MaxDownloadBytes <= 0 {
+		return UpdateCheckConfig{}, false, false, errors.New("updates.maxDownloadBytes must be positive")
+	}
+	return cfg.Updates, *selfUpdate, *force, nil
 }
 
 func Init(args []string, environ []string) (string, error) {
@@ -259,7 +308,7 @@ func Defaults() Config {
 		Limits:            LimitsConfig{MaxResponseBytes: 64 * 1024, LogChunkBytes: 64 * 1024, InlineBytes: 32 * 1024},
 		Watch:             WatchConfig{PollIntervalMs: 3000, DefaultWaitTimeoutMs: 120000, MaxWaitTimeoutMs: 900000, MaxConsecutiveFailures: 3},
 		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
-		Updates:           UpdateCheckConfig{Enabled: true, Repository: "davidvanlaatum/jenkins-mcp", CheckIntervalHours: 24},
+		Updates:           UpdateCheckConfig{Enabled: true, Repository: "davidvanlaatum/jenkins-mcp", CheckIntervalHours: 24, MaxDownloadBytes: defaultUpdateMaxDownloadBytes},
 		Capabilities:      CapabilityConfig{PluginDiscoveryEnabled: true},
 	}
 }
@@ -309,6 +358,9 @@ func (c Config) Validate() error {
 	}
 	if c.Updates.CheckIntervalHours > maxUpdateCheckIntervalHours {
 		return fmt.Errorf("updates.checkIntervalHours must not exceed %d", maxUpdateCheckIntervalHours)
+	}
+	if c.Updates.MaxDownloadBytes <= 0 {
+		return errors.New("updates.maxDownloadBytes must be positive")
 	}
 	return nil
 }
@@ -424,6 +476,12 @@ func merge(base, override Config) Config {
 	if override.Updates.CheckIntervalHours != 0 {
 		base.Updates.CheckIntervalHours = override.Updates.CheckIntervalHours
 	}
+	if override.Updates.SelfUpdateEnabled {
+		base.Updates.SelfUpdateEnabled = true
+	}
+	if override.Updates.MaxDownloadBytes != 0 {
+		base.Updates.MaxDownloadBytes = override.Updates.MaxDownloadBytes
+	}
 	if override.Capabilities.pluginDiscoveryEnabledSet {
 		base.Capabilities.PluginDiscoveryEnabled = override.Capabilities.PluginDiscoveryEnabled
 	}
@@ -469,6 +527,14 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v := env["JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Updates.CheckIntervalHours = n
+		}
+	}
+	if v := env["JENKINS_MCP_SELF_UPDATE"]; v != "" {
+		cfg.Updates.SelfUpdateEnabled = parseBool(v)
+	}
+	if v := env["JENKINS_MCP_UPDATE_MAX_DOWNLOAD_BYTES"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Updates.MaxDownloadBytes = n
 		}
 	}
 	if v := env["JENKINS_MCP_PLUGIN_DISCOVERY"]; v != "" {

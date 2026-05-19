@@ -22,7 +22,7 @@ func TestCheckReportsNewerRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	checker.releaseURL = server.URL
 
 	result, err := checker.Check(t.Context())
@@ -44,12 +44,13 @@ func TestStatusCachesCheckResult(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	checker.releaseURL = server.URL
 
 	checker.checkAndLog(t.Context())
 	status := checker.Status()
 	r.True(status.UpdateAvailable, "status.UpdateAvailable")
+	r.True(status.SelfUpdateEnabled, "status.SelfUpdateEnabled")
 	r.NotEmpty(status.CheckedAt, "status.CheckedAt")
 	r.NotEmpty(status.ReleaseURL, "status.ReleaseURL")
 	r.NotEmpty(status.NotificationHint, "status.NotificationHint")

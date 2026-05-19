@@ -14,6 +14,7 @@ import (
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/mcpserver"
 	stdiotransport "github.com/david/jenkins-mcp/internal/mcpserver/transport/stdio"
+	"github.com/david/jenkins-mcp/internal/selfupdate"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
 
@@ -31,6 +32,19 @@ func LoadConfigFromProcess(args []string, environ []string) (config.Config, erro
 
 func InitConfigFromProcess(args []string, environ []string) (string, error) {
 	return config.Init(args, environ)
+}
+
+func LoadSelfUpdateConfigFromProcess(args []string, environ []string) (config.UpdateCheckConfig, bool, bool, error) {
+	return config.LoadSelfUpdate(args, environ)
+}
+
+func SelfUpdate(ctx context.Context, cfg config.UpdateCheckConfig, force bool) (selfupdate.Result, error) {
+	return selfupdate.Update(ctx, selfupdate.Options{
+		Repository:       cfg.Repository,
+		CurrentVersion:   Version,
+		Force:            force,
+		MaxDownloadBytes: cfg.MaxDownloadBytes,
+	})
 }
 
 func New(cfg config.Config) (*Server, error) {
@@ -62,6 +76,14 @@ func New(cfg config.Config) (*Server, error) {
 			Logger:       logger,
 			Version:      Version,
 			UpdateStatus: updateChecker.Status,
+			SelfUpdate: func(ctx context.Context, force bool) (selfupdate.Result, error) {
+				return selfupdate.Update(ctx, selfupdate.Options{
+					Repository:       cfg.Updates.Repository,
+					CurrentVersion:   Version,
+					Force:            force,
+					MaxDownloadBytes: cfg.Updates.MaxDownloadBytes,
+				})
+			},
 		}),
 		updateChecker: updateChecker,
 		logFile:       logFile,
