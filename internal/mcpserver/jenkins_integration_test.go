@@ -704,9 +704,10 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 
 		filtered := callIntegrationTool[struct {
 			Items []struct {
-				Name     string `json:"name"`
-				FullName string `json:"fullName"`
-				Class    string `json:"class"`
+				Name      string `json:"name"`
+				FullName  string `json:"fullName"`
+				Class     string `json:"class"`
+				Buildable bool   `json:"buildable"`
 			} `json:"items"`
 			HasMore bool `json:"hasMore"`
 		}](t, clientSession, "jenkins_list_jobs", map[string]any{
@@ -716,6 +717,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		})
 		r.Len(filtered.Items, 1, "filtered pipeline jobs")
 		r.Equal("example-pipeline", filtered.Items[0].Name, "filtered pipeline job name")
+		r.True(filtered.Items[0].Buildable, "filtered pipeline job buildable")
 		r.False(filtered.HasMore, "single filtered result should not have more pages")
 
 		empty := callIntegrationTool[struct {

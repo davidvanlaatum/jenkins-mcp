@@ -34,20 +34,20 @@ type ControllerCapabilities struct {
 }
 
 type Job struct {
-	Name     string `json:"name" jsonschema:"Jenkins job display name"`
-	FullName string `json:"fullName,omitempty" jsonschema:"Full Jenkins job path including folders"`
-	URL      string `json:"url" jsonschema:"Jenkins job URL"`
-	Color    string `json:"color,omitempty" jsonschema:"Raw Jenkins job color status"`
-	Class    string `json:"class,omitempty" jsonschema:"Raw Jenkins job class name"`
-	Disabled *bool  `json:"disabled,omitempty" jsonschema:"Whether the job is disabled, when Jenkins reports it"`
-	Status   string `json:"status,omitempty" jsonschema:"Derived job status such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
-	Building bool   `json:"building" jsonschema:"Whether the latest build is currently building"`
+	Name      string `json:"name" jsonschema:"Jenkins job display name"`
+	FullName  string `json:"fullName,omitempty" jsonschema:"Full Jenkins job path including folders"`
+	URL       string `json:"url" jsonschema:"Jenkins job URL"`
+	Color     string `json:"color,omitempty" jsonschema:"Raw Jenkins job color status"`
+	Class     string `json:"class,omitempty" jsonschema:"Raw Jenkins job class name"`
+	Buildable bool   `json:"buildable" jsonschema:"Whether Jenkins considers the job buildable"`
+	Disabled  *bool  `json:"disabled,omitempty" jsonschema:"Whether the job is disabled, when Jenkins reports it"`
+	Status    string `json:"status,omitempty" jsonschema:"Derived job status such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
+	Building  bool   `json:"building" jsonschema:"Whether the latest build is currently building"`
 }
 
 type JobDetail struct {
 	Job
 	Description     string                `json:"description,omitempty" jsonschema:"Jenkins job description"`
-	Buildable       bool                  `json:"buildable" jsonschema:"Whether Jenkins considers the job buildable"`
 	InQueue         bool                  `json:"inQueue" jsonschema:"Whether the job currently has an item in the Jenkins queue"`
 	NextBuildNumber int                   `json:"nextBuildNumber,omitempty" jsonschema:"Next build number Jenkins plans to assign"`
 	LastBuild       *BuildSummary         `json:"lastBuild,omitempty" jsonschema:"Most recent build summary"`

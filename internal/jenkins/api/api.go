@@ -113,6 +113,7 @@ type jobJSON struct {
 	URL                string     `json:"url"`
 	Color              string     `json:"color"`
 	Class              string     `json:"_class"`
+	Buildable          bool       `json:"buildable"`
 	Disabled           *bool      `json:"disabled"`
 	LastBuild          *buildJSON `json:"lastBuild"`
 	LastCompletedBuild *buildJSON `json:"lastCompletedBuild"`
@@ -128,7 +129,7 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 		prefix = strings.Trim(folder, "/")
 		path = urlx.JobPath(folder) + "/api/json"
 	}
-	q := url.Values{"tree": {"jobs[name,url,color,_class,disabled,lastBuild[number,result,building],lastCompletedBuild[number,result,building]]"}}
+	q := url.Values{"tree": {"jobs[name,url,color,_class,buildable,disabled,lastBuild[number,result,building],lastCompletedBuild[number,result,building]]"}}
 	var env jobsEnvelope
 	if err := a.client.GetJSON(ctx, path, q, &env); err != nil {
 		return nil, err
@@ -140,14 +141,15 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 			full = prefix + "/" + j.Name
 		}
 		jobs = append(jobs, model.Job{
-			Name:     j.Name,
-			FullName: full,
-			URL:      j.URL,
-			Color:    j.Color,
-			Class:    j.Class,
-			Disabled: j.Disabled,
-			Status:   jobStatus(j),
-			Building: j.LastBuild != nil && j.LastBuild.Building,
+			Name:      j.Name,
+			FullName:  full,
+			URL:       j.URL,
+			Color:     j.Color,
+			Class:     j.Class,
+			Buildable: j.Buildable,
+			Disabled:  j.Disabled,
+			Status:    jobStatus(j),
+			Building:  j.LastBuild != nil && j.LastBuild.Building,
 		})
 	}
 	return jobs, nil
@@ -255,23 +257,24 @@ func (a *API) GetJob(ctx context.Context, job string) (model.JobDetail, error) {
 		URL:                raw.URL,
 		Color:              raw.Color,
 		Class:              raw.Class,
+		Buildable:          raw.Buildable,
 		Disabled:           raw.Disabled,
 		LastBuild:          raw.LastBuild,
 		LastCompletedBuild: raw.LastCompletedBuild,
 	}
 	detail := model.JobDetail{
 		Job: model.Job{
-			Name:     raw.Name,
-			FullName: raw.FullName,
-			URL:      raw.URL,
-			Color:    raw.Color,
-			Class:    raw.Class,
-			Disabled: raw.Disabled,
-			Status:   jobStatus(jobJSON),
-			Building: raw.LastBuild != nil && raw.LastBuild.Building,
+			Name:      raw.Name,
+			FullName:  raw.FullName,
+			URL:       raw.URL,
+			Color:     raw.Color,
+			Class:     raw.Class,
+			Buildable: raw.Buildable,
+			Disabled:  raw.Disabled,
+			Status:    jobStatus(jobJSON),
+			Building:  raw.LastBuild != nil && raw.LastBuild.Building,
 		},
 		Description:     raw.Description,
-		Buildable:       raw.Buildable,
 		InQueue:         raw.InQueue,
 		NextBuildNumber: raw.NextBuildNumber,
 		Parameters:      parseParameterDefinitions(raw.Properties),
