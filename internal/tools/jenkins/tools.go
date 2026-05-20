@@ -224,16 +224,29 @@ func selfUpdateAuditTarget(result selfupdate.Result) string {
 }
 
 type ListJobsRequest struct {
-	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
-	Folder       string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
-	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
-	Cursor       string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_jobs response"`
-	Recursive    bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
-	NameContains string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
-	NameRegex    string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
-	Type         string `json:"type,omitempty" jsonschema:"Job type filter; accepts friendly names such as folder, pipeline, multibranch, freestyle, or raw Jenkins class names"`
-	Status       string `json:"status,omitempty" jsonschema:"Derived job status filter such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
-	Building     *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
+	Controller                string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Folder                    string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
+	Limit                     int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
+	Cursor                    string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_jobs response"`
+	Recursive                 bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
+	NameContains              string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
+	NameRegex                 string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
+	Type                      string `json:"type,omitempty" jsonschema:"Job type filter; accepts friendly names such as folder, pipeline, multibranch, freestyle, or raw Jenkins class names"`
+	Status                    string `json:"status,omitempty" jsonschema:"Derived job status filter such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
+	Buildable                 *bool  `json:"buildable,omitempty" jsonschema:"Filter by whether Jenkins considers the job buildable"`
+	Building                  *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
+	HasLastBuild              *bool  `json:"hasLastBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastBuild reference"`
+	HasLastCompletedBuild     *bool  `json:"hasLastCompletedBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastCompletedBuild reference"`
+	HasLastSuccessfulBuild    *bool  `json:"hasLastSuccessfulBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastSuccessfulBuild reference"`
+	HasLastFailedBuild        *bool  `json:"hasLastFailedBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastFailedBuild reference"`
+	LastBuildAfter            string `json:"lastBuildAfter,omitempty" jsonschema:"Include jobs whose lastBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastBuild do not match"`
+	LastBuildBefore           string `json:"lastBuildBefore,omitempty" jsonschema:"Include jobs whose lastBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastBuild do not match"`
+	LastCompletedBuildAfter   string `json:"lastCompletedBuildAfter,omitempty" jsonschema:"Include jobs whose lastCompletedBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastCompletedBuild do not match"`
+	LastCompletedBuildBefore  string `json:"lastCompletedBuildBefore,omitempty" jsonschema:"Include jobs whose lastCompletedBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastCompletedBuild do not match"`
+	LastSuccessfulBuildAfter  string `json:"lastSuccessfulBuildAfter,omitempty" jsonschema:"Include jobs whose lastSuccessfulBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastSuccessfulBuild do not match"`
+	LastSuccessfulBuildBefore string `json:"lastSuccessfulBuildBefore,omitempty" jsonschema:"Include jobs whose lastSuccessfulBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastSuccessfulBuild do not match"`
+	LastFailedBuildAfter      string `json:"lastFailedBuildAfter,omitempty" jsonschema:"Include jobs whose lastFailedBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastFailedBuild do not match"`
+	LastFailedBuildBefore     string `json:"lastFailedBuildBefore,omitempty" jsonschema:"Include jobs whose lastFailedBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastFailedBuild do not match"`
 }
 type ListJobsResponse struct {
 	Items      []model.Job `json:"items" jsonschema:"Matching Jenkins jobs for this page"`
@@ -307,24 +320,59 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		value := *in.Building
 		building = &value
 	}
+	var buildable *bool
+	if in.Buildable != nil {
+		value := *in.Buildable
+		buildable = &value
+	}
+	hasLastBuild := cloneBool(in.HasLastBuild)
+	hasLastCompletedBuild := cloneBool(in.HasLastCompletedBuild)
+	hasLastSuccessfulBuild := cloneBool(in.HasLastSuccessfulBuild)
+	hasLastFailedBuild := cloneBool(in.HasLastFailedBuild)
 	body, err := json.Marshal(struct {
-		Controller   string `json:"controller,omitempty"`
-		Folder       string `json:"folder,omitempty"`
-		Recursive    bool   `json:"recursive,omitempty"`
-		NameContains string `json:"nameContains,omitempty"`
-		NameRegex    string `json:"nameRegex,omitempty"`
-		Type         string `json:"type,omitempty"`
-		Status       string `json:"status,omitempty"`
-		Building     *bool  `json:"building,omitempty"`
+		Controller                string `json:"controller,omitempty"`
+		Folder                    string `json:"folder,omitempty"`
+		Recursive                 bool   `json:"recursive,omitempty"`
+		NameContains              string `json:"nameContains,omitempty"`
+		NameRegex                 string `json:"nameRegex,omitempty"`
+		Type                      string `json:"type,omitempty"`
+		Status                    string `json:"status,omitempty"`
+		Buildable                 *bool  `json:"buildable,omitempty"`
+		Building                  *bool  `json:"building,omitempty"`
+		HasLastBuild              *bool  `json:"hasLastBuild,omitempty"`
+		HasLastCompletedBuild     *bool  `json:"hasLastCompletedBuild,omitempty"`
+		HasLastSuccessfulBuild    *bool  `json:"hasLastSuccessfulBuild,omitempty"`
+		HasLastFailedBuild        *bool  `json:"hasLastFailedBuild,omitempty"`
+		LastBuildAfter            string `json:"lastBuildAfter,omitempty"`
+		LastBuildBefore           string `json:"lastBuildBefore,omitempty"`
+		LastCompletedBuildAfter   string `json:"lastCompletedBuildAfter,omitempty"`
+		LastCompletedBuildBefore  string `json:"lastCompletedBuildBefore,omitempty"`
+		LastSuccessfulBuildAfter  string `json:"lastSuccessfulBuildAfter,omitempty"`
+		LastSuccessfulBuildBefore string `json:"lastSuccessfulBuildBefore,omitempty"`
+		LastFailedBuildAfter      string `json:"lastFailedBuildAfter,omitempty"`
+		LastFailedBuildBefore     string `json:"lastFailedBuildBefore,omitempty"`
 	}{
-		Controller:   in.Controller,
-		Folder:       in.Folder,
-		Recursive:    in.Recursive,
-		NameContains: in.NameContains,
-		NameRegex:    in.NameRegex,
-		Type:         in.Type,
-		Status:       in.Status,
-		Building:     building,
+		Controller:                in.Controller,
+		Folder:                    in.Folder,
+		Recursive:                 in.Recursive,
+		NameContains:              in.NameContains,
+		NameRegex:                 in.NameRegex,
+		Type:                      in.Type,
+		Status:                    in.Status,
+		Buildable:                 buildable,
+		Building:                  building,
+		HasLastBuild:              hasLastBuild,
+		HasLastCompletedBuild:     hasLastCompletedBuild,
+		HasLastSuccessfulBuild:    hasLastSuccessfulBuild,
+		HasLastFailedBuild:        hasLastFailedBuild,
+		LastBuildAfter:            strings.TrimSpace(in.LastBuildAfter),
+		LastBuildBefore:           strings.TrimSpace(in.LastBuildBefore),
+		LastCompletedBuildAfter:   strings.TrimSpace(in.LastCompletedBuildAfter),
+		LastCompletedBuildBefore:  strings.TrimSpace(in.LastCompletedBuildBefore),
+		LastSuccessfulBuildAfter:  strings.TrimSpace(in.LastSuccessfulBuildAfter),
+		LastSuccessfulBuildBefore: strings.TrimSpace(in.LastSuccessfulBuildBefore),
+		LastFailedBuildAfter:      strings.TrimSpace(in.LastFailedBuildAfter),
+		LastFailedBuildBefore:     strings.TrimSpace(in.LastFailedBuildBefore),
 	})
 	if err != nil {
 		return "", err
@@ -334,11 +382,24 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 }
 
 type jobFilter struct {
-	nameContains string
-	nameRegex    *regexp.Regexp
-	jobType      string
-	status       string
-	building     *bool
+	nameContains              string
+	nameRegex                 *regexp.Regexp
+	jobType                   string
+	status                    string
+	buildable                 *bool
+	building                  *bool
+	hasLastBuild              *bool
+	hasLastCompletedBuild     *bool
+	hasLastSuccessfulBuild    *bool
+	hasLastFailedBuild        *bool
+	lastBuildAfter            *int64
+	lastBuildBefore           *int64
+	lastCompletedBuildAfter   *int64
+	lastCompletedBuildBefore  *int64
+	lastSuccessfulBuildAfter  *int64
+	lastSuccessfulBuildBefore *int64
+	lastFailedBuildAfter      *int64
+	lastFailedBuildBefore     *int64
 }
 
 func newJobFilter(in ListJobsRequest) (jobFilter, error) {
@@ -346,7 +407,12 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 	filter.nameContains = strings.ToLower(strings.TrimSpace(in.NameContains))
 	filter.jobType = strings.ToLower(strings.TrimSpace(in.Type))
 	filter.status = normalizeStatusFilter(in.Status)
+	filter.buildable = in.Buildable
 	filter.building = in.Building
+	filter.hasLastBuild = in.HasLastBuild
+	filter.hasLastCompletedBuild = in.HasLastCompletedBuild
+	filter.hasLastSuccessfulBuild = in.HasLastSuccessfulBuild
+	filter.hasLastFailedBuild = in.HasLastFailedBuild
 	if strings.TrimSpace(in.NameRegex) != "" {
 		expr, err := regexp.Compile(in.NameRegex)
 		if err != nil {
@@ -356,6 +422,27 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 			})
 		}
 		filter.nameRegex = expr
+	}
+	timestamps := []struct {
+		name  string
+		value string
+		out   **int64
+	}{
+		{name: "lastBuildAfter", value: in.LastBuildAfter, out: &filter.lastBuildAfter},
+		{name: "lastBuildBefore", value: in.LastBuildBefore, out: &filter.lastBuildBefore},
+		{name: "lastCompletedBuildAfter", value: in.LastCompletedBuildAfter, out: &filter.lastCompletedBuildAfter},
+		{name: "lastCompletedBuildBefore", value: in.LastCompletedBuildBefore, out: &filter.lastCompletedBuildBefore},
+		{name: "lastSuccessfulBuildAfter", value: in.LastSuccessfulBuildAfter, out: &filter.lastSuccessfulBuildAfter},
+		{name: "lastSuccessfulBuildBefore", value: in.LastSuccessfulBuildBefore, out: &filter.lastSuccessfulBuildBefore},
+		{name: "lastFailedBuildAfter", value: in.LastFailedBuildAfter, out: &filter.lastFailedBuildAfter},
+		{name: "lastFailedBuildBefore", value: in.LastFailedBuildBefore, out: &filter.lastFailedBuildBefore},
+	}
+	for _, candidate := range timestamps {
+		timestamp, err := parseJobTimestampFilter(candidate.name, candidate.value)
+		if err != nil {
+			return jobFilter{}, err
+		}
+		*candidate.out = timestamp
 	}
 	return filter, nil
 }
@@ -386,7 +473,85 @@ func jobMatchesFilter(job model.Job, filter jobFilter) bool {
 	if filter.status != "" && normalizeStatusFilter(job.Status) != filter.status {
 		return false
 	}
+	if filter.buildable != nil && job.Buildable != *filter.buildable {
+		return false
+	}
 	if filter.building != nil && job.Building != *filter.building {
+		return false
+	}
+	if !buildPresenceMatches(job.LastBuild, filter.hasLastBuild) {
+		return false
+	}
+	if !buildPresenceMatches(job.LastCompletedBuild, filter.hasLastCompletedBuild) {
+		return false
+	}
+	if !buildPresenceMatches(job.LastSuccessfulBuild, filter.hasLastSuccessfulBuild) {
+		return false
+	}
+	if !buildPresenceMatches(job.LastFailedBuild, filter.hasLastFailedBuild) {
+		return false
+	}
+	if !buildTimestampMatches(job.LastBuild, filter.lastBuildAfter, filter.lastBuildBefore) {
+		return false
+	}
+	if !buildTimestampMatches(job.LastCompletedBuild, filter.lastCompletedBuildAfter, filter.lastCompletedBuildBefore) {
+		return false
+	}
+	if !buildTimestampMatches(job.LastSuccessfulBuild, filter.lastSuccessfulBuildAfter, filter.lastSuccessfulBuildBefore) {
+		return false
+	}
+	if !buildTimestampMatches(job.LastFailedBuild, filter.lastFailedBuildAfter, filter.lastFailedBuildBefore) {
+		return false
+	}
+	return true
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func parseJobTimestampFilter(name string, raw string) (*int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if millis, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return &millis, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid job timestamp filter", map[string]any{
+			"field":  name,
+			"value":  raw,
+			"format": "RFC3339 or Unix epoch milliseconds",
+		})
+	}
+	millis := parsed.UnixMilli()
+	return &millis, nil
+}
+
+func buildPresenceMatches(build *model.BuildSummary, want *bool) bool {
+	if want == nil {
+		return true
+	}
+	return (build != nil) == *want
+}
+
+func buildTimestampMatches(build *model.BuildSummary, after *int64, before *int64) bool {
+	if after == nil && before == nil {
+		return true
+	}
+	if build == nil {
+		return false
+	}
+	if after != nil && build.Timestamp < *after {
+		return false
+	}
+	if before != nil && build.Timestamp > *before {
 		return false
 	}
 	return true
