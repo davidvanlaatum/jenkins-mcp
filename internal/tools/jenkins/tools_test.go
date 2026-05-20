@@ -406,8 +406,8 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	})
 	r.NoError(err, "ListJobs() error")
 	tree := <-treeCh
-	r.Contains(tree, "lastBuild[number,result,building]", "tree query should include lastBuild status fields")
-	r.Contains(tree, "lastCompletedBuild[number,result,building]", "tree query should include lastCompletedBuild status fields")
+	r.Contains(tree, "lastBuild[number,url,result,building,timestamp,duration]", "tree query should include lastBuild status and timestamp fields")
+	r.Contains(tree, "lastCompletedBuild[number,url,result,building,timestamp,duration]", "tree query should include lastCompletedBuild status and timestamp fields")
 	r.Contains(tree, "buildable", "tree query should include buildable field")
 	r.Contains(tree, "disabled", "tree query should include disabled field")
 	r.Len(got.Items, 1, "ListJobs() items")
@@ -548,6 +548,71 @@ func TestListJobsStopsJUnitProbesAfterPageSentinel(t *testing.T) {
 	}, requested, "requested paths")
 }
 
+func TestListJobsAppliesMetadataFiltersWithoutChangingResponseShape(t *testing.T) {
+	r := require.New(t)
+
+	var tree string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree = r.URL.Query().Get("tree")
+		writeJSON(w, `{"jobs":[
+			{"name":"recent-success","url":"https://jenkins.example.com/job/recent-success/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastBuild":{"number":10,"url":"https://jenkins.example.com/job/recent-success/10/","result":"SUCCESS","building":false,"timestamp":1700000000000},"lastCompletedBuild":{"number":10,"url":"https://jenkins.example.com/job/recent-success/10/","result":"SUCCESS","building":false,"timestamp":1700000000000},"lastSuccessfulBuild":{"number":10,"url":"https://jenkins.example.com/job/recent-success/10/","result":"SUCCESS","building":false,"timestamp":1700000000000}},
+			{"name":"old-failure","url":"https://jenkins.example.com/job/old-failure/","color":"red","_class":"hudson.model.FreeStyleProject","buildable":true,"lastBuild":{"number":4,"url":"https://jenkins.example.com/job/old-failure/4/","result":"FAILURE","building":false,"timestamp":1600000000000},"lastCompletedBuild":{"number":4,"url":"https://jenkins.example.com/job/old-failure/4/","result":"FAILURE","building":false,"timestamp":1600000000000},"lastFailedBuild":{"number":4,"url":"https://jenkins.example.com/job/old-failure/4/","result":"FAILURE","building":false,"timestamp":1600000000000}},
+			{"name":"disabled-no-build","url":"https://jenkins.example.com/job/disabled-no-build/","color":"disabled","_class":"hudson.model.FreeStyleProject","buildable":false}
+		]}`)
+	})
+
+	buildable := true
+	hasLastSuccessfulBuild := true
+	hasLastFailedBuild := false
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{
+		Buildable:                &buildable,
+		HasLastSuccessfulBuild:   &hasLastSuccessfulBuild,
+		HasLastFailedBuild:       &hasLastFailedBuild,
+		LastBuildAfter:           "2023-01-01T00:00:00Z",
+		LastCompletedBuildBefore: "1700000000000",
+	})
+	r.NoError(err, "ListJobs() error")
+	r.Contains(tree, "lastSuccessfulBuild[number,url,result,building,timestamp,duration]", "tree query should include successful build metadata")
+	r.Contains(tree, "lastFailedBuild[number,url,result,building,timestamp,duration]", "tree query should include failed build metadata")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal("recent-success", got.Items[0].Name, "job name")
+
+	raw, err := json.Marshal(got.Items[0])
+	r.NoError(err, "marshal job")
+	r.NotContains(string(raw), "lastBuild", "list jobs response shape should not expose filter metadata")
+	r.NotContains(string(raw), "lastSuccessfulBuild", "list jobs response shape should not expose filter metadata")
+}
+
+func TestListJobsTimestampFilterRequiresReferencedBuild(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"no-last-failed","url":"https://jenkins.example.com/job/no-last-failed/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastBuild":{"number":1,"result":"SUCCESS","building":false,"timestamp":1700000000000}}
+		]}`)
+	})
+
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{LastFailedBuildAfter: "1"})
+	r.NoError(err, "ListJobs() error")
+	r.Empty(got.Items, "jobs missing the referenced build should not match timestamp filters")
+}
+
+func TestListJobsRejectsInvalidTimestampFilter(t *testing.T) {
+	r := require.New(t)
+
+	_, err := ListJobs(t.Context(), Deps{}, ListJobsRequest{LastBuildAfter: "yesterday"})
+	r.Error(err, "ListJobs() accepted invalid timestamp")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
 func TestListJobsRegexMatchesFullName(t *testing.T) {
 	r := require.New(t)
 
@@ -635,8 +700,8 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 			return
 		}
 		writeJSON(w, `{"jobs":[
-			{"name":"one","url":"https://jenkins.example.com/job/one/","color":"blue","_class":"hudson.model.FreeStyleProject"},
-			{"name":"two","url":"https://jenkins.example.com/job/two/","color":"blue","_class":"hudson.model.FreeStyleProject"}
+			{"name":"one","url":"https://jenkins.example.com/job/one/","color":"blue","_class":"hudson.model.FreeStyleProject","lastBuild":{"number":1,"result":"SUCCESS","building":false,"timestamp":10}},
+			{"name":"two","url":"https://jenkins.example.com/job/two/","color":"blue","_class":"hudson.model.FreeStyleProject","lastBuild":{"number":2,"result":"SUCCESS","building":false,"timestamp":20}}
 		]}`)
 	})
 
@@ -649,6 +714,12 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 	hasTests := true
 	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasTests: &hasTests, Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed test filter")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+
+	first, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "1"})
+	r.NoError(err, "ListJobs() first metadata-filtered page error")
+	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "2", Cursor: first.NextCursor})
+	r.Error(err, "ListJobs() accepted cursor for a changed metadata filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
 

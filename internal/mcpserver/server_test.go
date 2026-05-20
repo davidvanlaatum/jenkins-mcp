@@ -396,7 +396,7 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		if tool.Name != "jenkins_list_jobs" {
 			continue
 		}
-		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building", "hasTests", "hasFailedTests", "hasSkippedTests"} {
+		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "buildable", "building", "hasLastBuild", "lastBuildAfter", "lastCompletedBuildBefore", "hasLastSuccessfulBuild", "lastFailedBuildAfter", "hasTests", "hasFailedTests", "hasSkippedTests"} {
 			r.Contains(tool.Description, want, "description")
 		}
 
@@ -409,7 +409,7 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		r.NoError(err, "marshal input schema")
 		err = json.Unmarshal(raw, &schema)
 		r.NoError(err, "unmarshal input schema")
-		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "building", "hasTests", "hasFailedTests", "hasSkippedTests"} {
+		for _, want := range []string{"cursor", "nameContains", "nameRegex", "type", "status", "buildable", "building", "hasLastBuild", "lastBuildAfter", "lastCompletedBuildBefore", "hasLastSuccessfulBuild", "lastFailedBuildAfter", "hasTests", "hasFailedTests", "hasSkippedTests"} {
 			property, ok := schema.Properties[want]
 			r.True(ok, "input schema missing property %q", want)
 			r.NotEmpty(property.Description, "input schema property %q description", want)
