@@ -224,16 +224,19 @@ func selfUpdateAuditTarget(result selfupdate.Result) string {
 }
 
 type ListJobsRequest struct {
-	Controller   string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
-	Folder       string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
-	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
-	Cursor       string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_jobs response"`
-	Recursive    bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
-	NameContains string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
-	NameRegex    string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
-	Type         string `json:"type,omitempty" jsonschema:"Job type filter; accepts friendly names such as folder, pipeline, multibranch, freestyle, or raw Jenkins class names"`
-	Status       string `json:"status,omitempty" jsonschema:"Derived job status filter such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
-	Building     *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
+	Controller      string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Folder          string `json:"folder,omitempty" jsonschema:"Optional Jenkins folder path to list, using / for nested folders"`
+	Limit           int    `json:"limit,omitempty" jsonschema:"Maximum number of matching jobs to return; defaults to 100 and is capped at 500"`
+	Cursor          string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_jobs response"`
+	Recursive       bool   `json:"recursive,omitempty" jsonschema:"When true, recursively traverse folder-like jobs and apply filters across descendants"`
+	NameContains    string `json:"nameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against both name and fullName"`
+	NameRegex       string `json:"nameRegex,omitempty" jsonschema:"Regular expression filter matched against both name and fullName"`
+	Type            string `json:"type,omitempty" jsonschema:"Job type filter; accepts friendly names such as folder, pipeline, multibranch, freestyle, or raw Jenkins class names"`
+	Status          string `json:"status,omitempty" jsonschema:"Derived job status filter such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
+	Building        *bool  `json:"building,omitempty" jsonschema:"Filter by whether lastBuild is currently building"`
+	HasTests        *bool  `json:"hasTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with totalCount greater than zero; evaluated only when provided"`
+	HasFailedTests  *bool  `json:"hasFailedTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with failCount greater than zero; evaluated only when provided"`
+	HasSkippedTests *bool  `json:"hasSkippedTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with skipCount greater than zero; evaluated only when provided"`
 }
 type ListJobsResponse struct {
 	Items      []model.Job `json:"items" jsonschema:"Matching Jenkins jobs for this page"`
@@ -274,7 +277,10 @@ func ListJobs(ctx context.Context, deps Deps, in ListJobsRequest) (ListJobsRespo
 		return ListJobsResponse{}, err
 	}
 	if !in.Recursive {
-		jobs = filterJobs(jobs, filter)
+		jobs, err = filterJobs(ctx, api, jobs, filter, offset+limit+1)
+		if err != nil {
+			return ListJobsResponse{}, err
+		}
 	}
 	return listJobsPage(jobs, offset, limit, cursorSignature)
 }
@@ -307,24 +313,33 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		value := *in.Building
 		building = &value
 	}
+	hasTests := cloneBool(in.HasTests)
+	hasFailedTests := cloneBool(in.HasFailedTests)
+	hasSkippedTests := cloneBool(in.HasSkippedTests)
 	body, err := json.Marshal(struct {
-		Controller   string `json:"controller,omitempty"`
-		Folder       string `json:"folder,omitempty"`
-		Recursive    bool   `json:"recursive,omitempty"`
-		NameContains string `json:"nameContains,omitempty"`
-		NameRegex    string `json:"nameRegex,omitempty"`
-		Type         string `json:"type,omitempty"`
-		Status       string `json:"status,omitempty"`
-		Building     *bool  `json:"building,omitempty"`
+		Controller      string `json:"controller,omitempty"`
+		Folder          string `json:"folder,omitempty"`
+		Recursive       bool   `json:"recursive,omitempty"`
+		NameContains    string `json:"nameContains,omitempty"`
+		NameRegex       string `json:"nameRegex,omitempty"`
+		Type            string `json:"type,omitempty"`
+		Status          string `json:"status,omitempty"`
+		Building        *bool  `json:"building,omitempty"`
+		HasTests        *bool  `json:"hasTests,omitempty"`
+		HasFailedTests  *bool  `json:"hasFailedTests,omitempty"`
+		HasSkippedTests *bool  `json:"hasSkippedTests,omitempty"`
 	}{
-		Controller:   in.Controller,
-		Folder:       in.Folder,
-		Recursive:    in.Recursive,
-		NameContains: in.NameContains,
-		NameRegex:    in.NameRegex,
-		Type:         in.Type,
-		Status:       in.Status,
-		Building:     building,
+		Controller:      in.Controller,
+		Folder:          in.Folder,
+		Recursive:       in.Recursive,
+		NameContains:    in.NameContains,
+		NameRegex:       in.NameRegex,
+		Type:            in.Type,
+		Status:          in.Status,
+		Building:        building,
+		HasTests:        hasTests,
+		HasFailedTests:  hasFailedTests,
+		HasSkippedTests: hasSkippedTests,
 	})
 	if err != nil {
 		return "", err
@@ -333,12 +348,23 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 type jobFilter struct {
-	nameContains string
-	nameRegex    *regexp.Regexp
-	jobType      string
-	status       string
-	building     *bool
+	nameContains    string
+	nameRegex       *regexp.Regexp
+	jobType         string
+	status          string
+	building        *bool
+	hasTests        *bool
+	hasFailedTests  *bool
+	hasSkippedTests *bool
 }
 
 func newJobFilter(in ListJobsRequest) (jobFilter, error) {
@@ -347,6 +373,9 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 	filter.jobType = strings.ToLower(strings.TrimSpace(in.Type))
 	filter.status = normalizeStatusFilter(in.Status)
 	filter.building = in.Building
+	filter.hasTests = in.HasTests
+	filter.hasFailedTests = in.HasFailedTests
+	filter.hasSkippedTests = in.HasSkippedTests
 	if strings.TrimSpace(in.NameRegex) != "" {
 		expr, err := regexp.Compile(in.NameRegex)
 		if err != nil {
@@ -360,36 +389,95 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 	return filter, nil
 }
 
-func filterJobs(jobs []model.Job, filter jobFilter) []model.Job {
+func filterJobs(ctx context.Context, api *jenkinsapi.API, jobs []model.Job, filter jobFilter, maxMatches int) ([]model.Job, error) {
 	if filter == (jobFilter{}) {
-		return jobs
+		if maxMatches > 0 && len(jobs) > maxMatches {
+			return jobs[:maxMatches], nil
+		}
+		return jobs, nil
 	}
 	out := make([]model.Job, 0, len(jobs))
 	for _, job := range jobs {
-		if jobMatchesFilter(job, filter) {
+		matches, err := jobMatchesFilter(ctx, api, job, filter)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
 			out = append(out, job)
+			if maxMatches > 0 && len(out) >= maxMatches {
+				break
+			}
 		}
 	}
-	return out
+	return out, nil
 }
 
-func jobMatchesFilter(job model.Job, filter jobFilter) bool {
+func jobMatchesFilter(ctx context.Context, api *jenkinsapi.API, job model.Job, filter jobFilter) (bool, error) {
 	if filter.nameContains != "" && !strings.Contains(strings.ToLower(job.Name), filter.nameContains) && !strings.Contains(strings.ToLower(job.FullName), filter.nameContains) {
-		return false
+		return false, nil
 	}
 	if filter.nameRegex != nil && !filter.nameRegex.MatchString(job.Name) && !filter.nameRegex.MatchString(job.FullName) {
-		return false
+		return false, nil
 	}
 	if filter.jobType != "" && !jobMatchesType(job.Class, filter.jobType) {
-		return false
+		return false, nil
 	}
 	if filter.status != "" && normalizeStatusFilter(job.Status) != filter.status {
-		return false
+		return false, nil
 	}
 	if filter.building != nil && job.Building != *filter.building {
+		return false, nil
+	}
+	if !filter.requiresTestReport() {
+		return true, nil
+	}
+	matches, err := jobMatchesTestFilters(ctx, api, job, filter)
+	return matches, err
+}
+
+func (filter jobFilter) requiresTestReport() bool {
+	return filter.hasTests != nil || filter.hasFailedTests != nil || filter.hasSkippedTests != nil
+}
+
+func jobMatchesTestFilters(ctx context.Context, api *jenkinsapi.API, job model.Job, filter jobFilter) (bool, error) {
+	if job.LastCompletedBuild == nil || job.LastCompletedBuild.Number <= 0 {
+		return matchesMissingTestReport(filter), nil
+	}
+	report, err := api.TestReportSummary(ctx, job.FullName, job.LastCompletedBuild.Number)
+	if err != nil {
+		if isMissingTestReport(err) {
+			return matchesMissingTestReport(filter), nil
+		}
+		return false, err
+	}
+	if filter.hasTests != nil && (report.TotalCount > 0) != *filter.hasTests {
+		return false, nil
+	}
+	if filter.hasFailedTests != nil && (report.FailCount > 0) != *filter.hasFailedTests {
+		return false, nil
+	}
+	if filter.hasSkippedTests != nil && (report.SkipCount > 0) != *filter.hasSkippedTests {
+		return false, nil
+	}
+	return true, nil
+}
+
+func matchesMissingTestReport(filter jobFilter) bool {
+	if filter.hasTests != nil && *filter.hasTests {
+		return false
+	}
+	if filter.hasFailedTests != nil && *filter.hasFailedTests {
+		return false
+	}
+	if filter.hasSkippedTests != nil && *filter.hasSkippedTests {
 		return false
 	}
 	return true
+}
+
+func isMissingTestReport(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	return ok && appErr.Code == apperrors.CodeNotFound
 }
 
 func normalizeStatusFilter(status string) string {
@@ -443,7 +531,11 @@ func listJobsRecursive(ctx context.Context, api *jenkinsapi.API, folder string, 
 				continue
 			}
 			seen[job.FullName] = true
-			if jobMatchesFilter(job, filter) {
+			matches, err := jobMatchesFilter(ctx, api, job, filter)
+			if err != nil {
+				return err
+			}
+			if matches {
 				out = append(out, job)
 				if maxMatches > 0 && len(out) >= maxMatches {
 					return nil

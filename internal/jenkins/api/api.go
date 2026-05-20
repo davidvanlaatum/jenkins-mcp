@@ -141,18 +141,27 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 			full = prefix + "/" + j.Name
 		}
 		jobs = append(jobs, model.Job{
-			Name:      j.Name,
-			FullName:  full,
-			URL:       j.URL,
-			Color:     j.Color,
-			Class:     j.Class,
-			Buildable: j.Buildable,
-			Disabled:  j.Disabled,
-			Status:    jobStatus(j),
-			Building:  j.LastBuild != nil && j.LastBuild.Building,
+			Name:               j.Name,
+			FullName:           full,
+			URL:                j.URL,
+			Color:              j.Color,
+			Class:              j.Class,
+			Buildable:          j.Buildable,
+			Disabled:           j.Disabled,
+			Status:             jobStatus(j),
+			Building:           j.LastBuild != nil && j.LastBuild.Building,
+			LastCompletedBuild: buildSummaryPtr(j.LastCompletedBuild),
 		})
 	}
 	return jobs, nil
+}
+
+func buildSummaryPtr(b *buildJSON) *model.BuildSummary {
+	if b == nil {
+		return nil
+	}
+	summary := summary(*b)
+	return &summary
 }
 
 func jobStatus(j jobJSON) string {
@@ -516,6 +525,24 @@ func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly
 		}
 	}
 	return report, nil
+}
+
+func (a *API) TestReportSummary(ctx context.Context, job string, number int) (model.TestReport, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
+	var raw struct {
+		TotalCount int `json:"totalCount"`
+		FailCount  int `json:"failCount"`
+		SkipCount  int `json:"skipCount"`
+		PassCount  int `json:"passCount"`
+	}
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {"totalCount,failCount,skipCount,passCount"}}, &raw); err != nil {
+		return model.TestReport{}, err
+	}
+	totalCount := raw.TotalCount
+	if totalCount == 0 {
+		totalCount = raw.PassCount + raw.FailCount + raw.SkipCount
+	}
+	return model.TestReport{TotalCount: totalCount, FailCount: raw.FailCount, SkipCount: raw.SkipCount, PassCount: raw.PassCount}, nil
 }
 
 func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.PipelineRun, error) {
