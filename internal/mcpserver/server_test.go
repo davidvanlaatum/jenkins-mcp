@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -14,6 +17,8 @@ import (
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
+	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
+	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 )
 
 func TestToolErrorsAreStructured(t *testing.T) {
@@ -55,6 +60,65 @@ func TestToolErrorsAreStructured(t *testing.T) {
 	err = json.Unmarshal([]byte(textContent.Text), &payload)
 	r.NoError(err, "structured error unmarshal")
 	r.Equal("mutation_disabled", payload.Error.Code, "error code")
+}
+
+func TestToolErrorsDoNotExposeJenkinsHTMLResponseBodies(t *testing.T) {
+	r := require.New(t)
+	const htmlBody = `<!doctype html><html><body><h1>Jenkins failed</h1><p>secret-html-token</p></body></html>`
+	jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer jenkins.Close()
+
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: jenkins.URL}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	controller, err := jenkinsclient.New(cfg.Controllers[0], slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err, "jenkins client")
+	server := New(Dependencies{
+		Config:  cfg,
+		Jenkins: map[string]*jenkinsapi.API{"default": jenkinsapi.New("default", controller)},
+		Audit:   &audit.Logger{},
+		Version: "test",
+	}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "jenkins_get_job",
+		Arguments: map[string]any{"job": "app"},
+	})
+	r.NoError(err, "CallTool()")
+	r.True(result.IsError, "CallTool() IsError")
+	r.Len(result.Content, 1, "CallTool() content")
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	r.True(ok, "CallTool() content type should be *mcp.TextContent")
+	r.NotContains(textContent.Text, "<html", "tool error should not include raw HTML")
+	r.NotContains(textContent.Text, "secret-html-token", "tool error should not leak response body")
+
+	var payload struct {
+		Error struct {
+			Code   string         `json:"code"`
+			Detail map[string]int `json:"detail"`
+		} `json:"error"`
+	}
+	err = json.Unmarshal([]byte(textContent.Text), &payload)
+	r.NoError(err, "structured error unmarshal")
+	r.Equal("jenkins_error", payload.Error.Code, "error code")
+	r.Equal(http.StatusInternalServerError, payload.Error.Detail["status"], "error detail status")
 }
 
 func TestNormalizeErrorMapsContextDeadline(t *testing.T) {

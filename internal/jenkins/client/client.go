@@ -56,7 +56,7 @@ func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, out
 		return err
 	}
 	if status < 200 || status > 299 {
-		return classify(status, string(body))
+		return classify(status)
 	}
 	if version := headers.Get("X-Jenkins"); version != "" {
 		if m, ok := out.(interface{ SetVersion(string) }); ok {
@@ -169,7 +169,7 @@ func (c *Client) addCrumb(ctx context.Context, headers http.Header) error {
 			return nil
 		}
 		if status < 200 || status > 299 {
-			return classify(status, string(body))
+			return classify(status)
 		}
 		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&crumb); err != nil {
 			return err
@@ -244,14 +244,15 @@ func readBounded(reader io.Reader, maxBytes int64) ([]byte, error) {
 	return b, nil
 }
 
-func classify(status int, body string) error {
+func classify(status int) error {
 	msg := fmt.Sprintf("Jenkins returned HTTP %d", status)
+	detail := map[string]any{"status": status}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return apperrors.Wrap(apperrors.CodePermissionDenied, msg, body)
+		return apperrors.Wrap(apperrors.CodePermissionDenied, msg, detail)
 	case http.StatusNotFound:
-		return apperrors.Wrap(apperrors.CodeNotFound, msg, body)
+		return apperrors.Wrap(apperrors.CodeNotFound, msg, detail)
 	default:
-		return apperrors.Wrap(apperrors.CodeJenkins, msg, body)
+		return apperrors.Wrap(apperrors.CodeJenkins, msg, detail)
 	}
 }
