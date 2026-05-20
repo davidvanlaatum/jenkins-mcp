@@ -109,14 +109,16 @@ func defaultFeatureMap(plugins []model.PluginInfo) map[string]bool {
 }
 
 type jobJSON struct {
-	Name               string     `json:"name"`
-	URL                string     `json:"url"`
-	Color              string     `json:"color"`
-	Class              string     `json:"_class"`
-	Buildable          bool       `json:"buildable"`
-	Disabled           *bool      `json:"disabled"`
-	LastBuild          *buildJSON `json:"lastBuild"`
-	LastCompletedBuild *buildJSON `json:"lastCompletedBuild"`
+	Name                string     `json:"name"`
+	URL                 string     `json:"url"`
+	Color               string     `json:"color"`
+	Class               string     `json:"_class"`
+	Buildable           bool       `json:"buildable"`
+	Disabled            *bool      `json:"disabled"`
+	LastBuild           *buildJSON `json:"lastBuild"`
+	LastCompletedBuild  *buildJSON `json:"lastCompletedBuild"`
+	LastSuccessfulBuild *buildJSON `json:"lastSuccessfulBuild"`
+	LastFailedBuild     *buildJSON `json:"lastFailedBuild"`
 }
 type jobsEnvelope struct {
 	Jobs []jobJSON `json:"jobs"`
@@ -129,7 +131,7 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 		prefix = strings.Trim(folder, "/")
 		path = urlx.JobPath(folder) + "/api/json"
 	}
-	q := url.Values{"tree": {"jobs[name,url,color,_class,buildable,disabled,lastBuild[number,result,building],lastCompletedBuild[number,result,building]]"}}
+	q := url.Values{"tree": {"jobs[name,url,color,_class,buildable,disabled,lastBuild[number,url,result,building,timestamp,duration],lastCompletedBuild[number,url,result,building,timestamp,duration],lastSuccessfulBuild[number,url,result,building,timestamp,duration],lastFailedBuild[number,url,result,building,timestamp,duration]]"}}
 	var env jobsEnvelope
 	if err := a.client.GetJSON(ctx, path, q, &env); err != nil {
 		return nil, err
@@ -140,7 +142,7 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 		if prefix != "" {
 			full = prefix + "/" + j.Name
 		}
-		jobs = append(jobs, model.Job{
+		job := model.Job{
 			Name:      j.Name,
 			FullName:  full,
 			URL:       j.URL,
@@ -150,7 +152,24 @@ func (a *API) ListJobs(ctx context.Context, folder string) ([]model.Job, error) 
 			Disabled:  j.Disabled,
 			Status:    jobStatus(j),
 			Building:  j.LastBuild != nil && j.LastBuild.Building,
-		})
+		}
+		if j.LastBuild != nil {
+			summary := summary(*j.LastBuild)
+			job.LastBuild = &summary
+		}
+		if j.LastCompletedBuild != nil {
+			summary := summary(*j.LastCompletedBuild)
+			job.LastCompletedBuild = &summary
+		}
+		if j.LastSuccessfulBuild != nil {
+			summary := summary(*j.LastSuccessfulBuild)
+			job.LastSuccessfulBuild = &summary
+		}
+		if j.LastFailedBuild != nil {
+			summary := summary(*j.LastFailedBuild)
+			job.LastFailedBuild = &summary
+		}
+		jobs = append(jobs, job)
 	}
 	return jobs, nil
 }

@@ -43,6 +43,11 @@ type Job struct {
 	Disabled  *bool  `json:"disabled,omitempty" jsonschema:"Whether the job is disabled, when Jenkins reports it"`
 	Status    string `json:"status,omitempty" jsonschema:"Derived job status such as success, failed, unstable, aborted, disabled, not_built, or unknown"`
 	Building  bool   `json:"building" jsonschema:"Whether the latest build is currently building"`
+
+	LastBuild           *BuildSummary `json:"-" jsonschema:"-"`
+	LastCompletedBuild  *BuildSummary `json:"-" jsonschema:"-"`
+	LastSuccessfulBuild *BuildSummary `json:"-" jsonschema:"-"`
+	LastFailedBuild     *BuildSummary `json:"-" jsonschema:"-"`
 }
 
 type JobDetail struct {
