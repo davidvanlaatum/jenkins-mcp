@@ -319,24 +319,31 @@ func extractZipBinary(archiveBytes []byte, expected string, maxBytes int64) ([]b
 		return nil, err
 	}
 	var out []byte
+	var expandedBytes int64
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		if !safeArchivePath(file.Name) || filepath.Base(file.Name) != expected {
+		if !safeArchivePath(file.Name) {
+			return nil, fmt.Errorf("release archive contains unexpected file %q", file.Name)
+		}
+		if err := reserveExpandedBytes(&expandedBytes, file.UncompressedSize64, maxBytes); err != nil {
+			return nil, err
+		}
+		if archiveBase(file.Name) != expected {
+			if isGoReleaserArchiveMetadata(file.Name) {
+				continue
+			}
 			return nil, fmt.Errorf("release archive contains unexpected file %q", file.Name)
 		}
 		if out != nil {
 			return nil, errors.New("release archive contains multiple binary files")
 		}
-		if file.UncompressedSize64 > uint64(maxBytes) {
-			return nil, fmt.Errorf("extracted binary exceeds maximum size: %d bytes is greater than %d bytes", file.UncompressedSize64, maxBytes)
-		}
 		rc, err := file.Open()
 		if err != nil {
 			return nil, err
 		}
-		out, err = readLimited(rc, maxBytes, "extracted binary")
+		out, err = readLimited(rc, int64(file.UncompressedSize64), "extracted binary")
 		closeErr := rc.Close()
 		if err != nil {
 			return nil, err
@@ -359,6 +366,7 @@ func extractTarGzBinary(archiveBytes []byte, expected string, maxBytes int64) ([
 	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	var out []byte
+	var expandedBytes int64
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -370,16 +378,25 @@ func extractTarGzBinary(archiveBytes []byte, expected string, maxBytes int64) ([
 		if header.FileInfo().IsDir() {
 			continue
 		}
-		if header.Typeflag != tar.TypeReg || !safeArchivePath(header.Name) || filepath.Base(header.Name) != expected {
+		if header.Typeflag != tar.TypeReg || !safeArchivePath(header.Name) {
+			return nil, fmt.Errorf("release archive contains unexpected file %q", header.Name)
+		}
+		if header.Size < 0 {
+			return nil, fmt.Errorf("release archive contains invalid file size for %q", header.Name)
+		}
+		if err := reserveExpandedBytes(&expandedBytes, uint64(header.Size), maxBytes); err != nil {
+			return nil, err
+		}
+		if archiveBase(header.Name) != expected {
+			if isGoReleaserArchiveMetadata(header.Name) {
+				continue
+			}
 			return nil, fmt.Errorf("release archive contains unexpected file %q", header.Name)
 		}
 		if out != nil {
 			return nil, errors.New("release archive contains multiple binary files")
 		}
-		if header.Size > maxBytes {
-			return nil, fmt.Errorf("extracted binary exceeds maximum size: %d bytes is greater than %d bytes", header.Size, maxBytes)
-		}
-		out, err = readLimited(tr, maxBytes, "extracted binary")
+		out, err = readLimited(tr, header.Size, "extracted binary")
 		if err != nil {
 			return nil, err
 		}
@@ -388,6 +405,14 @@ func extractTarGzBinary(archiveBytes []byte, expected string, maxBytes int64) ([
 		return nil, fmt.Errorf("release archive does not contain %s", expected)
 	}
 	return out, nil
+}
+
+func reserveExpandedBytes(total *int64, size uint64, maxBytes int64) error {
+	if size > uint64(maxBytes-*total) {
+		return fmt.Errorf("extracted archive exceeds maximum size: more than %d bytes", maxBytes)
+	}
+	*total += int64(size)
+	return nil
 }
 
 func readLimited(r io.Reader, maxBytes int64, label string) ([]byte, error) {
@@ -402,7 +427,7 @@ func readLimited(r io.Reader, maxBytes int64, label string) ([]byte, error) {
 }
 
 func safeArchivePath(name string) bool {
-	if name == "" || filepath.IsAbs(name) {
+	if name == "" || strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) || hasWindowsDrivePrefix(name) {
 		return false
 	}
 	for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
@@ -411,6 +436,30 @@ func safeArchivePath(name string) bool {
 		}
 	}
 	return true
+}
+
+func hasWindowsDrivePrefix(name string) bool {
+	return len(name) >= 3 &&
+		((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) &&
+		name[1] == ':' &&
+		(name[2] == '/' || name[2] == '\\')
+}
+
+func archiveBase(name string) string {
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+func isGoReleaserArchiveMetadata(name string) bool {
+	switch strings.ToLower(archiveBase(name)) {
+	case "readme", "readme.md", "license", "license.txt", "changelog", "changelog.md":
+		return true
+	default:
+		return false
+	}
 }
 
 func installPOSIX(target string, binaryBytes []byte) error {
