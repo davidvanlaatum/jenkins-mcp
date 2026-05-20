@@ -265,12 +265,92 @@ func TestUpdateRejectsTarGzThatExpandsPastLimit(t *testing.T) {
 	r.Error(err, "Update() should reject tar.gz payload that expands past the limit")
 }
 
+func TestExtractBinaryAllowsGoReleaserMetadata(t *testing.T) {
+	r := require.New(t)
+
+	files := []archiveFile{
+		{Name: "README", Content: "readme"},
+		{Name: "README.md", Content: "readme"},
+		{Name: "LICENSE", Content: "license"},
+		{Name: "LICENSE.txt", Content: "license"},
+		{Name: "CHANGELOG", Content: "changes"},
+		{Name: "CHANGELOG.md", Content: "changes"},
+		{Name: "jenkins-mcp-server", Content: "binary"},
+	}
+	archiveBytes := tarGzArchiveFiles(t, files)
+	got, err := extractBinary("jenkins-mcp-server_Linux_x86_64.tar.gz", archiveBytes, "linux", 1024)
+	r.NoError(err, "extractBinary() should ignore GoReleaser metadata")
+	r.Equal("binary", string(got), "binary content")
+
+	zipBytes := zipArchiveFiles(t, []archiveFile{
+		{Name: "README.md", Content: "readme"},
+		{Name: "LICENSE", Content: "license"},
+		{Name: "jenkins-mcp-server.exe", Content: "windows binary"},
+	})
+	got, err = extractBinary("jenkins-mcp-server_Windows_x86_64.zip", zipBytes, "windows", 1024)
+	r.NoError(err, "extractBinary() should ignore GoReleaser metadata in zip archives")
+	r.Equal("windows binary", string(got), "windows binary content")
+}
+
+func TestExtractBinaryRejectsMetadataLookalikes(t *testing.T) {
+	r := require.New(t)
+
+	archiveBytes := tarGzArchiveFiles(t, []archiveFile{
+		{Name: "README.exe", Content: "not metadata"},
+		{Name: "jenkins-mcp-server", Content: "binary"},
+	})
+	_, err := extractBinary("jenkins-mcp-server_Linux_x86_64.tar.gz", archiveBytes, "linux", 1024)
+	r.Error(err, "extractBinary() should reject README lookalikes")
+
+	zipBytes := zipArchiveFiles(t, []archiveFile{
+		{Name: "LICENSE-backup", Content: "not metadata"},
+		{Name: "jenkins-mcp-server.exe", Content: "binary"},
+	})
+	_, err = extractBinary("jenkins-mcp-server_Windows_x86_64.zip", zipBytes, "windows", 1024)
+	r.Error(err, "extractBinary() should reject LICENSE lookalikes")
+}
+
+func TestExtractBinaryRejectsMetadataThatExceedsExpandedLimit(t *testing.T) {
+	r := require.New(t)
+
+	archiveBytes := tarGzArchiveFiles(t, []archiveFile{
+		{Name: "README.md", Content: strings.Repeat("a", 2048)},
+		{Name: "jenkins-mcp-server", Content: "binary"},
+	})
+	r.Less(len(archiveBytes), 1024, "test archive should be compressed below the configured limit")
+	_, err := extractBinary("jenkins-mcp-server_Linux_x86_64.tar.gz", archiveBytes, "linux", 1024)
+	r.Error(err, "extractBinary() should reject tar.gz metadata that expands past the limit")
+
+	zipBytes := zipArchiveFiles(t, []archiveFile{
+		{Name: "README.md", Content: strings.Repeat("a", 2048)},
+		{Name: "jenkins-mcp-server.exe", Content: "binary"},
+	})
+	r.Less(len(zipBytes), 1024, "test archive should be compressed below the configured limit")
+	_, err = extractBinary("jenkins-mcp-server_Windows_x86_64.zip", zipBytes, "windows", 1024)
+	r.Error(err, "extractBinary() should reject zip metadata that expands past the limit")
+}
+
 func TestExtractBinaryRejectsUnexpectedArchiveFile(t *testing.T) {
 	r := require.New(t)
 
-	archiveBytes := tarGzArchive(t, "README.md", "unexpected")
+	archiveBytes := tarGzArchive(t, "notes.txt", "unexpected")
 	_, err := extractBinary("jenkins-mcp-server_Linux_x86_64.tar.gz", archiveBytes, "linux", 1024)
 	r.Error(err, "extractBinary() should reject unexpected archive files")
+}
+
+func TestExtractBinaryRejectsPlatformAbsoluteArchivePaths(t *testing.T) {
+	r := require.New(t)
+
+	for _, name := range []string{
+		"/jenkins-mcp-server",
+		`\jenkins-mcp-server`,
+		`C:\jenkins-mcp-server`,
+		`\\server\share\jenkins-mcp-server`,
+	} {
+		archiveBytes := tarGzArchive(t, name, "binary")
+		_, err := extractBinary("jenkins-mcp-server_Linux_x86_64.tar.gz", archiveBytes, "linux", 1024)
+		r.Error(err, "extractBinary() should reject %q", name)
+	}
 }
 
 func releaseServer(t *testing.T, tag string, assets map[string][]byte) *httptest.Server {
@@ -304,13 +384,25 @@ func releaseServer(t *testing.T, tag string, assets map[string][]byte) *httptest
 
 func tarGzArchive(t *testing.T, name, content string) []byte {
 	t.Helper()
+	return tarGzArchiveFiles(t, []archiveFile{{Name: name, Content: content}})
+}
+
+type archiveFile struct {
+	Name    string
+	Content string
+}
+
+func tarGzArchiveFiles(t *testing.T, files []archiveFile) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content))})
-	require.NoError(t, err, "WriteHeader()")
-	_, err = tw.Write([]byte(content))
-	require.NoError(t, err, "Write()")
+	for _, file := range files {
+		err := tw.WriteHeader(&tar.Header{Name: file.Name, Mode: 0o755, Size: int64(len(file.Content))})
+		require.NoError(t, err, "WriteHeader()")
+		_, err = tw.Write([]byte(file.Content))
+		require.NoError(t, err, "Write()")
+	}
 	require.NoError(t, tw.Close(), "tar Close()")
 	require.NoError(t, gz.Close(), "gzip Close()")
 	return buf.Bytes()
@@ -318,12 +410,19 @@ func tarGzArchive(t *testing.T, name, content string) []byte {
 
 func zipArchive(t *testing.T, name, content string) []byte {
 	t.Helper()
+	return zipArchiveFiles(t, []archiveFile{{Name: name, Content: content}})
+}
+
+func zipArchiveFiles(t *testing.T, files []archiveFile) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	w, err := zw.Create(name)
-	require.NoError(t, err, "Create()")
-	_, err = w.Write([]byte(content))
-	require.NoError(t, err, "Write()")
+	for _, file := range files {
+		w, err := zw.Create(file.Name)
+		require.NoError(t, err, "Create()")
+		_, err = w.Write([]byte(file.Content))
+		require.NoError(t, err, "Write()")
+	}
 	require.NoError(t, zw.Close(), "Close()")
 	return buf.Bytes()
 }
