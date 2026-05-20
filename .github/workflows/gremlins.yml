@@ -15,18 +15,10 @@ concurrency:
 
 jobs:
   gremlins:
-    name: Gremlins (${{ matrix.package }})
+    name: Gremlins
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - internal/artifacts
-          - internal/jenkins/urlx
-          - internal/pagination
-          - internal/security
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -37,14 +29,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Check package tests
-        run: go test -tags=no_integration ./${{ matrix.package }}
+      - name: Check tests
+        run: go test -tags=no_integration ./...
 
       - name: Run Gremlins
         uses: go-gremlins/gremlins-action@v1
         with:
           version: v0.6.0
-          workdir: ${{ matrix.package }}
           args: --tags=no_integration --workers=2 --test-cpu=1 --timeout-coefficient=3 --output-statuses=lctv
 
       - name: Write baseline summary
@@ -53,5 +44,5 @@ jobs:
           echo '## Gremlins mutation testing' >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
           echo 'This job is informational while the initial mutation baseline is established.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Package scope:' '${{ matrix.package }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Package scope: module root with -tags=no_integration' >> "$GITHUB_STEP_SUMMARY"
           echo 'Gremlins version: v0.6.0' >> "$GITHUB_STEP_SUMMARY"
