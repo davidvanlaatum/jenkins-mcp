@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/david/jenkins-mcp/internal/config"
+	apperrors "github.com/david/jenkins-mcp/internal/errors"
 
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +115,43 @@ func TestDoAllowsConcurrentRequests(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		r.NoError(err, "GetText()")
+	}
+}
+
+func TestGetJSONClassifiesHTMLHTTPFailuresWithoutLeakingBody(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		code   apperrors.Code
+		status int
+	}{
+		{name: "forbidden", code: apperrors.CodePermissionDenied, status: http.StatusForbidden},
+		{name: "not found", code: apperrors.CodeNotFound, status: http.StatusNotFound},
+		{name: "server error", code: apperrors.CodeJenkins, status: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			const htmlBody = `<!doctype html><html><body><h1>Jenkins error</h1><p>secret-html-token</p></body></html>`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(htmlBody))
+			}))
+			defer server.Close()
+
+			c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			r.NoError(err, "New()")
+
+			var out struct{}
+			err = c.GetJSON(t.Context(), "job/app/api/json", nil, &out)
+			r.Error(err, "GetJSON() should fail for non-2xx HTML response")
+
+			var appErr *apperrors.Error
+			r.True(stderrors.As(err, &appErr), "GetJSON() error should be an application error")
+			r.Equal(tc.code, appErr.Code, "error code")
+			r.NotContains(fmt.Sprint(appErr.Detail), "<html", "error detail should not include raw HTML")
+			r.NotContains(fmt.Sprint(appErr.Detail), "secret-html-token", "error detail should not leak response body")
+			r.Equal(map[string]any{"status": tc.status}, appErr.Detail, "error detail")
+		})
 	}
 }
 
