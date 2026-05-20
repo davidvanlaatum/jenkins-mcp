@@ -25,3 +25,25 @@ build tag:
 ```bash
 go test -tags=no_integration ./...
 ```
+
+## Mutation testing
+
+CI runs Gremlins mutation testing as an informational baseline job. The workflow
+uses `go-gremlins/gremlins-action@v1` with Gremlins `v0.6.0` so the tool version
+is fixed while still using the official action wrapper.
+
+The initial package scope is the whole module from the repository root with
+`-tags=no_integration`. This avoids running Docker-backed integration tests while
+still measuring the regular package surface. Packages without tests are included
+in the informational baseline; Gremlins reports their mutants as not covered.
+The GitHub Actions job has a 10 minute timeout, uses two Gremlins workers,
+passes `-tags=no_integration`, and is marked `continue-on-error` while baseline
+results are collected. Surviving mutations are visible in the workflow logs and
+should be reviewed before deciding whether to add a blocking threshold.
+
+Run the same scope locally with:
+
+```bash
+go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+gremlins unleash --tags=no_integration --workers=2 --test-cpu=1 --timeout-coefficient=3 --output-statuses=lctv
+```
