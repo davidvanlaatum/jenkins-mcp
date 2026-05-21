@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -239,6 +240,7 @@ type ListJobsRequest struct {
 	HasLastCompletedBuild     *bool  `json:"hasLastCompletedBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastCompletedBuild reference"`
 	HasLastSuccessfulBuild    *bool  `json:"hasLastSuccessfulBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastSuccessfulBuild reference"`
 	HasLastFailedBuild        *bool  `json:"hasLastFailedBuild,omitempty" jsonschema:"Filter by whether Jenkins reports a lastFailedBuild reference"`
+	HasWarningsNGIssues       *bool  `json:"hasWarningsNgIssues,omitempty" jsonschema:"Filter by whether the job's lastCompletedBuild has Warnings NG summary data with at least one tool reporting total issues greater than zero; evaluated only when requested"`
 	LastBuildAfter            string `json:"lastBuildAfter,omitempty" jsonschema:"Include jobs whose lastBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastBuild do not match"`
 	LastBuildBefore           string `json:"lastBuildBefore,omitempty" jsonschema:"Include jobs whose lastBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastBuild do not match"`
 	LastCompletedBuildAfter   string `json:"lastCompletedBuildAfter,omitempty" jsonschema:"Include jobs whose lastCompletedBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastCompletedBuild do not match"`
@@ -335,6 +337,7 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 	hasLastCompletedBuild := cloneBool(in.HasLastCompletedBuild)
 	hasLastSuccessfulBuild := cloneBool(in.HasLastSuccessfulBuild)
 	hasLastFailedBuild := cloneBool(in.HasLastFailedBuild)
+	hasWarningsNGIssues := cloneBool(in.HasWarningsNGIssues)
 	hasTests := cloneBool(in.HasTests)
 	hasFailedTests := cloneBool(in.HasFailedTests)
 	hasSkippedTests := cloneBool(in.HasSkippedTests)
@@ -352,6 +355,7 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		HasLastCompletedBuild     *bool  `json:"hasLastCompletedBuild,omitempty"`
 		HasLastSuccessfulBuild    *bool  `json:"hasLastSuccessfulBuild,omitempty"`
 		HasLastFailedBuild        *bool  `json:"hasLastFailedBuild,omitempty"`
+		HasWarningsNGIssues       *bool  `json:"hasWarningsNgIssues,omitempty"`
 		LastBuildAfter            string `json:"lastBuildAfter,omitempty"`
 		LastBuildBefore           string `json:"lastBuildBefore,omitempty"`
 		LastCompletedBuildAfter   string `json:"lastCompletedBuildAfter,omitempty"`
@@ -377,6 +381,7 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		HasLastCompletedBuild:     hasLastCompletedBuild,
 		HasLastSuccessfulBuild:    hasLastSuccessfulBuild,
 		HasLastFailedBuild:        hasLastFailedBuild,
+		HasWarningsNGIssues:       hasWarningsNGIssues,
 		LastBuildAfter:            strings.TrimSpace(in.LastBuildAfter),
 		LastBuildBefore:           strings.TrimSpace(in.LastBuildBefore),
 		LastCompletedBuildAfter:   strings.TrimSpace(in.LastCompletedBuildAfter),
@@ -415,6 +420,7 @@ type jobFilter struct {
 	hasLastCompletedBuild     *bool
 	hasLastSuccessfulBuild    *bool
 	hasLastFailedBuild        *bool
+	hasWarningsNGIssues       *bool
 	lastBuildAfter            *int64
 	lastBuildBefore           *int64
 	lastCompletedBuildAfter   *int64
@@ -439,6 +445,7 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 	filter.hasLastCompletedBuild = in.HasLastCompletedBuild
 	filter.hasLastSuccessfulBuild = in.HasLastSuccessfulBuild
 	filter.hasLastFailedBuild = in.HasLastFailedBuild
+	filter.hasWarningsNGIssues = in.HasWarningsNGIssues
 	filter.hasTests = in.HasTests
 	filter.hasFailedTests = in.HasFailedTests
 	filter.hasSkippedTests = in.HasSkippedTests
@@ -492,7 +499,7 @@ func filterJobs(ctx context.Context, api *jenkinsapi.API, jobs []model.Job, filt
 		if matches {
 			out = append(out, job)
 			if maxMatches > 0 && len(out) >= maxMatches {
-				break
+				return out, nil
 			}
 		}
 	}
@@ -542,6 +549,15 @@ func jobMatchesFilter(ctx context.Context, api *jenkinsapi.API, job model.Job, f
 	if !buildTimestampMatches(job.LastFailedBuild, filter.lastFailedBuildAfter, filter.lastFailedBuildBefore) {
 		return false, nil
 	}
+	if filter.hasWarningsNGIssues != nil {
+		hasIssues, err := jobHasWarningsNGIssues(ctx, api, job)
+		if err != nil {
+			return false, err
+		}
+		if hasIssues != *filter.hasWarningsNGIssues {
+			return false, nil
+		}
+	}
 	if !filter.requiresTestReport() {
 		return true, nil
 	}
@@ -576,6 +592,25 @@ func jobMatchesTestFilters(ctx context.Context, api *jenkinsapi.API, job model.J
 	return true, nil
 }
 
+func jobHasWarningsNGIssues(ctx context.Context, api *jenkinsapi.API, job model.Job) (bool, error) {
+	if job.LastCompletedBuild == nil {
+		return false, nil
+	}
+	summary, err := api.WarningsNGSummaryStrict(ctx, job.FullName, job.LastCompletedBuild.Number)
+	if err != nil {
+		if isOptionalWarningsNGMissing(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, tool := range summary.Tools {
+		if tool.Total > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func matchesMissingTestReport(filter jobFilter) bool {
 	if filter.hasTests != nil && *filter.hasTests {
 		return false
@@ -587,6 +622,17 @@ func matchesMissingTestReport(filter jobFilter) bool {
 		return false
 	}
 	return true
+}
+
+func isOptionalWarningsNGMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	var appErr *apperrors.Error
+	if !errors.As(err, &appErr) {
+		return false
+	}
+	return appErr.Code == apperrors.CodeNotFound || appErr.Code == apperrors.CodeUnsupported
 }
 
 func parseJobTimestampFilter(name string, raw string) (*int64, error) {

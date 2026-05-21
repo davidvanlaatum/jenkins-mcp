@@ -587,6 +587,138 @@ func TestListJobsAppliesMetadataFiltersWithoutChangingResponseShape(t *testing.T
 	r.NotContains(string(raw), "lastSuccessfulBuild", "list jobs response shape should not expose filter metadata")
 }
 
+func TestListJobsFiltersByWarningsNGIssues(t *testing.T) {
+	r := require.New(t)
+
+	var warningPaths []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"no-tools","url":"https://jenkins.example.com/job/no-tools/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":1,"url":"https://jenkins.example.com/job/no-tools/1/","result":"SUCCESS","building":false}},
+				{"name":"zero","url":"https://jenkins.example.com/job/zero/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":2,"url":"https://jenkins.example.com/job/zero/2/","result":"SUCCESS","building":false}},
+				{"name":"positive","url":"https://jenkins.example.com/job/positive/","color":"yellow","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":3,"url":"https://jenkins.example.com/job/positive/3/","result":"UNSTABLE","building":false}},
+				{"name":"missing","url":"https://jenkins.example.com/job/missing/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":4,"url":"https://jenkins.example.com/job/missing/4/","result":"SUCCESS","building":false}},
+				{"name":"no-completed","url":"https://jenkins.example.com/job/no-completed/","color":"notbuilt","_class":"hudson.model.FreeStyleProject","buildable":true}
+			]}`)
+		case "/job/no-tools/1/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			writeJSON(w, `{"tools":[]}`)
+		case "/job/zero/2/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			writeJSON(w, `{"tools":[{"id":"gcc","name":"GCC","total":0}]}`)
+		case "/job/positive/3/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			writeJSON(w, `{"tools":[{"id":"clang","name":"Clang","total":2}]}`)
+		case "/job/missing/4/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasWarnings := true
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "jobs with Warnings NG issues")
+	r.Equal("positive", got.Items[0].Name, "job name")
+	for _, path := range warningPaths {
+		r.NotContains(path, "no-completed", "jobs without lastCompletedBuild should not be probed")
+	}
+
+	hasWarnings = false
+	got, err = ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	r.NoError(err, "ListJobs() error")
+	names := jobNames(got.Items)
+	r.ElementsMatch([]string{"no-tools", "zero", "missing", "no-completed"}, names, "jobs without Warnings NG issues")
+}
+
+func TestListJobsDoesNotProbeWarningsNGWhenFilterOmitted(t *testing.T) {
+	r := require.New(t)
+
+	var warningCalls int
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"positive","url":"https://jenkins.example.com/job/positive/","color":"yellow","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":3,"url":"https://jenkins.example.com/job/positive/3/","result":"UNSTABLE","building":false}}
+			]}`)
+		case "/job/positive/3/warnings-ng/api/json":
+			warningCalls++
+			writeJSON(w, `{"tools":[{"id":"clang","name":"Clang","total":2}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal(0, warningCalls, "Warnings NG endpoint calls")
+}
+
+func TestListJobsWarningsNGFilterPropagatesFetchErrors(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"unreadable","url":"https://jenkins.example.com/job/unreadable/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":5,"url":"https://jenkins.example.com/job/unreadable/5/","result":"SUCCESS","building":false}}
+			]}`)
+		case "/job/unreadable/5/warnings-ng/api/json":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasWarnings := false
+	_, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	r.Error(err, "ListJobs() should propagate Warnings NG fetch errors")
+	assertAppErrorCode(t, err, apperrors.CodeJenkins)
+}
+
+func TestListJobsWarningsNGFilterStopsAfterPagePlusOneMatch(t *testing.T) {
+	r := require.New(t)
+
+	var warningPaths []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"first","url":"https://jenkins.example.com/job/first/","color":"yellow","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":1,"url":"https://jenkins.example.com/job/first/1/","result":"UNSTABLE","building":false}},
+				{"name":"second","url":"https://jenkins.example.com/job/second/","color":"yellow","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":2,"url":"https://jenkins.example.com/job/second/2/","result":"UNSTABLE","building":false}},
+				{"name":"late-error","url":"https://jenkins.example.com/job/late-error/","color":"yellow","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":3,"url":"https://jenkins.example.com/job/late-error/3/","result":"UNSTABLE","building":false}}
+			]}`)
+		case "/job/first/1/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			writeJSON(w, `{"tools":[{"id":"gcc","name":"GCC","total":1}]}`)
+		case "/job/second/2/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			writeJSON(w, `{"tools":[{"id":"clang","name":"Clang","total":1}]}`)
+		case "/job/late-error/3/warnings-ng/api/json":
+			warningPaths = append(warningPaths, r.URL.Path)
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasWarnings := true
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings, Limit: 1})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal("first", got.Items[0].Name, "first page item")
+	r.True(got.HasMore, "pagination hasMore")
+	r.NotEmpty(got.NextCursor, "pagination next cursor")
+	r.ElementsMatch([]string{
+		"/job/first/1/warnings-ng/api/json",
+		"/job/second/2/warnings-ng/api/json",
+	}, warningPaths, "Warnings NG probes should stop after page plus one matching job")
+}
+
 func TestListJobsTimestampFilterRequiresReferencedBuild(t *testing.T) {
 	r := require.New(t)
 
@@ -2514,6 +2646,14 @@ func writeJSON(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, body)
+}
+
+func jobNames(jobs []model.Job) []string {
+	names := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		names = append(names, job.Name)
+	}
+	return names
 }
 
 func rawUnsignedWatchStateToken(state watchState) (string, error) {
