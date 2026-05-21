@@ -249,6 +249,9 @@ type ListJobsRequest struct {
 	LastSuccessfulBuildBefore string `json:"lastSuccessfulBuildBefore,omitempty" jsonschema:"Include jobs whose lastSuccessfulBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastSuccessfulBuild do not match"`
 	LastFailedBuildAfter      string `json:"lastFailedBuildAfter,omitempty" jsonschema:"Include jobs whose lastFailedBuild timestamp is on or after this RFC3339 time or Unix epoch millisecond value; jobs without lastFailedBuild do not match"`
 	LastFailedBuildBefore     string `json:"lastFailedBuildBefore,omitempty" jsonschema:"Include jobs whose lastFailedBuild timestamp is on or before this RFC3339 time or Unix epoch millisecond value; jobs without lastFailedBuild do not match"`
+	HasTests                  *bool  `json:"hasTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with totalCount greater than zero; evaluated only when provided"`
+	HasFailedTests            *bool  `json:"hasFailedTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with failCount greater than zero; evaluated only when provided"`
+	HasSkippedTests           *bool  `json:"hasSkippedTests,omitempty" jsonschema:"Filter by whether lastCompletedBuild has a JUnit test report with skipCount greater than zero; evaluated only when provided"`
 }
 type ListJobsResponse struct {
 	Items      []model.Job `json:"items" jsonschema:"Matching Jenkins jobs for this page"`
@@ -335,6 +338,9 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 	hasLastSuccessfulBuild := cloneBool(in.HasLastSuccessfulBuild)
 	hasLastFailedBuild := cloneBool(in.HasLastFailedBuild)
 	hasWarningsNGIssues := cloneBool(in.HasWarningsNGIssues)
+	hasTests := cloneBool(in.HasTests)
+	hasFailedTests := cloneBool(in.HasFailedTests)
+	hasSkippedTests := cloneBool(in.HasSkippedTests)
 	body, err := json.Marshal(struct {
 		Controller                string `json:"controller,omitempty"`
 		Folder                    string `json:"folder,omitempty"`
@@ -358,6 +364,9 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		LastSuccessfulBuildBefore string `json:"lastSuccessfulBuildBefore,omitempty"`
 		LastFailedBuildAfter      string `json:"lastFailedBuildAfter,omitempty"`
 		LastFailedBuildBefore     string `json:"lastFailedBuildBefore,omitempty"`
+		HasTests                  *bool  `json:"hasTests,omitempty"`
+		HasFailedTests            *bool  `json:"hasFailedTests,omitempty"`
+		HasSkippedTests           *bool  `json:"hasSkippedTests,omitempty"`
 	}{
 		Controller:                in.Controller,
 		Folder:                    in.Folder,
@@ -381,12 +390,23 @@ func listJobsCursorSignature(in ListJobsRequest) (string, error) {
 		LastSuccessfulBuildBefore: strings.TrimSpace(in.LastSuccessfulBuildBefore),
 		LastFailedBuildAfter:      strings.TrimSpace(in.LastFailedBuildAfter),
 		LastFailedBuildBefore:     strings.TrimSpace(in.LastFailedBuildBefore),
+		HasTests:                  hasTests,
+		HasFailedTests:            hasFailedTests,
+		HasSkippedTests:           hasSkippedTests,
 	})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(body)
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 type jobFilter struct {
@@ -409,6 +429,9 @@ type jobFilter struct {
 	lastSuccessfulBuildBefore *int64
 	lastFailedBuildAfter      *int64
 	lastFailedBuildBefore     *int64
+	hasTests                  *bool
+	hasFailedTests            *bool
+	hasSkippedTests           *bool
 }
 
 func newJobFilter(in ListJobsRequest) (jobFilter, error) {
@@ -423,6 +446,9 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 	filter.hasLastSuccessfulBuild = in.HasLastSuccessfulBuild
 	filter.hasLastFailedBuild = in.HasLastFailedBuild
 	filter.hasWarningsNGIssues = in.HasWarningsNGIssues
+	filter.hasTests = in.HasTests
+	filter.hasFailedTests = in.HasFailedTests
+	filter.hasSkippedTests = in.HasSkippedTests
 	if strings.TrimSpace(in.NameRegex) != "" {
 		expr, err := regexp.Compile(in.NameRegex)
 		if err != nil {
@@ -459,6 +485,9 @@ func newJobFilter(in ListJobsRequest) (jobFilter, error) {
 
 func filterJobs(ctx context.Context, api *jenkinsapi.API, jobs []model.Job, filter jobFilter, maxMatches int) ([]model.Job, error) {
 	if filter == (jobFilter{}) {
+		if maxMatches > 0 && len(jobs) > maxMatches {
+			return jobs[:maxMatches], nil
+		}
 		return jobs, nil
 	}
 	out := make([]model.Job, 0, len(jobs))
@@ -529,6 +558,37 @@ func jobMatchesFilter(ctx context.Context, api *jenkinsapi.API, job model.Job, f
 			return false, nil
 		}
 	}
+	if !filter.requiresTestReport() {
+		return true, nil
+	}
+	matches, err := jobMatchesTestFilters(ctx, api, job, filter)
+	return matches, err
+}
+
+func (filter jobFilter) requiresTestReport() bool {
+	return filter.hasTests != nil || filter.hasFailedTests != nil || filter.hasSkippedTests != nil
+}
+
+func jobMatchesTestFilters(ctx context.Context, api *jenkinsapi.API, job model.Job, filter jobFilter) (bool, error) {
+	if job.LastCompletedBuild == nil || job.LastCompletedBuild.Number <= 0 {
+		return matchesMissingTestReport(filter), nil
+	}
+	report, err := api.TestReportSummary(ctx, job.FullName, job.LastCompletedBuild.Number)
+	if err != nil {
+		if isMissingTestReport(err) {
+			return matchesMissingTestReport(filter), nil
+		}
+		return false, err
+	}
+	if filter.hasTests != nil && (report.TotalCount > 0) != *filter.hasTests {
+		return false, nil
+	}
+	if filter.hasFailedTests != nil && (report.FailCount > 0) != *filter.hasFailedTests {
+		return false, nil
+	}
+	if filter.hasSkippedTests != nil && (report.SkipCount > 0) != *filter.hasSkippedTests {
+		return false, nil
+	}
 	return true, nil
 }
 
@@ -551,6 +611,19 @@ func jobHasWarningsNGIssues(ctx context.Context, api *jenkinsapi.API, job model.
 	return false, nil
 }
 
+func matchesMissingTestReport(filter jobFilter) bool {
+	if filter.hasTests != nil && *filter.hasTests {
+		return false
+	}
+	if filter.hasFailedTests != nil && *filter.hasFailedTests {
+		return false
+	}
+	if filter.hasSkippedTests != nil && *filter.hasSkippedTests {
+		return false
+	}
+	return true
+}
+
 func isOptionalWarningsNGMissing(err error) bool {
 	if err == nil {
 		return false
@@ -560,14 +633,6 @@ func isOptionalWarningsNGMissing(err error) bool {
 		return false
 	}
 	return appErr.Code == apperrors.CodeNotFound || appErr.Code == apperrors.CodeUnsupported
-}
-
-func cloneBool(value *bool) *bool {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func parseJobTimestampFilter(name string, raw string) (*int64, error) {
@@ -611,6 +676,11 @@ func buildTimestampMatches(build *model.BuildSummary, after *int64, before *int6
 		return false
 	}
 	return true
+}
+
+func isMissingTestReport(err error) bool {
+	appErr, ok := err.(*apperrors.Error)
+	return ok && appErr.Code == apperrors.CodeNotFound
 }
 
 func normalizeStatusFilter(status string) string {

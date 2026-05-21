@@ -537,6 +537,24 @@ func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly
 	return report, nil
 }
 
+func (a *API) TestReportSummary(ctx context.Context, job string, number int) (model.TestReport, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
+	var raw struct {
+		TotalCount int `json:"totalCount"`
+		FailCount  int `json:"failCount"`
+		SkipCount  int `json:"skipCount"`
+		PassCount  int `json:"passCount"`
+	}
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {"totalCount,failCount,skipCount,passCount"}}, &raw); err != nil {
+		return model.TestReport{}, err
+	}
+	totalCount := raw.TotalCount
+	if totalCount == 0 {
+		totalCount = raw.PassCount + raw.FailCount + raw.SkipCount
+	}
+	return model.TestReport{TotalCount: totalCount, FailCount: raw.FailCount, SkipCount: raw.SkipCount, PassCount: raw.PassCount}, nil
+}
+
 func (a *API) PipelineRun(ctx context.Context, job string, number int) (model.PipelineRun, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/wfapi/describe"
 	var raw struct {

@@ -422,6 +422,132 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	r.Empty(got.NextCursor, "pagination next cursor")
 }
 
+func TestListJobsDoesNotProbeJUnitWithoutTestFilters(t *testing.T) {
+	r := require.New(t)
+
+	var requested []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		if strings.Contains(r.URL.Path, "testReport") {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path != "/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, `{"jobs":[
+			{"name":"tests","url":"https://jenkins.example.com/job/tests/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":7,"result":"SUCCESS","building":false}}
+		]}`)
+	})
+
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{NameContains: "test"})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal([]string{"/api/json"}, requested, "requested paths")
+}
+
+func TestListJobsAppliesTestResultFilters(t *testing.T) {
+	r := require.New(t)
+
+	var summaryTrees []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"no-tests","url":"https://jenkins.example.com/job/no-tests/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":1,"result":"SUCCESS","building":false}},
+				{"name":"passing-tests","url":"https://jenkins.example.com/job/passing-tests/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":2,"result":"SUCCESS","building":false}},
+				{"name":"failed-tests","url":"https://jenkins.example.com/job/failed-tests/","color":"red","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":3,"result":"FAILURE","building":false}},
+				{"name":"skipped-tests","url":"https://jenkins.example.com/job/skipped-tests/","color":"yellow","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":4,"result":"UNSTABLE","building":false}},
+				{"name":"missing-junit","url":"https://jenkins.example.com/job/missing-junit/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":5,"result":"SUCCESS","building":false}},
+				{"name":"never-built","url":"https://jenkins.example.com/job/never-built/","color":"notbuilt","_class":"hudson.model.FreeStyleProject"}
+			]}`)
+		case "/job/no-tests/1/testReport/api/json":
+			summaryTrees = append(summaryTrees, r.URL.Query().Get("tree"))
+			writeJSON(w, `{"totalCount":0,"failCount":0,"skipCount":0,"passCount":0}`)
+		case "/job/passing-tests/2/testReport/api/json":
+			summaryTrees = append(summaryTrees, r.URL.Query().Get("tree"))
+			writeJSON(w, `{"totalCount":3,"failCount":0,"skipCount":0,"passCount":3}`)
+		case "/job/failed-tests/3/testReport/api/json":
+			summaryTrees = append(summaryTrees, r.URL.Query().Get("tree"))
+			writeJSON(w, `{"totalCount":2,"failCount":1,"skipCount":0,"passCount":1}`)
+		case "/job/skipped-tests/4/testReport/api/json":
+			summaryTrees = append(summaryTrees, r.URL.Query().Get("tree"))
+			writeJSON(w, `{"totalCount":2,"failCount":0,"skipCount":1,"passCount":1}`)
+		case "/job/missing-junit/5/testReport/api/json":
+			summaryTrees = append(summaryTrees, r.URL.Query().Get("tree"))
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasTests := true
+	withTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasTests: &hasTests})
+	r.NoError(err, "ListJobs() hasTests error")
+	r.Len(withTests.Items, 3, "hasTests items")
+	r.Equal("passing-tests", withTests.Items[0].Name, "first hasTests item")
+	r.Equal("failed-tests", withTests.Items[1].Name, "second hasTests item")
+	r.Equal("skipped-tests", withTests.Items[2].Name, "third hasTests item")
+
+	hasFailedTests := true
+	withFailedTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasFailedTests: &hasFailedTests})
+	r.NoError(err, "ListJobs() hasFailedTests error")
+	r.Len(withFailedTests.Items, 1, "hasFailedTests items")
+	r.Equal("failed-tests", withFailedTests.Items[0].Name, "failed test item")
+
+	hasSkippedTests := true
+	withSkippedTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasSkippedTests: &hasSkippedTests})
+	r.NoError(err, "ListJobs() hasSkippedTests error")
+	r.Len(withSkippedTests.Items, 1, "hasSkippedTests items")
+	r.Equal("skipped-tests", withSkippedTests.Items[0].Name, "skipped test item")
+
+	r.NotEmpty(summaryTrees, "summary JUnit probes")
+	for _, tree := range summaryTrees {
+		r.Equal("totalCount,failCount,skipCount,passCount", tree, "summary tree query")
+	}
+}
+
+func TestListJobsStopsJUnitProbesAfterPageSentinel(t *testing.T) {
+	r := require.New(t)
+
+	var requested []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"one","url":"https://jenkins.example.com/job/one/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":1,"result":"SUCCESS","building":false}},
+				{"name":"two","url":"https://jenkins.example.com/job/two/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":2,"result":"SUCCESS","building":false}},
+				{"name":"three","url":"https://jenkins.example.com/job/three/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":3,"result":"SUCCESS","building":false}},
+				{"name":"four","url":"https://jenkins.example.com/job/four/","color":"blue","_class":"hudson.model.FreeStyleProject","lastCompletedBuild":{"number":4,"result":"SUCCESS","building":false}}
+			]}`)
+		case "/job/one/1/testReport/api/json",
+			"/job/two/2/testReport/api/json",
+			"/job/three/3/testReport/api/json",
+			"/job/four/4/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":0,"skipCount":0,"passCount":1}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasTests := true
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2, HasTests: &hasTests})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 2, "items")
+	r.Equal("one", got.Items[0].Name, "first item")
+	r.Equal("two", got.Items[1].Name, "second item")
+	r.True(got.HasMore, "has more")
+	r.NotEmpty(got.NextCursor, "next cursor")
+	r.Equal([]string{
+		"/api/json",
+		"/job/one/1/testReport/api/json",
+		"/job/two/2/testReport/api/json",
+		"/job/three/3/testReport/api/json",
+	}, requested, "requested paths")
+}
+
 func TestListJobsAppliesMetadataFiltersWithoutChangingResponseShape(t *testing.T) {
 	r := require.New(t)
 
@@ -715,6 +841,11 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 	r.NoError(err, "ListJobs() first page error")
 	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed request")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+
+	hasTests := true
+	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasTests: &hasTests, Cursor: first.NextCursor})
+	r.Error(err, "ListJobs() accepted cursor for a changed test filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 
 	first, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "1"})
