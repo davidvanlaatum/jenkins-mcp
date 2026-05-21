@@ -658,6 +658,80 @@ func TestListJobsDoesNotProbeWarningsNGWhenFilterOmitted(t *testing.T) {
 	r.Equal(0, warningCalls, "Warnings NG endpoint calls")
 }
 
+func TestListJobsFiltersByCoverage(t *testing.T) {
+	r := require.New(t)
+
+	var coveragePaths []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"covered","url":"https://jenkins.example.com/job/covered/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":1,"url":"https://jenkins.example.com/job/covered/1/","result":"SUCCESS","building":false}},
+				{"name":"missing","url":"https://jenkins.example.com/job/missing/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":2,"url":"https://jenkins.example.com/job/missing/2/","result":"SUCCESS","building":false}},
+				{"name":"error-only","url":"https://jenkins.example.com/job/error-only/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":3,"url":"https://jenkins.example.com/job/error-only/3/","result":"SUCCESS","building":false}},
+				{"name":"no-completed","url":"https://jenkins.example.com/job/no-completed/","color":"notbuilt","_class":"hudson.model.FreeStyleProject","buildable":true}
+			]}`)
+		case "/job/covered/1/coverage/api/json":
+			coveragePaths = append(coveragePaths, r.URL.Path)
+			writeJSON(w, `{"lineCoverage":{"percentage":82.5}}`)
+		case "/job/covered/1/coverage/result/api/json",
+			"/job/covered/1/jacoco/api/json",
+			"/job/missing/2/coverage/api/json",
+			"/job/missing/2/coverage/result/api/json",
+			"/job/missing/2/jacoco/api/json":
+			coveragePaths = append(coveragePaths, r.URL.Path)
+			http.NotFound(w, r)
+		case "/job/error-only/3/coverage/api/json",
+			"/job/error-only/3/coverage/result/api/json",
+			"/job/error-only/3/jacoco/api/json":
+			coveragePaths = append(coveragePaths, r.URL.Path)
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	hasCoverage := true
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasCoverage: &hasCoverage})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "jobs with coverage")
+	r.Equal("covered", got.Items[0].Name, "job name")
+	for _, path := range coveragePaths {
+		r.NotContains(path, "no-completed", "jobs without lastCompletedBuild should not be probed")
+	}
+
+	hasCoverage = false
+	got, err = ListJobs(t.Context(), deps, ListJobsRequest{HasCoverage: &hasCoverage})
+	r.NoError(err, "ListJobs() error")
+	r.ElementsMatch([]string{"missing", "error-only", "no-completed"}, jobNames(got.Items), "jobs without coverage")
+}
+
+func TestListJobsDoesNotProbeCoverageWhenFilterOmitted(t *testing.T) {
+	r := require.New(t)
+
+	var coverageCalls int
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			writeJSON(w, `{"jobs":[
+				{"name":"covered","url":"https://jenkins.example.com/job/covered/","color":"blue","_class":"hudson.model.FreeStyleProject","buildable":true,"lastCompletedBuild":{"number":1,"url":"https://jenkins.example.com/job/covered/1/","result":"SUCCESS","building":false}}
+			]}`)
+		case "/job/covered/1/coverage/api/json",
+			"/job/covered/1/coverage/result/api/json",
+			"/job/covered/1/jacoco/api/json":
+			coverageCalls++
+			writeJSON(w, `{"lineCoverage":{"percentage":82.5}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ListJobs(t.Context(), deps, ListJobsRequest{})
+	r.NoError(err, "ListJobs() error")
+	r.Len(got.Items, 1, "ListJobs() items")
+	r.Equal(0, coverageCalls, "coverage endpoint calls")
+}
+
 func TestListJobsWarningsNGFilterPropagatesFetchErrors(t *testing.T) {
 	r := require.New(t)
 
@@ -846,6 +920,11 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 	hasTests := true
 	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasTests: &hasTests, Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed test filter")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+
+	hasCoverage := true
+	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasCoverage: &hasCoverage, Cursor: first.NextCursor})
+	r.Error(err, "ListJobs() accepted cursor for a changed coverage filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 
 	first, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "1"})
