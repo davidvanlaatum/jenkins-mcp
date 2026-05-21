@@ -11,6 +11,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,4 +56,113 @@ func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
 	r.NotContains(appErr.Message, "SECRET_TOKEN_VALUE", "message should not include Jenkins response body")
 	_, hasExcerpt := detail["bodyExcerpt"]
 	r.False(hasExcerpt, "trigger build errors should not expose Jenkins response bodies")
+}
+
+func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/7/testReport/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeAPIJSON(w, `{
+			"totalCount": 4,
+			"failCount": 1,
+			"skipCount": 0,
+			"passCount": 3,
+			"suites": [{
+				"name": "example.MixedTest",
+				"cases": [
+					{"className":"example.MixedTest","name":"failsFirst","status":"FAILED","duration":0.1,"errorDetails":"boom"},
+					{"className":"example.MixedTest","name":"passesOne","status":"PASSED","duration":0.2},
+					{"className":"example.MixedTest","name":"passesTwo","status":"PASSED","duration":0.3},
+					{"className":"example.MixedTest","name":"passesThree","status":"PASSED","duration":0.4}
+				]
+			}]
+		}`)
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 7, model.TestCaseFilter{Status: "PASSED"}, 2)
+	r.NoError(err, "TestReport() error")
+	r.Equal(4, got.TotalCount, "summary total should remain full report count")
+	r.True(got.Truncated, "third matching passed case should be truncated")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 2, "limit should apply after filtering")
+	r.Equal("passesOne", got.Suites[0].Cases[0].Name, "first returned case")
+	r.Equal("passesTwo", got.Suites[0].Cases[1].Name, "second returned case")
+}
+
+func TestTestReportFiltersByTextRegexAndDuration(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/8/testReport/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeAPIJSON(w, `{
+			"totalCount": 3,
+			"failCount": 2,
+			"skipCount": 1,
+			"passCount": 0,
+			"suites": [{
+				"name": "AuthServiceSuite",
+				"cases": [
+					{"className":"example.AuthServiceTest","name":"LoginTimeout","status":"FAILED","duration":1.5,"errorDetails":"Database timeout","errorStackTrace":"TimeoutException"},
+					{"className":"example.AuthServiceTest","name":"LogoutTimeout","status":"FAILED","duration":3.5,"errorDetails":"Database timeout","errorStackTrace":"TimeoutException"}
+				]
+			}, {
+				"name": "BillingSuite",
+				"cases": [
+					{"className":"example.BillingTest","name":"skipsBilling","status":"SKIPPED","duration":0.01}
+				]
+			}]
+		}`)
+	})
+	minMillis := int64(1000)
+	maxMillis := int64(2000)
+
+	got, err := api.TestReport(t.Context(), "app", 8, model.TestCaseFilter{
+		Status:                  "failed",
+		SuiteNameContains:       "auth",
+		CaseNameRegex:           "^Login",
+		ClassNameContains:       "service",
+		DurationMillisMin:       &minMillis,
+		DurationMillisMax:       &maxMillis,
+		ErrorDetailsContains:    "DATABASE",
+		ErrorStackTraceContains: "timeoutexception",
+	}, 50)
+	r.NoError(err, "TestReport() error")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "filtered cases")
+	r.Equal("LoginTimeout", got.Suites[0].Cases[0].Name, "matching case")
+}
+
+func TestTestReportRejectsInvalidRegex(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+
+	_, err := api.TestReport(t.Context(), "app", 1, model.TestCaseFilter{SuiteNameRegex: "["}, 50)
+	r.Error(err, "TestReport() accepted invalid regex")
+	appErr, ok := err.(*apperrors.Error)
+	r.True(ok, "error type")
+	r.Equal(apperrors.CodeInvalidRequest, appErr.Code, "error code")
+}
+
+func newTestAPI(t *testing.T, handler http.HandlerFunc) *API {
+	t.Helper()
+	r := require.New(t)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "test", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err, "client New()")
+	return New("test", client)
+}
+
+func writeAPIJSON(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, body)
 }

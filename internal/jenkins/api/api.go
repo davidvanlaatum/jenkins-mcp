@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -493,7 +494,11 @@ func (a *API) TailLog(ctx context.Context, job string, number int, tailBytes int
 	return a.GetLog(ctx, job, number, start, tailBytes)
 }
 
-func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly bool, limit int) (model.TestReport, error) {
+func (a *API) TestReport(ctx context.Context, job string, number int, filter model.TestCaseFilter, limit int) (model.TestReport, error) {
+	matcher, err := newTestCaseMatcher(filter)
+	if err != nil {
+		return model.TestReport{}, err
+	}
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
 	var raw struct {
 		TotalCount int `json:"totalCount"`
@@ -517,7 +522,7 @@ func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly
 	for _, s := range raw.Suites {
 		suite := model.TestSuite{Name: s.Name}
 		for _, c := range s.Cases {
-			if failedOnly && c.Status != "FAILED" && c.Status != "REGRESSION" {
+			if !matcher.matches(s.Name, c) {
 				continue
 			}
 			if limit > 0 && count >= limit {
@@ -527,7 +532,7 @@ func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly
 			suite.Cases = append(suite.Cases, c)
 			count++
 		}
-		if len(suite.Cases) > 0 || !failedOnly {
+		if len(suite.Cases) > 0 || !matcher.active {
 			report.Suites = append(report.Suites, suite)
 		}
 		if report.Truncated {
@@ -535,6 +540,104 @@ func (a *API) TestReport(ctx context.Context, job string, number int, failedOnly
 		}
 	}
 	return report, nil
+}
+
+type testCaseMatcher struct {
+	active                  bool
+	status                  string
+	suiteNameContains       string
+	suiteNameRegex          *regexp.Regexp
+	caseNameContains        string
+	caseNameRegex           *regexp.Regexp
+	classNameContains       string
+	classNameRegex          *regexp.Regexp
+	durationMillisMin       *int64
+	durationMillisMax       *int64
+	errorDetailsContains    string
+	errorStackTraceContains string
+}
+
+func newTestCaseMatcher(filter model.TestCaseFilter) (testCaseMatcher, error) {
+	matcher := testCaseMatcher{
+		status:                  strings.ToUpper(strings.TrimSpace(filter.Status)),
+		suiteNameContains:       strings.ToLower(filter.SuiteNameContains),
+		caseNameContains:        strings.ToLower(filter.CaseNameContains),
+		classNameContains:       strings.ToLower(filter.ClassNameContains),
+		durationMillisMin:       filter.DurationMillisMin,
+		durationMillisMax:       filter.DurationMillisMax,
+		errorDetailsContains:    strings.ToLower(filter.ErrorDetailsContains),
+		errorStackTraceContains: strings.ToLower(filter.ErrorStackTraceContains),
+	}
+	var err error
+	if matcher.suiteNameRegex, err = compileTestCaseRegex("suiteNameRegex", filter.SuiteNameRegex); err != nil {
+		return testCaseMatcher{}, err
+	}
+	if matcher.caseNameRegex, err = compileTestCaseRegex("caseNameRegex", filter.CaseNameRegex); err != nil {
+		return testCaseMatcher{}, err
+	}
+	if matcher.classNameRegex, err = compileTestCaseRegex("classNameRegex", filter.ClassNameRegex); err != nil {
+		return testCaseMatcher{}, err
+	}
+	matcher.active = matcher.status != "" ||
+		matcher.suiteNameContains != "" || matcher.suiteNameRegex != nil ||
+		matcher.caseNameContains != "" || matcher.caseNameRegex != nil ||
+		matcher.classNameContains != "" || matcher.classNameRegex != nil ||
+		matcher.durationMillisMin != nil || matcher.durationMillisMax != nil ||
+		matcher.errorDetailsContains != "" || matcher.errorStackTraceContains != ""
+	return matcher, nil
+}
+
+func compileTestCaseRegex(field, expr string) (*regexp.Regexp, error) {
+	if strings.TrimSpace(expr) == "" {
+		return nil, nil
+	}
+	compiled, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid test case regex", map[string]any{
+			"field": field,
+			"regex": expr,
+			"error": err.Error(),
+		})
+	}
+	return compiled, nil
+}
+
+func (m testCaseMatcher) matches(suiteName string, testCase model.TestCase) bool {
+	if m.status != "" && strings.ToUpper(testCase.Status) != m.status {
+		return false
+	}
+	if m.suiteNameContains != "" && !strings.Contains(strings.ToLower(suiteName), m.suiteNameContains) {
+		return false
+	}
+	if m.suiteNameRegex != nil && !m.suiteNameRegex.MatchString(suiteName) {
+		return false
+	}
+	if m.caseNameContains != "" && !strings.Contains(strings.ToLower(testCase.Name), m.caseNameContains) {
+		return false
+	}
+	if m.caseNameRegex != nil && !m.caseNameRegex.MatchString(testCase.Name) {
+		return false
+	}
+	if m.classNameContains != "" && !strings.Contains(strings.ToLower(testCase.ClassName), m.classNameContains) {
+		return false
+	}
+	if m.classNameRegex != nil && !m.classNameRegex.MatchString(testCase.ClassName) {
+		return false
+	}
+	durationMillis := testCase.Duration * 1000
+	if m.durationMillisMin != nil && durationMillis < float64(*m.durationMillisMin) {
+		return false
+	}
+	if m.durationMillisMax != nil && durationMillis > float64(*m.durationMillisMax) {
+		return false
+	}
+	if m.errorDetailsContains != "" && !strings.Contains(strings.ToLower(testCase.ErrorDetails), m.errorDetailsContains) {
+		return false
+	}
+	if m.errorStackTraceContains != "" && !strings.Contains(strings.ToLower(testCase.ErrorStackTrace), m.errorStackTraceContains) {
+		return false
+	}
+	return true
 }
 
 func (a *API) TestReportSummary(ctx context.Context, job string, number int) (model.TestReport, error) {

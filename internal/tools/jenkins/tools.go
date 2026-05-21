@@ -1298,8 +1298,8 @@ type TestReportRequest struct {
 	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Build      int    `json:"build" jsonschema:"Jenkins build number"`
-	FailedOnly bool   `json:"failedOnly,omitempty" jsonschema:"When true, return only failed test cases"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of test cases to return; defaults to 50 and is capped at 500"`
+	model.TestCaseFilter
+	Limit int `json:"limit,omitempty" jsonschema:"Maximum number of matching test cases to return; defaults to 50 and is capped at 500"`
 }
 type TestReportResponse struct {
 	Report model.TestReport `json:"report" jsonschema:"JUnit test summary and bounded test case details"`
@@ -1313,7 +1313,7 @@ func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestRepor
 	if err != nil {
 		return TestReportResponse{}, err
 	}
-	report, err := api.TestReport(ctx, in.Job, in.Build, in.FailedOnly, pagination.BoundLimit(in.Limit, 50, 500))
+	report, err := api.TestReport(ctx, in.Job, in.Build, in.TestCaseFilter, pagination.BoundLimit(in.Limit, 50, 500))
 	return TestReportResponse{Report: report}, err
 }
 
