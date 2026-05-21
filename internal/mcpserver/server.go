@@ -223,7 +223,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_job_config", "Get Job Config", "Inspect Jenkins job configuration as a structured summary or best-effort redacted config.xml. Falls back to safe job metadata when config.xml is not readable, such as without Job Configure or Extended Read permissions."), func(ctx context.Context, in jenkinstools.JobConfigRequest) (jenkinstools.GetJobConfigResponse, error) {
 		return jenkinstools.GetJobConfig(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job with cursor pagination. Build summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
+	addConfiguredTool(s, readOnlyTool("jenkins_list_builds", "List Builds", "List recent builds for a Jenkins job with cursor pagination and filters for result, building, completed, startedAfter, startedBefore, durationMillisMin, durationMillisMax, estimatedDurationMillisMin, estimatedDurationMillisMax, keepLog, queueId, numberMin, numberMax, descriptionContains, and displayNameContains. Build summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog."), func(ctx context.Context, in jenkinstools.ListBuildsRequest) (jenkinstools.ListBuildsResponse, error) {
 		return jenkinstools.ListBuilds(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_build", "Get Build", "Get build details including result, causes, parameters, artifacts, changes, and optional coverage summaries."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.GetBuildResponse, error) {
