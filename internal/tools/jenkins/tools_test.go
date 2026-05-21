@@ -1057,6 +1057,114 @@ func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
 	r.Len(trees, 2, "tree queries")
 }
 
+func TestListBuildsFiltersSummaryFields(t *testing.T) {
+	buildsJSON := `{"builds":[
+		{"id":"45","number":45,"url":"https://jenkins.example.com/job/app/45/","result":"SUCCESS","building":false,"timestamp":2000,"duration":5000,"description":"Deploy PROD","displayName":"release-1","queueId":500,"estimatedDuration":6000,"keepLog":true},
+		{"id":"44","number":44,"url":"https://jenkins.example.com/job/app/44/","result":"FAILURE","building":false,"timestamp":1500,"duration":2000,"description":"Unit tests","displayName":"#44","queueId":499,"estimatedDuration":3000,"keepLog":false},
+		{"id":"43","number":43,"url":"https://jenkins.example.com/job/app/43/","building":true,"timestamp":1800,"duration":0,"description":"Running deploy","displayName":"#43","queueId":501,"estimatedDuration":7000},
+		{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"UNSTABLE","building":false,"timestamp":1000,"duration":4000,"description":"Flaky integration","displayName":"nightly","queueId":498,"estimatedDuration":4500,"keepLog":false},
+		{"id":"41","number":41,"url":"https://jenkins.example.com/job/app/41/","result":"ABORTED","building":false,"timestamp":500,"duration":1000,"description":"Manual stop","displayName":"aborted","queueId":497,"estimatedDuration":2000,"keepLog":true}
+	]}`
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, req)
+			return
+		}
+		writeJSON(w, buildsJSON)
+	})
+
+	trueValue := true
+	falseValue := false
+	durationMin := int64(3000)
+	durationMax := int64(5000)
+	estimatedMin := int64(5000)
+	estimatedMax := int64(7000)
+	queueID := int64(498)
+	numberMin := 42
+	numberMax := 44
+
+	tests := []struct {
+		name        string
+		request     ListBuildsRequest
+		wantNumbers []int
+	}{
+		{name: "result", request: ListBuildsRequest{Result: "failure"}, wantNumbers: []int{44}},
+		{name: "building", request: ListBuildsRequest{Building: &trueValue}, wantNumbers: []int{43}},
+		{name: "completed", request: ListBuildsRequest{Completed: &trueValue}, wantNumbers: []int{45, 44, 42, 41}},
+		{name: "started range", request: ListBuildsRequest{StartedAfter: "1970-01-01T00:00:01.500Z", StartedBefore: "2000"}, wantNumbers: []int{45, 44, 43}},
+		{name: "duration range", request: ListBuildsRequest{DurationMillisMin: &durationMin, DurationMillisMax: &durationMax}, wantNumbers: []int{45, 42}},
+		{name: "estimated duration range", request: ListBuildsRequest{EstimatedDurationMillisMin: &estimatedMin, EstimatedDurationMillisMax: &estimatedMax}, wantNumbers: []int{45, 43}},
+		{name: "keep log", request: ListBuildsRequest{KeepLog: &trueValue}, wantNumbers: []int{45, 41}},
+		{name: "not keep log", request: ListBuildsRequest{KeepLog: &falseValue}, wantNumbers: []int{44, 42}},
+		{name: "queue id", request: ListBuildsRequest{QueueID: &queueID}, wantNumbers: []int{42}},
+		{name: "number range", request: ListBuildsRequest{NumberMin: &numberMin, NumberMax: &numberMax}, wantNumbers: []int{44, 43, 42}},
+		{name: "description contains", request: ListBuildsRequest{DescriptionContains: "DEPLOY"}, wantNumbers: []int{45, 43}},
+		{name: "display name contains", request: ListBuildsRequest{DisplayNameContains: "Night"}, wantNumbers: []int{42}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := require.New(t)
+			tt.request.Job = "app"
+
+			got, err := ListBuilds(t.Context(), deps, tt.request)
+			r.NoError(err, "ListBuilds() error")
+			r.Equal(tt.wantNumbers, buildNumbers(got.Items), "filtered build numbers")
+			r.False(got.HasMore, "hasMore")
+			r.False(got.Truncated, "truncated")
+			r.Empty(got.NextCursor, "next cursor")
+		})
+	}
+}
+
+func TestListBuildsFilteredPaginationUsesMatchingLookahead(t *testing.T) {
+	r := require.New(t)
+
+	var trees []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, req)
+			return
+		}
+		tree := req.URL.Query().Get("tree")
+		trees = append(trees, tree)
+		switch {
+		case strings.Contains(tree, "{0,100}"):
+			writeJSON(w, `{"builds":[
+				{"id":"45","number":45,"url":"https://jenkins.example.com/job/app/45/","result":"SUCCESS","building":false},
+				{"id":"44","number":44,"url":"https://jenkins.example.com/job/app/44/","result":"FAILURE","building":false},
+				{"id":"43","number":43,"url":"https://jenkins.example.com/job/app/43/","building":true},
+				{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"UNSTABLE","building":false},
+				{"id":"41","number":41,"url":"https://jenkins.example.com/job/app/41/","result":"ABORTED","building":false}
+			]}`)
+		case strings.Contains(tree, "{3,103}"):
+			writeJSON(w, `{"builds":[
+				{"id":"42","number":42,"url":"https://jenkins.example.com/job/app/42/","result":"UNSTABLE","building":false},
+				{"id":"41","number":41,"url":"https://jenkins.example.com/job/app/41/","result":"ABORTED","building":false}
+			]}`)
+		default:
+			r.Failf("unexpected tree query", "tree query %q", tree)
+		}
+	})
+
+	completed := true
+	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed})
+	r.NoError(err, "ListBuilds() first page error")
+	r.Equal([]int{45, 44}, buildNumbers(first.Items), "first page build numbers")
+	r.True(first.HasMore, "first page hasMore")
+	r.NotEmpty(first.NextCursor, "first page next cursor")
+
+	second, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed, Cursor: first.NextCursor})
+	r.NoError(err, "ListBuilds() second page error")
+	r.Equal([]int{42, 41}, buildNumbers(second.Items), "second page build numbers")
+	r.False(second.HasMore, "second page hasMore")
+	r.Empty(second.NextCursor, "second page next cursor")
+	r.Equal([]string{
+		"builds[id,number,url,result,building,timestamp,duration,description,displayName,queueId,estimatedDuration,keepLog]{0,100}",
+		"builds[id,number,url,result,building,timestamp,duration,description,displayName,queueId,estimatedDuration,keepLog]{3,103}",
+	}, trees, "tree queries")
+}
+
 func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
 	r := require.New(t)
 
@@ -1076,6 +1184,65 @@ func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
 	_, err = ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
 	r.Error(err, "ListBuilds() accepted cursor for a changed request")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestListBuildsRejectsCursorForDifferentFilter(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/api/json" {
+			http.NotFound(w, req)
+			return
+		}
+		writeJSON(w, `{"builds":[
+			{"id":"45","number":45,"url":"https://jenkins.example.com/job/app/45/","result":"SUCCESS","building":false},
+			{"id":"44","number":44,"url":"https://jenkins.example.com/job/app/44/","result":"FAILURE","building":false}
+		]}`)
+	})
+
+	completed := true
+	building := true
+	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Completed: &completed})
+	r.NoError(err, "ListBuilds() first page error")
+	r.NotEmpty(first.NextCursor, "first page cursor")
+
+	_, err = ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Building: &building, Cursor: first.NextCursor})
+	r.Error(err, "ListBuilds() accepted cursor for a changed filter")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestListBuildsRejectsConflictingCompletionFilters(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		r.Fail("ListBuilds should reject before calling Jenkins")
+	})
+	building := true
+	completed := true
+
+	_, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Building: &building, Completed: &completed})
+	r.Error(err, "ListBuilds() accepted conflicting completion filters")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func TestListBuildsRejectsUnsupportedResultFilter(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		r.Fail("ListBuilds should reject before calling Jenkins")
+	})
+
+	_, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Result: "SUCESS"})
+	r.Error(err, "ListBuilds() accepted unsupported result filter")
+	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
+}
+
+func buildNumbers(builds []model.BuildSummary) []int {
+	out := make([]int, 0, len(builds))
+	for _, build := range builds {
+		out = append(out, build.Number)
+	}
+	return out
 }
 
 func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {

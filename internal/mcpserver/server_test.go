@@ -419,6 +419,55 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 	r.Fail("jenkins_list_jobs tool not found")
 }
 
+func TestListBuildsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	r := require.New(t)
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	wantFilters := []string{"cursor", "result", "building", "completed", "startedAfter", "startedBefore", "durationMillisMin", "durationMillisMax", "estimatedDurationMillisMin", "estimatedDurationMillisMax", "keepLog", "queueId", "numberMin", "numberMax", "descriptionContains", "displayNameContains"}
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		r.NoError(err, "Tools()")
+		if tool.Name != "jenkins_list_builds" {
+			continue
+		}
+		for _, want := range wantFilters {
+			r.Contains(tool.Description, want, "description")
+		}
+
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		r.NoError(err, "marshal input schema")
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal input schema")
+		for _, want := range wantFilters {
+			property, ok := schema.Properties[want]
+			r.True(ok, "input schema missing property %q", want)
+			r.NotEmpty(property.Description, "input schema property %q description", want)
+		}
+		return
+	}
+	r.Fail("jenkins_list_builds tool not found")
+}
+
 func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
 	r := require.New(t)
 	cfg := config.Config{
