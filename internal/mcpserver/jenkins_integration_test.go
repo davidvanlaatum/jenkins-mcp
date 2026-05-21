@@ -420,7 +420,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"controller": jenkinscontainer.ControllerID,
 			"job":        "example-junit",
 			"build":      junitBuild,
-			"failedOnly": true,
+			"status":     "FAILED",
 			"limit":      1,
 		})
 		r.Equal(2, report.Report.TotalCount, "total test count")

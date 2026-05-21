@@ -238,7 +238,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_tail_log", "Tail Log", "Read the tail of a Jenkins console log using progressive log offsets."), func(ctx context.Context, in jenkinstools.TailLogRequest) (jenkinstools.TailLogResponse, error) {
 		return jenkinstools.TailLog(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_get_test_report", "Get Test Report", "Fetch JUnit test summary and bounded test case details when available."), func(ctx context.Context, in jenkinstools.TestReportRequest) (jenkinstools.TestReportResponse, error) {
+	addConfiguredTool(s, readOnlyTool("jenkins_get_test_report", "Get Test Report", "Fetch JUnit test summary and bounded test case details, with optional filters for status, suite name, case name, class name, duration, and failure text. Summary counts always describe the full Jenkins report; filters apply only to returned case details before limit."), func(ctx context.Context, in jenkinstools.TestReportRequest) (jenkinstools.TestReportResponse, error) {
 		return jenkinstools.TestReport(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_run", "Get Pipeline Run", "Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineRunResponse, error) {

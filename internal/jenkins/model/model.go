@@ -223,6 +223,19 @@ type TestReport struct {
 	Suites     []TestSuite `json:"suites,omitempty" jsonschema:"JUnit test suites and bounded test cases"`
 	Truncated  bool        `json:"truncated" jsonschema:"Whether test case details were truncated by limits"`
 }
+type TestCaseFilter struct {
+	Status                  string `json:"status,omitempty" jsonschema:"Exact Jenkins/JUnit test case status to return, matched case-insensitively, such as PASSED, FAILED, REGRESSION, or SKIPPED"`
+	SuiteNameContains       string `json:"suiteNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit suite names"`
+	SuiteNameRegex          string `json:"suiteNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit suite names"`
+	CaseNameContains        string `json:"caseNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit test case names"`
+	CaseNameRegex           string `json:"caseNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit test case names"`
+	ClassNameContains       string `json:"classNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit class names"`
+	ClassNameRegex          string `json:"classNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit class names"`
+	DurationMillisMin       *int64 `json:"durationMillisMin,omitempty" jsonschema:"Minimum test case duration in milliseconds, inclusive"`
+	DurationMillisMax       *int64 `json:"durationMillisMax,omitempty" jsonschema:"Maximum test case duration in milliseconds, inclusive"`
+	ErrorDetailsContains    string `json:"errorDetailsContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error details"`
+	ErrorStackTraceContains string `json:"errorStackTraceContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error stack traces"`
+}
 type TestSuite struct {
 	Name  string     `json:"name" jsonschema:"JUnit test suite name"`
 	Cases []TestCase `json:"cases,omitempty" jsonschema:"Test cases in the suite"`
