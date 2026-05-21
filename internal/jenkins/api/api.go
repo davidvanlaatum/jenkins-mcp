@@ -1178,16 +1178,24 @@ type issueJSON struct {
 }
 
 func (a *API) WarningsNGSummary(ctx context.Context, job string, number int) model.IssuesSummary {
+	summary, err := a.WarningsNGSummaryStrict(ctx, job, number)
+	if err != nil {
+		return model.IssuesSummary{Available: false, CheckedEndpoints: summary.CheckedEndpoints, Message: optionalWarningsMessage(err)}
+	}
+	return summary
+}
+
+func (a *API) WarningsNGSummaryStrict(ctx context.Context, job string, number int) (model.IssuesSummary, error) {
 	candidates := []string{urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/warnings-ng/api/json"}
 	var raw warningsNGSummaryJSON
 	if err := a.client.GetJSON(ctx, candidates[0], nil, &raw); err != nil {
-		return model.IssuesSummary{Available: false, CheckedEndpoints: candidates, Message: optionalWarningsMessage(err)}
+		return model.IssuesSummary{Available: false, CheckedEndpoints: candidates, Message: optionalWarningsMessage(err)}, err
 	}
 	tools := issueToolSummaries(raw.Tools)
 	if len(tools) == 0 {
-		return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Message: "Warnings NG is available but did not report any issue tools."}
+		return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Message: "Warnings NG is available but did not report any issue tools."}, nil
 	}
-	return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Tools: tools}
+	return model.IssuesSummary{Available: true, Endpoint: candidates[0], CheckedEndpoints: candidates, Tools: tools}, nil
 }
 
 func (a *API) ListIssues(ctx context.Context, job string, number int, tool string, offset int, limit int) (model.IssuesPage, error) {
