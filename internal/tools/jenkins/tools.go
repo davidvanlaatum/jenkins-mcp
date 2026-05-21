@@ -787,10 +787,25 @@ func isFolderLike(class string) bool {
 }
 
 type ListBuildsRequest struct {
-	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
-	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum number of recent builds to return; defaults to 20 and is capped at 100"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_builds response"`
+	Controller                 string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job                        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Limit                      int    `json:"limit,omitempty" jsonschema:"Maximum number of matching builds to return; defaults to 20 and is capped at 100"`
+	Cursor                     string `json:"cursor,omitempty" jsonschema:"Opaque continuation cursor returned by a previous jenkins_list_builds response"`
+	Result                     string `json:"result,omitempty" jsonschema:"Filter by Jenkins build result such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or NOT_BUILT"`
+	Building                   *bool  `json:"building,omitempty" jsonschema:"Filter by whether the build is currently running"`
+	Completed                  *bool  `json:"completed,omitempty" jsonschema:"Filter by whether the build has completed; this is the inverse of building"`
+	StartedAfter               string `json:"startedAfter,omitempty" jsonschema:"Include builds whose timestamp is on or after this RFC3339 time or Unix epoch millisecond value"`
+	StartedBefore              string `json:"startedBefore,omitempty" jsonschema:"Include builds whose timestamp is on or before this RFC3339 time or Unix epoch millisecond value"`
+	DurationMillisMin          *int64 `json:"durationMillisMin,omitempty" jsonschema:"Include builds whose duration is at least this many milliseconds"`
+	DurationMillisMax          *int64 `json:"durationMillisMax,omitempty" jsonschema:"Include builds whose duration is at most this many milliseconds"`
+	EstimatedDurationMillisMin *int64 `json:"estimatedDurationMillisMin,omitempty" jsonschema:"Include builds whose estimatedDuration is at least this many milliseconds"`
+	EstimatedDurationMillisMax *int64 `json:"estimatedDurationMillisMax,omitempty" jsonschema:"Include builds whose estimatedDuration is at most this many milliseconds"`
+	KeepLog                    *bool  `json:"keepLog,omitempty" jsonschema:"Filter by whether Jenkins is configured to keep the build log indefinitely"`
+	QueueID                    *int64 `json:"queueId,omitempty" jsonschema:"Filter by Jenkins queue item id that created the build"`
+	NumberMin                  *int   `json:"numberMin,omitempty" jsonschema:"Include builds with build number greater than or equal to this value"`
+	NumberMax                  *int   `json:"numberMax,omitempty" jsonschema:"Include builds with build number less than or equal to this value"`
+	DescriptionContains        string `json:"descriptionContains,omitempty" jsonschema:"Case-insensitive substring filter matched against the build description"`
+	DisplayNameContains        string `json:"displayNameContains,omitempty" jsonschema:"Case-insensitive substring filter matched against the build displayName"`
 }
 type ListBuildsResponse struct {
 	Items      []model.BuildSummary `json:"items" jsonschema:"Recent Jenkins builds for this page"`
@@ -802,6 +817,10 @@ type ListBuildsResponse struct {
 
 func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuildsResponse, error) {
 	if err := validation.JobPath(in.Job); err != nil {
+		return ListBuildsResponse{}, err
+	}
+	filter, err := newBuildFilter(in)
+	if err != nil {
 		return ListBuildsResponse{}, err
 	}
 	api, err := apiFor(deps, in.Controller)
@@ -819,6 +838,9 @@ func ListBuilds(ctx context.Context, deps Deps, in ListBuildsRequest) (ListBuild
 	}
 	if gotSignature != "" && gotSignature != cursorSignature {
 		return ListBuildsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "list builds cursor does not match request", map[string]any{"cursor": in.Cursor})
+	}
+	if filter != (buildFilter{}) {
+		return listFilteredBuilds(ctx, api, in.Job, offset, limit, cursorSignature, filter)
 	}
 	builds, err := api.ListBuilds(ctx, in.Job, offset, limit+1)
 	if err != nil {
@@ -846,18 +868,278 @@ func listBuildsPage(builds []model.BuildSummary, offset int, limit int, signatur
 }
 
 func listBuildsCursorSignature(in ListBuildsRequest) (string, error) {
+	building := cloneBool(in.Building)
+	completed := cloneBool(in.Completed)
+	keepLog := cloneBool(in.KeepLog)
+	durationMillisMin := cloneInt64(in.DurationMillisMin)
+	durationMillisMax := cloneInt64(in.DurationMillisMax)
+	estimatedDurationMillisMin := cloneInt64(in.EstimatedDurationMillisMin)
+	estimatedDurationMillisMax := cloneInt64(in.EstimatedDurationMillisMax)
+	queueID := cloneInt64(in.QueueID)
+	numberMin := cloneInt(in.NumberMin)
+	numberMax := cloneInt(in.NumberMax)
 	body, err := json.Marshal(struct {
-		Controller string `json:"controller,omitempty"`
-		Job        string `json:"job"`
+		Controller                 string `json:"controller,omitempty"`
+		Job                        string `json:"job"`
+		Result                     string `json:"result,omitempty"`
+		Building                   *bool  `json:"building,omitempty"`
+		Completed                  *bool  `json:"completed,omitempty"`
+		StartedAfter               string `json:"startedAfter,omitempty"`
+		StartedBefore              string `json:"startedBefore,omitempty"`
+		DurationMillisMin          *int64 `json:"durationMillisMin,omitempty"`
+		DurationMillisMax          *int64 `json:"durationMillisMax,omitempty"`
+		EstimatedDurationMillisMin *int64 `json:"estimatedDurationMillisMin,omitempty"`
+		EstimatedDurationMillisMax *int64 `json:"estimatedDurationMillisMax,omitempty"`
+		KeepLog                    *bool  `json:"keepLog,omitempty"`
+		QueueID                    *int64 `json:"queueId,omitempty"`
+		NumberMin                  *int   `json:"numberMin,omitempty"`
+		NumberMax                  *int   `json:"numberMax,omitempty"`
+		DescriptionContains        string `json:"descriptionContains,omitempty"`
+		DisplayNameContains        string `json:"displayNameContains,omitempty"`
 	}{
-		Controller: in.Controller,
-		Job:        in.Job,
+		Controller:                 in.Controller,
+		Job:                        in.Job,
+		Result:                     strings.ToUpper(strings.TrimSpace(in.Result)),
+		Building:                   building,
+		Completed:                  completed,
+		StartedAfter:               strings.TrimSpace(in.StartedAfter),
+		StartedBefore:              strings.TrimSpace(in.StartedBefore),
+		DurationMillisMin:          durationMillisMin,
+		DurationMillisMax:          durationMillisMax,
+		EstimatedDurationMillisMin: estimatedDurationMillisMin,
+		EstimatedDurationMillisMax: estimatedDurationMillisMax,
+		KeepLog:                    keepLog,
+		QueueID:                    queueID,
+		NumberMin:                  numberMin,
+		NumberMax:                  numberMax,
+		DescriptionContains:        strings.ToLower(strings.TrimSpace(in.DescriptionContains)),
+		DisplayNameContains:        strings.ToLower(strings.TrimSpace(in.DisplayNameContains)),
 	})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(body)
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
+
+type buildFilter struct {
+	result                     model.BuildResult
+	building                   *bool
+	startedAfter               *int64
+	startedBefore              *int64
+	durationMillisMin          *int64
+	durationMillisMax          *int64
+	estimatedDurationMillisMin *int64
+	estimatedDurationMillisMax *int64
+	keepLog                    *bool
+	queueID                    *int64
+	numberMin                  *int
+	numberMax                  *int
+	descriptionContains        string
+	displayNameContains        string
+}
+
+func newBuildFilter(in ListBuildsRequest) (buildFilter, error) {
+	var filter buildFilter
+	if strings.TrimSpace(in.Result) != "" {
+		result, err := parseBuildResultFilter(in.Result)
+		if err != nil {
+			return buildFilter{}, err
+		}
+		filter.result = result
+	}
+	filter.building = in.Building
+	if in.Completed != nil {
+		completedBuilding := !*in.Completed
+		if filter.building != nil && *filter.building != completedBuilding {
+			return buildFilter{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "conflicting build completion filters", map[string]any{
+				"building":  *filter.building,
+				"completed": *in.Completed,
+			})
+		}
+		filter.building = &completedBuilding
+	}
+	var err error
+	filter.startedAfter, err = parseBuildTimestampFilter("startedAfter", in.StartedAfter)
+	if err != nil {
+		return buildFilter{}, err
+	}
+	filter.startedBefore, err = parseBuildTimestampFilter("startedBefore", in.StartedBefore)
+	if err != nil {
+		return buildFilter{}, err
+	}
+	filter.durationMillisMin = in.DurationMillisMin
+	filter.durationMillisMax = in.DurationMillisMax
+	filter.estimatedDurationMillisMin = in.EstimatedDurationMillisMin
+	filter.estimatedDurationMillisMax = in.EstimatedDurationMillisMax
+	filter.keepLog = in.KeepLog
+	filter.queueID = in.QueueID
+	filter.numberMin = in.NumberMin
+	filter.numberMax = in.NumberMax
+	filter.descriptionContains = strings.ToLower(strings.TrimSpace(in.DescriptionContains))
+	filter.displayNameContains = strings.ToLower(strings.TrimSpace(in.DisplayNameContains))
+	if err := validateInt64Range("durationMillis", filter.durationMillisMin, filter.durationMillisMax); err != nil {
+		return buildFilter{}, err
+	}
+	if err := validateInt64Range("estimatedDurationMillis", filter.estimatedDurationMillisMin, filter.estimatedDurationMillisMax); err != nil {
+		return buildFilter{}, err
+	}
+	if filter.numberMin != nil && filter.numberMax != nil && *filter.numberMin > *filter.numberMax {
+		return buildFilter{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build number range", map[string]any{
+			"numberMin": *filter.numberMin,
+			"numberMax": *filter.numberMax,
+		})
+	}
+	return filter, nil
+}
+
+func parseBuildResultFilter(raw string) (model.BuildResult, error) {
+	result := model.BuildResult(strings.ToUpper(strings.TrimSpace(raw)))
+	switch result {
+	case model.BuildResultSuccess, model.BuildResultUnstable, model.BuildResultFailure, model.BuildResultAborted, model.BuildResultNotBuilt:
+		return result, nil
+	default:
+		return "", apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build result filter", map[string]any{
+			"field":   "result",
+			"value":   raw,
+			"allowed": []model.BuildResult{model.BuildResultSuccess, model.BuildResultUnstable, model.BuildResultFailure, model.BuildResultAborted, model.BuildResultNotBuilt},
+		})
+	}
+}
+
+func listFilteredBuilds(ctx context.Context, api *jenkinsapi.API, job string, offset int, limit int, signature string, filter buildFilter) (ListBuildsResponse, error) {
+	fetchLimit := limit + 1
+	if fetchLimit < 100 {
+		fetchLimit = 100
+	}
+	var out []model.BuildSummary
+	scanOffset := offset
+	nextOffset := 0
+	hasMore := false
+	for {
+		builds, err := api.ListBuilds(ctx, job, scanOffset, fetchLimit)
+		if err != nil {
+			return ListBuildsResponse{}, err
+		}
+		for i, build := range builds {
+			if !buildMatchesFilter(build, filter) {
+				continue
+			}
+			if len(out) >= limit {
+				hasMore = true
+				nextOffset = scanOffset + i
+				break
+			}
+			out = append(out, build)
+		}
+		if hasMore || len(builds) < fetchLimit {
+			break
+		}
+		scanOffset += len(builds)
+	}
+	nextCursor := ""
+	if hasMore {
+		var err error
+		nextCursor, err = pagination.EncodeCursor(listBuildsCursorKind, nextOffset, signature)
+		if err != nil {
+			return ListBuildsResponse{}, err
+		}
+	}
+	return ListBuildsResponse{Items: out, NextCursor: nextCursor, HasMore: hasMore, Truncated: hasMore, Limit: limit}, nil
+}
+
+func buildMatchesFilter(build model.BuildSummary, filter buildFilter) bool {
+	if filter.result != "" && build.Result != filter.result {
+		return false
+	}
+	if filter.building != nil && build.Building != *filter.building {
+		return false
+	}
+	if !millisRangeMatches(build.Timestamp, filter.startedAfter, filter.startedBefore) {
+		return false
+	}
+	if !millisRangeMatches(build.Duration, filter.durationMillisMin, filter.durationMillisMax) {
+		return false
+	}
+	if !millisRangeMatches(build.EstimatedDuration, filter.estimatedDurationMillisMin, filter.estimatedDurationMillisMax) {
+		return false
+	}
+	if filter.keepLog != nil && (build.KeepLog == nil || *build.KeepLog != *filter.keepLog) {
+		return false
+	}
+	if filter.queueID != nil && build.QueueID != *filter.queueID {
+		return false
+	}
+	if filter.numberMin != nil && build.Number < *filter.numberMin {
+		return false
+	}
+	if filter.numberMax != nil && build.Number > *filter.numberMax {
+		return false
+	}
+	if filter.descriptionContains != "" && !strings.Contains(strings.ToLower(build.Description), filter.descriptionContains) {
+		return false
+	}
+	if filter.displayNameContains != "" && !strings.Contains(strings.ToLower(build.DisplayName), filter.displayNameContains) {
+		return false
+	}
+	return true
+}
+
+func parseBuildTimestampFilter(name string, raw string) (*int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if millis, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return &millis, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build timestamp filter", map[string]any{
+			"field":  name,
+			"value":  raw,
+			"format": "RFC3339 or Unix epoch milliseconds",
+		})
+	}
+	millis := parsed.UnixMilli()
+	return &millis, nil
+}
+
+func validateInt64Range(name string, min *int64, max *int64) error {
+	if min != nil && max != nil && *min > *max {
+		return apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build numeric range", map[string]any{
+			"field": name,
+			"min":   *min,
+			"max":   *max,
+		})
+	}
+	return nil
+}
+
+func millisRangeMatches(value int64, min *int64, max *int64) bool {
+	if min != nil && value < *min {
+		return false
+	}
+	if max != nil && value > *max {
+		return false
+	}
+	return true
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 type GetBuildResponse struct {
