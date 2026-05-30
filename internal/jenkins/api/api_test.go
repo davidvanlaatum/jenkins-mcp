@@ -137,6 +137,77 @@ func TestTestReportFiltersByTextRegexAndDuration(t *testing.T) {
 	r.Equal("LoginTimeout", got.Suites[0].Cases[0].Name, "matching case")
 }
 
+func TestTestReportFiltersByExactSuiteClassAndCase(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/9/testReport/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeAPIJSON(w, `{
+			"totalCount": 3,
+			"failCount": 2,
+			"skipCount": 0,
+			"passCount": 1,
+			"suites": [{
+				"name": "AuthSuite",
+				"cases": [
+					{"className":"example.AuthTest","name":"Login","status":"FAILED","duration":0.1},
+					{"className":"example.AuthTest","name":"Logout","status":"FAILED","duration":0.1}
+				]
+			}, {
+				"name": "OtherSuite",
+				"cases": [
+					{"className":"example.AuthTest","name":"Login","status":"PASSED","duration":0.1}
+				]
+			}]
+		}`)
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 9, model.TestCaseFilter{
+		SuiteName: "AuthSuite",
+		ClassName: "example.AuthTest",
+		CaseName:  "Login",
+	}, 50)
+	r.NoError(err, "TestReport() error")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("AuthSuite", got.Suites[0].Name, "suite name")
+	r.Equal("Login", got.Suites[0].Cases[0].Name, "case name")
+}
+
+func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
+	r := require.New(t)
+	var tree string
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/job/app/10/testReport/api/json" {
+			http.NotFound(w, r)
+			return
+		}
+		tree = r.URL.Query().Get("tree")
+		writeAPIJSON(w, `{
+			"totalCount": 1,
+			"failCount": 1,
+			"skipCount": 0,
+			"passCount": 0,
+			"suites": [{
+				"name": "AuthSuite",
+				"cases": [
+					{"className":"example.AuthTest","name":"Login","status":"FAILED","duration":0.1,"errorDetails":"secret","errorStackTrace":"stack"}
+				]
+			}]
+		}`)
+	})
+
+	got, err := api.CompactTestReport(t.Context(), "app", 10)
+	r.NoError(err, "CompactTestReport() error")
+	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,status,duration]]", tree, "tree query")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Empty(got.Suites[0].Cases[0].ErrorDetails, "error details")
+	r.Empty(got.Suites[0].Cases[0].ErrorStackTrace, "error stack")
+}
+
 func TestTestReportRejectsInvalidRegex(t *testing.T) {
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {

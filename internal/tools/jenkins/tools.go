@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1315,6 +1316,362 @@ func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestRepor
 	}
 	report, err := api.TestReport(ctx, in.Job, in.Build, in.TestCaseFilter, pagination.BoundLimit(in.Limit, 50, 500))
 	return TestReportResponse{Report: report}, err
+}
+
+type FlakyTestStatsRequest struct {
+	Controller     string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job            string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	LastBuilds     int    `json:"lastBuilds,omitempty" jsonschema:"Number of recent build summaries to consider before dropping running, result-filtered, or no-JUnit builds; defaults to 20 and is capped at 100"`
+	Builds         []int  `json:"builds,omitempty" jsonschema:"Explicit Jenkins build numbers to analyze; when provided, lastBuilds and numberMin/numberMax are ignored"`
+	NumberMin      *int   `json:"numberMin,omitempty" jsonschema:"Minimum Jenkins build number to analyze when using a build number range"`
+	NumberMax      *int   `json:"numberMax,omitempty" jsonschema:"Maximum Jenkins build number to analyze when using a build number range"`
+	Result         string `json:"result,omitempty" jsonschema:"Optional Jenkins build result filter such as SUCCESS, FAILURE, UNSTABLE, ABORTED, or NOT_BUILT"`
+	MinTransitions *int   `json:"minTransitions,omitempty" jsonschema:"Minimum status transition count to return; defaults to 3 for flaky-focused results, set to 0 to include all tests that failed at least once"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum number of test cases to return after sorting by transition count; defaults to 25 and is capped at 200"`
+	MaxParallel    int    `json:"maxParallel,omitempty" jsonschema:"Maximum parallel Jenkins JUnit report requests; defaults to 4 and is capped at 8"`
+}
+
+type FlakyTestStatsResponse struct {
+	Stats model.FlakyTestStats `json:"stats" jsonschema:"JUnit failure and flakiness statistics across selected builds"`
+}
+
+func FlakyTestStats(ctx context.Context, deps Deps, in FlakyTestStatsRequest) (FlakyTestStatsResponse, error) {
+	if err := validation.JobPath(in.Job); err != nil {
+		return FlakyTestStatsResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return FlakyTestStatsResponse{}, err
+	}
+	resultFilter, err := parseOptionalBuildResultFilter(in.Result)
+	if err != nil {
+		return FlakyTestStatsResponse{}, err
+	}
+	builds, err := selectedFlakyStatsBuilds(ctx, api, in.Job, in, resultFilter)
+	if err != nil {
+		return FlakyTestStatsResponse{}, err
+	}
+	limit := pagination.BoundLimit(in.Limit, 25, 200)
+	minTransitions := 3
+	if in.MinTransitions != nil {
+		if *in.MinTransitions < 0 {
+			return FlakyTestStatsResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid minimum transition count", map[string]any{"minTransitions": *in.MinTransitions})
+		}
+		minTransitions = *in.MinTransitions
+	}
+	reports := fetchCompactTestReports(ctx, api, in.Job, builds, pagination.BoundLimit(in.MaxParallel, 4, 8))
+	stats, err := buildFlakyTestStats(in.Job, builds, reports, minTransitions, limit)
+	if err != nil {
+		return FlakyTestStatsResponse{}, err
+	}
+	return FlakyTestStatsResponse{Stats: stats}, nil
+}
+
+func parseOptionalBuildResultFilter(raw string) (model.BuildResult, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	return parseBuildResultFilter(raw)
+}
+
+func selectedFlakyStatsBuilds(ctx context.Context, api *jenkinsapi.API, job string, in FlakyTestStatsRequest, resultFilter model.BuildResult) ([]model.BuildSummary, error) {
+	if len(in.Builds) > 0 {
+		return explicitFlakyStatsBuilds(ctx, api, job, in.Builds, resultFilter)
+	}
+	if in.NumberMin != nil || in.NumberMax != nil {
+		if in.NumberMin == nil || in.NumberMax == nil {
+			return nil, apperrors.New(apperrors.CodeInvalidRequest, "numberMin and numberMax are both required for build range selection")
+		}
+		if *in.NumberMin <= 0 || *in.NumberMax <= 0 || *in.NumberMin > *in.NumberMax {
+			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build number range", map[string]any{"numberMin": *in.NumberMin, "numberMax": *in.NumberMax})
+		}
+		if *in.NumberMax-*in.NumberMin+1 > 100 {
+			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "build number range is too large", map[string]any{"maxBuilds": 100})
+		}
+		var numbers []int
+		for n := *in.NumberMax; n >= *in.NumberMin; n-- {
+			numbers = append(numbers, n)
+		}
+		return explicitFlakyStatsBuilds(ctx, api, job, numbers, resultFilter)
+	}
+	want := pagination.BoundLimit(in.LastBuilds, 20, 100)
+	var out []model.BuildSummary
+	page, err := api.ListBuilds(ctx, job, 0, want)
+	if err != nil {
+		return nil, err
+	}
+	for _, build := range page {
+		if build.Building {
+			continue
+		}
+		if resultFilter != "" && build.Result != resultFilter {
+			continue
+		}
+		out = append(out, build)
+	}
+	return out, nil
+}
+
+func explicitFlakyStatsBuilds(ctx context.Context, api *jenkinsapi.API, job string, numbers []int, resultFilter model.BuildResult) ([]model.BuildSummary, error) {
+	seen := map[int]bool{}
+	var uniqueNumbers []int
+	for _, number := range numbers {
+		if number <= 0 {
+			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build number", map[string]any{"build": number})
+		}
+		if seen[number] {
+			continue
+		}
+		seen[number] = true
+		uniqueNumbers = append(uniqueNumbers, number)
+		if len(uniqueNumbers) > 100 {
+			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "too many builds selected", map[string]any{"maxBuilds": 100})
+		}
+	}
+	var out []model.BuildSummary
+	for _, number := range uniqueNumbers {
+		build, err := api.GetBuildSummary(ctx, job, number)
+		if err != nil {
+			return nil, err
+		}
+		if build.Building {
+			continue
+		}
+		if resultFilter != "" && build.Result != resultFilter {
+			continue
+		}
+		out = append(out, build)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Number > out[j].Number })
+	return out, nil
+}
+
+type compactTestReportResult struct {
+	build  model.BuildSummary
+	report model.TestReport
+	err    error
+}
+
+func fetchCompactTestReports(ctx context.Context, api *jenkinsapi.API, job string, builds []model.BuildSummary, maxParallel int) []compactTestReportResult {
+	jobs := make(chan model.BuildSummary)
+	results := make(chan compactTestReportResult, len(builds))
+	var wg sync.WaitGroup
+	for i := 0; i < maxParallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for build := range jobs {
+				report, err := api.CompactTestReport(ctx, job, build.Number)
+				results <- compactTestReportResult{build: build, report: report, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, build := range builds {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- build:
+			}
+		}
+	}()
+	wg.Wait()
+	close(results)
+	var out []compactTestReportResult
+	for result := range results {
+		out = append(out, result)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].build.Number > out[j].build.Number })
+	return out
+}
+
+type flakyTestObservation struct {
+	build  model.BuildSummary
+	status string
+}
+
+func buildFlakyTestStats(job string, requestedBuilds []model.BuildSummary, reports []compactTestReportResult, minTransitions int, limit int) (model.FlakyTestStats, error) {
+	histories := map[model.TestIdentity][]flakyTestObservation{}
+	candidates := map[model.TestIdentity]bool{}
+	var junitBuilds []model.BuildSummary
+	skippedNoJUnit := 0
+	scanned := 0
+	for _, result := range reports {
+		scanned++
+		if result.err != nil {
+			if !isMissingTestReport(result.err) {
+				return model.FlakyTestStats{}, result.err
+			}
+			skippedNoJUnit++
+			continue
+		}
+		if result.report.TotalCount == 0 {
+			skippedNoJUnit++
+			continue
+		}
+		junitBuilds = append(junitBuilds, result.build)
+		perBuildStatuses := map[model.TestIdentity]string{}
+		for _, suite := range result.report.Suites {
+			for _, testCase := range suite.Cases {
+				identity := model.TestIdentity{SuiteName: suite.Name, ClassName: testCase.ClassName, CaseName: testCase.Name}
+				status := strings.ToUpper(strings.TrimSpace(testCase.Status))
+				perBuildStatuses[identity] = mergeTestStatus(perBuildStatuses[identity], status)
+			}
+		}
+		for identity, status := range perBuildStatuses {
+			histories[identity] = append(histories[identity], flakyTestObservation{build: result.build, status: status})
+			if isFailingTestStatus(status) {
+				candidates[identity] = true
+			}
+		}
+	}
+	var tests []model.FlakyTestCaseStats
+	for identity := range candidates {
+		history := histories[identity]
+		if len(history) == 0 {
+			continue
+		}
+		sort.SliceStable(history, func(i, j int) bool { return history[i].build.Number < history[j].build.Number })
+		stat := model.FlakyTestCaseStats{
+			Test:         identity,
+			Observations: make([]model.TestStateObservation, 0, len(history)),
+		}
+		var previousStatus string
+		for _, obs := range history {
+			stat.ObservationCount++
+			stat.Observations = append(stat.Observations, model.TestStateObservation{Build: obs.build.Number, Status: obs.status})
+			if previousStatus != "" && previousStatus != obs.status {
+				stat.TransitionCount++
+			}
+			previousStatus = obs.status
+			switch {
+			case isFailingTestStatus(obs.status):
+				stat.FailureCount++
+				build := obs.build
+				if stat.FirstFailedBuild == nil || build.Number < stat.FirstFailedBuild.Number {
+					stat.FirstFailedBuild = &build
+				}
+				if stat.LastFailedBuild == nil || build.Number > stat.LastFailedBuild.Number {
+					stat.LastFailedBuild = &build
+				}
+				stat.FailedBuilds = append(stat.FailedBuilds, model.TestFailureBuildRef{Build: build.Number, URL: build.URL, Result: build.Result, Test: identity})
+			case obs.status == "PASSED":
+				stat.PassCount++
+				build := obs.build
+				if stat.LastPassedBuild == nil || build.Number > stat.LastPassedBuild.Number {
+					stat.LastPassedBuild = &build
+				}
+			case obs.status == "SKIPPED":
+				stat.SkipCount++
+			}
+		}
+		stat.CurrentStreak = currentTestStateStreak(history)
+		stat.Classification = classifyTestStats(stat)
+		if stat.TransitionCount < minTransitions {
+			continue
+		}
+		tests = append(tests, stat)
+	}
+	sort.SliceStable(tests, func(i, j int) bool {
+		if tests[i].TransitionCount != tests[j].TransitionCount {
+			return tests[i].TransitionCount > tests[j].TransitionCount
+		}
+		if tests[i].FailureCount != tests[j].FailureCount {
+			return tests[i].FailureCount > tests[j].FailureCount
+		}
+		leftLast, rightLast := 0, 0
+		if tests[i].LastFailedBuild != nil {
+			leftLast = tests[i].LastFailedBuild.Number
+		}
+		if tests[j].LastFailedBuild != nil {
+			rightLast = tests[j].LastFailedBuild.Number
+		}
+		if leftLast != rightLast {
+			return leftLast > rightLast
+		}
+		return testIdentityKey(tests[i].Test) < testIdentityKey(tests[j].Test)
+	})
+	totalMatching := len(tests)
+	truncated := false
+	if len(tests) > limit {
+		tests = tests[:limit]
+		truncated = true
+	}
+	return model.FlakyTestStats{
+		Job:                  job,
+		BuildsRequested:      len(requestedBuilds),
+		BuildsScanned:        scanned,
+		BuildsWithJUnit:      len(junitBuilds),
+		BuildsSkippedNoJUnit: skippedNoJUnit,
+		Builds:               junitBuilds,
+		Tests:                tests,
+		RequestedLimit:       limit,
+		ReturnedCount:        len(tests),
+		TotalMatchingCount:   totalMatching,
+		Truncated:            truncated,
+		MinTransitions:       minTransitions,
+	}, nil
+}
+
+func isFailingTestStatus(status string) bool {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return status == "FAILED" || status == "REGRESSION"
+}
+
+func mergeTestStatus(existing string, next string) string {
+	if existing == "" || testStatusRank(next) > testStatusRank(existing) {
+		return next
+	}
+	return existing
+}
+
+func testStatusRank(status string) int {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FAILED", "REGRESSION":
+		return 3
+	case "SKIPPED":
+		return 2
+	case "PASSED":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func currentTestStateStreak(history []flakyTestObservation) model.TestStateStreak {
+	if len(history) == 0 {
+		return model.TestStateStreak{}
+	}
+	status := history[len(history)-1].status
+	count := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].status != status {
+			break
+		}
+		count++
+	}
+	return model.TestStateStreak{Status: status, Count: count}
+}
+
+func classifyTestStats(stat model.FlakyTestCaseStats) string {
+	if stat.FailureCount == 1 && stat.ObservationCount == 1 {
+		return "failed_once"
+	}
+	if stat.FailureCount == stat.ObservationCount {
+		return "consistently_failing"
+	}
+	if stat.TransitionCount > 0 {
+		return "flaky"
+	}
+	if stat.FailureCount == 1 {
+		return "failed_once"
+	}
+	return "failed"
+}
+
+func testIdentityKey(identity model.TestIdentity) string {
+	return identity.SuiteName + "\x00" + identity.ClassName + "\x00" + identity.CaseName
 }
 
 type PipelineRunResponse struct {

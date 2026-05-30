@@ -241,6 +241,9 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_test_report", "Get Test Report", "Fetch JUnit test summary and bounded test case details, with optional filters for status, suite name, case name, class name, duration, and failure text. Summary counts always describe the full Jenkins report; filters apply only to returned case details before limit."), func(ctx context.Context, in jenkinstools.TestReportRequest) (jenkinstools.TestReportResponse, error) {
 		return jenkinstools.TestReport(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, readOnlyTool("jenkins_get_flaky_test_stats", "Get Flaky Test Stats", "Analyze compact JUnit test status histories across selected builds for one job. Supports a recent build-summary window, explicit build numbers, build number ranges, result filtering, minTransitions, bounded parallelism, and a returned-test limit applied after sorting by transition count. Running builds and builds with no JUnit report are ignored, missing per-test observations do not count as transitions, and failedBuilds are references only for targeted jenkins_get_test_report follow-up."), func(ctx context.Context, in jenkinstools.FlakyTestStatsRequest) (jenkinstools.FlakyTestStatsResponse, error) {
+		return jenkinstools.FlakyTestStats(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_run", "Get Pipeline Run", "Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineRunResponse, error) {
 		return jenkinstools.PipelineRun(ctx, s.deps, in)
 	})
