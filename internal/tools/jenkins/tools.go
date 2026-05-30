@@ -1520,14 +1520,18 @@ func buildFlakyTestStats(job string, requestedBuilds []model.BuildSummary, repor
 			continue
 		}
 		junitBuilds = append(junitBuilds, result.build)
+		perBuildStatuses := map[model.TestIdentity]string{}
 		for _, suite := range result.report.Suites {
 			for _, testCase := range suite.Cases {
 				identity := model.TestIdentity{SuiteName: suite.Name, ClassName: testCase.ClassName, CaseName: testCase.Name}
 				status := strings.ToUpper(strings.TrimSpace(testCase.Status))
-				histories[identity] = append(histories[identity], flakyTestObservation{build: result.build, status: status})
-				if isFailingTestStatus(status) {
-					candidates[identity] = true
-				}
+				perBuildStatuses[identity] = mergeTestStatus(perBuildStatuses[identity], status)
+			}
+		}
+		for identity, status := range perBuildStatuses {
+			histories[identity] = append(histories[identity], flakyTestObservation{build: result.build, status: status})
+			if isFailingTestStatus(status) {
+				candidates[identity] = true
 			}
 		}
 	}
@@ -1624,6 +1628,26 @@ func isFailingTestStatus(status string) bool {
 	return status == "FAILED" || status == "REGRESSION"
 }
 
+func mergeTestStatus(existing string, next string) string {
+	if existing == "" || testStatusRank(next) > testStatusRank(existing) {
+		return next
+	}
+	return existing
+}
+
+func testStatusRank(status string) int {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FAILED", "REGRESSION":
+		return 3
+	case "SKIPPED":
+		return 2
+	case "PASSED":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func currentTestStateStreak(history []flakyTestObservation) model.TestStateStreak {
 	if len(history) == 0 {
 		return model.TestStateStreak{}
@@ -1640,6 +1664,9 @@ func currentTestStateStreak(history []flakyTestObservation) model.TestStateStrea
 }
 
 func classifyTestStats(stat model.FlakyTestCaseStats) string {
+	if stat.FailureCount == 1 && stat.ObservationCount == 1 {
+		return "failed_once"
+	}
 	if stat.FailureCount == stat.ObservationCount {
 		return "consistently_failing"
 	}

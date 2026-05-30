@@ -637,6 +637,68 @@ func TestFlakyTestStatsDefaultsMinTransitionsToThreeAndSortsBeforeLimit(t *testi
 	r.Equal(4, got.Stats.Tests[0].TransitionCount, "transition count")
 }
 
+func TestFlakyTestStatsCollapsesDuplicateTestIdentityWithinBuild(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/api/json":
+			writeJSON(w, `{"builds":[
+				{"number":2,"url":"https://jenkins.example.com/job/app/2/","result":"FAILURE","building":false},
+				{"number":1,"url":"https://jenkins.example.com/job/app/1/","result":"FAILURE","building":false}
+			]}`)
+		case "/job/app/2/testReport/api/json":
+			writeJSON(w, `{"totalCount":2,"failCount":1,"skipCount":0,"passCount":1,"suites":[{"name":"Suite","cases":[
+				{"className":"Class","name":"duplicate","status":"PASSED"},
+				{"className":"Class","name":"duplicate","status":"FAILED"}
+			]}]}`)
+		case "/job/app/1/testReport/api/json":
+			writeJSON(w, `{"totalCount":2,"failCount":1,"skipCount":0,"passCount":1,"suites":[{"name":"Suite","cases":[
+				{"className":"Class","name":"duplicate","status":"FAILED"},
+				{"className":"Class","name":"duplicate","status":"PASSED"}
+			]}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	minTransitions := 0
+	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 2, MinTransitions: &minTransitions})
+	r.NoError(err, "FlakyTestStats() error")
+	r.Len(got.Stats.Tests, 1, "test stats")
+	stat := got.Stats.Tests[0]
+	r.Equal(2, stat.ObservationCount, "one observation per build")
+	r.Equal(0, stat.TransitionCount, "duplicates within one build should not create transitions")
+	r.Equal("consistently_failing", stat.Classification, "merged status should use failing status")
+	r.Equal([]model.TestStateObservation{
+		{Build: 1, Status: "FAILED"},
+		{Build: 2, Status: "FAILED"},
+	}, stat.Observations, "observations")
+}
+
+func TestFlakyTestStatsClassifiesSingleObservedFailureAsFailedOnce(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/api/json":
+			writeJSON(w, `{"builds":[
+				{"number":1,"url":"https://jenkins.example.com/job/app/1/","result":"FAILURE","building":false}
+			]}`)
+		case "/job/app/1/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":1,"skipCount":0,"passCount":0,"suites":[{"name":"Suite","cases":[
+				{"className":"Class","name":"once","status":"FAILED"}
+			]}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	minTransitions := 0
+	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 1, MinTransitions: &minTransitions})
+	r.NoError(err, "FlakyTestStats() error")
+	r.Len(got.Stats.Tests, 1, "test stats")
+	r.Equal("failed_once", got.Stats.Tests[0].Classification, "classification")
+}
+
 func flakyStatsReportJSON(highStatus, mediumStatus, onceStatus string) string {
 	return fmt.Sprintf(`{"totalCount":3,"failCount":1,"skipCount":0,"passCount":2,"suites":[{"name":"Suite","cases":[
 		{"className":"Class","name":"high","status":%q},
