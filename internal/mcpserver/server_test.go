@@ -206,6 +206,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_get_build",
 		"jenkins_get_capabilities",
 		"jenkins_get_changes",
+		"jenkins_get_flaky_test_stats",
 		"jenkins_get_job",
 		"jenkins_get_job_config",
 		"jenkins_get_log",
@@ -268,6 +269,7 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_search_log":            {readOnly: true},
 		"jenkins_tail_log":              {readOnly: true},
 		"jenkins_get_test_report":       {readOnly: true},
+		"jenkins_get_flaky_test_stats":  {readOnly: true},
 		"jenkins_get_pipeline_run":      {readOnly: true},
 		"jenkins_get_pipeline_stage":    {readOnly: true},
 		"jenkins_get_pipeline_node_log": {readOnly: true},
@@ -342,6 +344,7 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_search_log":            "Search Log",
 		"jenkins_tail_log":              "Tail Log",
 		"jenkins_get_test_report":       "Get Test Report",
+		"jenkins_get_flaky_test_stats":  "Get Flaky Test Stats",
 		"jenkins_get_pipeline_run":      "Get Pipeline Run",
 		"jenkins_get_pipeline_stage":    "Get Pipeline Stage",
 		"jenkins_get_pipeline_node_log": "Get Pipeline Node Log",
@@ -488,7 +491,7 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
-	wantFilters := []string{"status", "suiteNameContains", "suiteNameRegex", "caseNameContains", "caseNameRegex", "classNameContains", "classNameRegex", "durationMillisMin", "durationMillisMax", "errorDetailsContains", "errorStackTraceContains"}
+	wantFilters := []string{"status", "suiteName", "suiteNameContains", "suiteNameRegex", "caseName", "caseNameContains", "caseNameRegex", "className", "classNameContains", "classNameRegex", "durationMillisMin", "durationMillisMax", "errorDetailsContains", "errorStackTraceContains"}
 	for tool, err := range clientSession.Tools(ctx, nil) {
 		r.NoError(err, "Tools()")
 		if tool.Name != "jenkins_get_test_report" {
@@ -517,6 +520,55 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 		return
 	}
 	r.Fail("jenkins_get_test_report tool not found")
+}
+
+func TestGetFlakyTestStatsToolDescriptionAndInputSchema(t *testing.T) {
+	r := require.New(t)
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	wantFields := []string{"job", "lastBuilds", "builds", "numberMin", "numberMax", "result", "minTransitions", "limit", "maxParallel"}
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		r.NoError(err, "Tools()")
+		if tool.Name != "jenkins_get_flaky_test_stats" {
+			continue
+		}
+		for _, want := range []string{"JUnit", "minTransitions", "transition count", "failedBuilds", "no JUnit"} {
+			r.Contains(tool.Description, want, "description")
+		}
+
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		r.NoError(err, "marshal input schema")
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal input schema")
+		for _, want := range wantFields {
+			property, ok := schema.Properties[want]
+			r.True(ok, "input schema missing property %q", want)
+			r.NotEmpty(property.Description, "input schema property %q description", want)
+		}
+		return
+	}
+	r.Fail("jenkins_get_flaky_test_stats tool not found")
 }
 
 func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {

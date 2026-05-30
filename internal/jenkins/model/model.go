@@ -225,16 +225,67 @@ type TestReport struct {
 }
 type TestCaseFilter struct {
 	Status                  string `json:"status,omitempty" jsonschema:"Exact Jenkins/JUnit test case status to return, matched case-insensitively, such as PASSED, FAILED, REGRESSION, or SKIPPED"`
+	SuiteName               string `json:"suiteName,omitempty" jsonschema:"Exact JUnit suite name to return, matched case-sensitively"`
 	SuiteNameContains       string `json:"suiteNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit suite names"`
 	SuiteNameRegex          string `json:"suiteNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit suite names"`
+	CaseName                string `json:"caseName,omitempty" jsonschema:"Exact JUnit test case name to return, matched case-sensitively"`
 	CaseNameContains        string `json:"caseNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit test case names"`
 	CaseNameRegex           string `json:"caseNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit test case names"`
+	ClassName               string `json:"className,omitempty" jsonschema:"Exact JUnit class name to return, matched case-sensitively"`
 	ClassNameContains       string `json:"classNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit class names"`
 	ClassNameRegex          string `json:"classNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit class names"`
 	DurationMillisMin       *int64 `json:"durationMillisMin,omitempty" jsonschema:"Minimum test case duration in milliseconds, inclusive"`
 	DurationMillisMax       *int64 `json:"durationMillisMax,omitempty" jsonschema:"Maximum test case duration in milliseconds, inclusive"`
 	ErrorDetailsContains    string `json:"errorDetailsContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error details"`
 	ErrorStackTraceContains string `json:"errorStackTraceContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error stack traces"`
+}
+type TestIdentity struct {
+	SuiteName string `json:"suiteName" jsonschema:"JUnit suite name"`
+	ClassName string `json:"className" jsonschema:"JUnit test class name"`
+	CaseName  string `json:"caseName" jsonschema:"JUnit test case name"`
+}
+type FlakyTestStats struct {
+	Job                  string               `json:"job" jsonschema:"Jenkins job path that was analyzed"`
+	BuildsRequested      int                  `json:"buildsRequested" jsonschema:"Number of build numbers selected before dropping builds without useful JUnit reports"`
+	BuildsScanned        int                  `json:"buildsScanned" jsonschema:"Number of selected builds whose JUnit endpoint was queried"`
+	BuildsWithJUnit      int                  `json:"buildsWithJunit" jsonschema:"Number of selected builds with at least one JUnit test case reported"`
+	BuildsSkippedNoJUnit int                  `json:"buildsSkippedNoJunit" jsonschema:"Number of selected builds ignored because no JUnit report or no test cases were available"`
+	Builds               []BuildSummary       `json:"builds,omitempty" jsonschema:"Selected builds that contributed JUnit observations, excluding builds with no useful JUnit report"`
+	Tests                []FlakyTestCaseStats `json:"tests" jsonschema:"Matching test case statistics sorted by likely flakiness"`
+	RequestedLimit       int                  `json:"requestedLimit" jsonschema:"Maximum number of matching test cases requested after applying server caps"`
+	ReturnedCount        int                  `json:"returnedCount" jsonschema:"Number of test case statistics returned"`
+	TotalMatchingCount   int                  `json:"totalMatchingCount" jsonschema:"Total number of matching test cases before applying the returned-test cap"`
+	Truncated            bool                 `json:"truncated" jsonschema:"Whether matching test case statistics were omitted because of the returned-test cap"`
+	MinTransitions       int                  `json:"minTransitions" jsonschema:"Minimum transition count filter applied to returned test cases"`
+}
+type FlakyTestCaseStats struct {
+	Test             TestIdentity           `json:"test" jsonschema:"Stable JUnit test identity that can be passed to jenkins_get_test_report exact-match filters"`
+	Classification   string                 `json:"classification" jsonschema:"Derived category such as flaky, consistently_failing, failed_once, or failed"`
+	ObservationCount int                    `json:"observationCount" jsonschema:"Number of selected JUnit-reporting builds where this test case was present"`
+	FailureCount     int                    `json:"failureCount" jsonschema:"Number of observations whose status was a failing status"`
+	PassCount        int                    `json:"passCount" jsonschema:"Number of observations whose status was PASSED"`
+	SkipCount        int                    `json:"skipCount" jsonschema:"Number of observations whose status was SKIPPED"`
+	TransitionCount  int                    `json:"transitionCount" jsonschema:"Number of status changes between adjacent reported observations for this test case"`
+	FirstFailedBuild *BuildSummary          `json:"firstFailedBuild,omitempty" jsonschema:"First selected build where this test case failed"`
+	LastFailedBuild  *BuildSummary          `json:"lastFailedBuild,omitempty" jsonschema:"Most recent selected build where this test case failed"`
+	LastPassedBuild  *BuildSummary          `json:"lastPassedBuild,omitempty" jsonschema:"Most recent selected build where this test case passed"`
+	CurrentStreak    TestStateStreak        `json:"currentStreak" jsonschema:"Current consecutive status streak at the end of the selected observations"`
+	Observations     []TestStateObservation `json:"observations" jsonschema:"Compact ordered status observations for this test case across selected builds where it was reported"`
+	FailedBuilds     []TestFailureBuildRef  `json:"failedBuilds" jsonschema:"Build references where this test failed, without failure details or stack traces"`
+}
+type TestStateStreak struct {
+	Status string `json:"status,omitempty" jsonschema:"Status value for the current consecutive streak"`
+	Count  int    `json:"count" jsonschema:"Number of adjacent reported observations in the current streak"`
+}
+type TestStateObservation struct {
+	Build  int    `json:"build" jsonschema:"Jenkins build number for this observation"`
+	Status string `json:"status" jsonschema:"JUnit status observed for this test case in this build"`
+}
+type TestFailureBuildRef struct {
+	Build  int          `json:"build" jsonschema:"Jenkins build number where the test failed"`
+	URL    string       `json:"url,omitempty" jsonschema:"Jenkins build URL when available"`
+	Result BuildResult  `json:"result,omitempty" jsonschema:"Jenkins build result when available"`
+	Test   TestIdentity `json:"test" jsonschema:"JUnit test identity for targeted follow-up in this build"`
 }
 type TestSuite struct {
 	Name  string     `json:"name" jsonschema:"JUnit test suite name"`

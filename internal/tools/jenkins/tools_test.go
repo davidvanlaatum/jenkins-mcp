@@ -548,6 +548,103 @@ func TestListJobsStopsJUnitProbesAfterPageSentinel(t *testing.T) {
 	}, requested, "requested paths")
 }
 
+func TestFlakyTestStatsDropsNoJUnitAndIgnoresMissingTestObservations(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/api/json":
+			writeJSON(w, `{"builds":[
+				{"number":5,"url":"https://jenkins.example.com/job/app/5/","result":"FAILURE","building":false},
+				{"number":4,"url":"https://jenkins.example.com/job/app/4/","result":"SUCCESS","building":false},
+				{"number":3,"url":"https://jenkins.example.com/job/app/3/","result":"FAILURE","building":false},
+				{"number":2,"url":"https://jenkins.example.com/job/app/2/","result":"SUCCESS","building":false},
+				{"number":1,"url":"https://jenkins.example.com/job/app/1/","result":"FAILURE","building":false}
+			]}`)
+		case "/job/app/5/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":1,"skipCount":0,"passCount":0,"suites":[{"name":"Suite","cases":[{"className":"Class","name":"flaky","status":"FAILED"}]}]}`)
+		case "/job/app/4/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":0,"skipCount":0,"passCount":1,"suites":[{"name":"Suite","cases":[{"className":"Class","name":"flaky","status":"PASSED"}]}]}`)
+		case "/job/app/3/testReport/api/json":
+			http.NotFound(w, r)
+		case "/job/app/2/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":0,"skipCount":0,"passCount":1,"suites":[{"name":"Suite","cases":[{"className":"Class","name":"other","status":"PASSED"}]}]}`)
+		case "/job/app/1/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":1,"skipCount":0,"passCount":0,"suites":[{"name":"Suite","cases":[{"className":"Class","name":"flaky","status":"FAILED"}]}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	minTransitions := 0
+	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, MinTransitions: &minTransitions})
+	r.NoError(err, "FlakyTestStats() error")
+	r.Equal(5, got.Stats.BuildsRequested, "builds requested")
+	r.Equal(5, got.Stats.BuildsScanned, "builds scanned")
+	r.Equal(4, got.Stats.BuildsWithJUnit, "builds with JUnit")
+	r.Equal(1, got.Stats.BuildsSkippedNoJUnit, "builds skipped")
+	r.Len(got.Stats.Builds, 4, "returned JUnit builds")
+	for _, build := range got.Stats.Builds {
+		r.NotEqual(3, build.Number, "no-JUnit build should be dropped")
+	}
+	r.Len(got.Stats.Tests, 1, "test stats")
+	stat := got.Stats.Tests[0]
+	r.Equal("flaky", stat.Test.CaseName, "case name")
+	r.Equal(2, stat.TransitionCount, "missing build/test observation should not add transitions")
+	r.Equal([]model.TestStateObservation{
+		{Build: 1, Status: "FAILED"},
+		{Build: 4, Status: "PASSED"},
+		{Build: 5, Status: "FAILED"},
+	}, stat.Observations, "observations")
+	r.Len(stat.FailedBuilds, 2, "failed build refs")
+	r.Equal(1, stat.FailedBuilds[0].Build, "first failed ref")
+	r.Equal(5, stat.FailedBuilds[1].Build, "second failed ref")
+}
+
+func TestFlakyTestStatsDefaultsMinTransitionsToThreeAndSortsBeforeLimit(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/api/json":
+			writeJSON(w, `{"builds":[
+				{"number":5,"url":"https://jenkins.example.com/job/app/5/","result":"FAILURE","building":false},
+				{"number":4,"url":"https://jenkins.example.com/job/app/4/","result":"FAILURE","building":false},
+				{"number":3,"url":"https://jenkins.example.com/job/app/3/","result":"FAILURE","building":false},
+				{"number":2,"url":"https://jenkins.example.com/job/app/2/","result":"FAILURE","building":false},
+				{"number":1,"url":"https://jenkins.example.com/job/app/1/","result":"FAILURE","building":false}
+			]}`)
+		case "/job/app/5/testReport/api/json":
+			writeJSON(w, flakyStatsReportJSON("FAILED", "FAILED", "PASSED"))
+		case "/job/app/4/testReport/api/json":
+			writeJSON(w, flakyStatsReportJSON("PASSED", "FAILED", "PASSED"))
+		case "/job/app/3/testReport/api/json":
+			writeJSON(w, flakyStatsReportJSON("FAILED", "PASSED", "FAILED"))
+		case "/job/app/2/testReport/api/json":
+			writeJSON(w, flakyStatsReportJSON("PASSED", "FAILED", "PASSED"))
+		case "/job/app/1/testReport/api/json":
+			writeJSON(w, flakyStatsReportJSON("FAILED", "PASSED", "PASSED"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, Limit: 1})
+	r.NoError(err, "FlakyTestStats() error")
+	r.Equal(3, got.Stats.MinTransitions, "default minTransitions")
+	r.Equal(2, got.Stats.TotalMatchingCount, "matching count before cap")
+	r.True(got.Stats.Truncated, "cap should truncate after sorting")
+	r.Len(got.Stats.Tests, 1, "returned tests")
+	r.Equal("high", got.Stats.Tests[0].Test.CaseName, "highest transition test should survive cap")
+	r.Equal(4, got.Stats.Tests[0].TransitionCount, "transition count")
+}
+
+func flakyStatsReportJSON(highStatus, mediumStatus, onceStatus string) string {
+	return fmt.Sprintf(`{"totalCount":3,"failCount":1,"skipCount":0,"passCount":2,"suites":[{"name":"Suite","cases":[
+		{"className":"Class","name":"high","status":%q},
+		{"className":"Class","name":"medium","status":%q},
+		{"className":"Class","name":"once","status":%q}
+	]}]}`, highStatus, mediumStatus, onceStatus)
+}
+
 func TestListJobsAppliesMetadataFiltersWithoutChangingResponseShape(t *testing.T) {
 	r := require.New(t)
 

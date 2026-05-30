@@ -404,6 +404,16 @@ func (a *API) ListBuilds(ctx context.Context, job string, offset int, limit int)
 	return out, nil
 }
 
+func (a *API) GetBuildSummary(ctx context.Context, job string, number int) (model.BuildSummary, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/api/json"
+	tree := "id,number,url,result,building,timestamp,duration,description,displayName,queueId,estimatedDuration,keepLog"
+	var b buildJSON
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &b); err != nil {
+		return model.BuildSummary{}, err
+	}
+	return summary(b), nil
+}
+
 func (a *API) GetBuild(ctx context.Context, job string, number int) (model.Build, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/api/json"
 	tree := "id,number,url,result,building,timestamp,duration,description,displayName,fullDisplayName,queueId,estimatedDuration,keepLog,artifacts[displayPath,fileName,relativePath],actions[causes[*],parameters[*]],changeSets[kind,items[commitId,author[fullName],msg,timestamp,affectedPaths]]"
@@ -542,13 +552,49 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	return report, nil
 }
 
+func (a *API) CompactTestReport(ctx context.Context, job string, number int) (model.TestReport, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
+	var raw struct {
+		TotalCount int `json:"totalCount"`
+		FailCount  int `json:"failCount"`
+		SkipCount  int `json:"skipCount"`
+		PassCount  int `json:"passCount"`
+		Suites     []struct {
+			Name  string           `json:"name"`
+			Cases []model.TestCase `json:"cases"`
+		} `json:"suites"`
+	}
+	tree := "totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,status,duration]]"
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+		return model.TestReport{}, err
+	}
+	totalCount := raw.TotalCount
+	if totalCount == 0 {
+		totalCount = raw.PassCount + raw.FailCount + raw.SkipCount
+	}
+	report := model.TestReport{TotalCount: totalCount, FailCount: raw.FailCount, SkipCount: raw.SkipCount, PassCount: raw.PassCount}
+	for _, s := range raw.Suites {
+		suite := model.TestSuite{Name: s.Name}
+		for _, c := range s.Cases {
+			c.ErrorDetails = ""
+			c.ErrorStackTrace = ""
+			suite.Cases = append(suite.Cases, c)
+		}
+		report.Suites = append(report.Suites, suite)
+	}
+	return report, nil
+}
+
 type testCaseMatcher struct {
 	active                  bool
 	status                  string
+	suiteName               string
 	suiteNameContains       string
 	suiteNameRegex          *regexp.Regexp
+	caseName                string
 	caseNameContains        string
 	caseNameRegex           *regexp.Regexp
+	className               string
 	classNameContains       string
 	classNameRegex          *regexp.Regexp
 	durationMillisMin       *int64
@@ -560,8 +606,11 @@ type testCaseMatcher struct {
 func newTestCaseMatcher(filter model.TestCaseFilter) (testCaseMatcher, error) {
 	matcher := testCaseMatcher{
 		status:                  strings.ToUpper(strings.TrimSpace(filter.Status)),
+		suiteName:               filter.SuiteName,
 		suiteNameContains:       strings.ToLower(filter.SuiteNameContains),
+		caseName:                filter.CaseName,
 		caseNameContains:        strings.ToLower(filter.CaseNameContains),
+		className:               filter.ClassName,
 		classNameContains:       strings.ToLower(filter.ClassNameContains),
 		durationMillisMin:       filter.DurationMillisMin,
 		durationMillisMax:       filter.DurationMillisMax,
@@ -579,6 +628,7 @@ func newTestCaseMatcher(filter model.TestCaseFilter) (testCaseMatcher, error) {
 		return testCaseMatcher{}, err
 	}
 	matcher.active = matcher.status != "" ||
+		matcher.suiteName != "" || matcher.caseName != "" || matcher.className != "" ||
 		matcher.suiteNameContains != "" || matcher.suiteNameRegex != nil ||
 		matcher.caseNameContains != "" || matcher.caseNameRegex != nil ||
 		matcher.classNameContains != "" || matcher.classNameRegex != nil ||
@@ -606,16 +656,25 @@ func (m testCaseMatcher) matches(suiteName string, testCase model.TestCase) bool
 	if m.status != "" && strings.ToUpper(testCase.Status) != m.status {
 		return false
 	}
+	if m.suiteName != "" && suiteName != m.suiteName {
+		return false
+	}
 	if m.suiteNameContains != "" && !strings.Contains(strings.ToLower(suiteName), m.suiteNameContains) {
 		return false
 	}
 	if m.suiteNameRegex != nil && !m.suiteNameRegex.MatchString(suiteName) {
 		return false
 	}
+	if m.caseName != "" && testCase.Name != m.caseName {
+		return false
+	}
 	if m.caseNameContains != "" && !strings.Contains(strings.ToLower(testCase.Name), m.caseNameContains) {
 		return false
 	}
 	if m.caseNameRegex != nil && !m.caseNameRegex.MatchString(testCase.Name) {
+		return false
+	}
+	if m.className != "" && testCase.ClassName != m.className {
 		return false
 	}
 	if m.classNameContains != "" && !strings.Contains(strings.ToLower(testCase.ClassName), m.classNameContains) {
