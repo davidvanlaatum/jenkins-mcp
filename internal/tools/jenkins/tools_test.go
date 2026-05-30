@@ -699,6 +699,60 @@ func TestFlakyTestStatsClassifiesSingleObservedFailureAsFailedOnce(t *testing.T)
 	r.Equal("failed_once", got.Stats.Tests[0].Classification, "classification")
 }
 
+func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
+	r := require.New(t)
+
+	var listLimits []string
+	var requested []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		switch r.URL.Path {
+		case "/job/app/api/json":
+			listLimits = append(listLimits, r.URL.Query().Get("tree"))
+			writeJSON(w, `{"builds":[
+				{"number":5,"url":"https://jenkins.example.com/job/app/5/","result":"SUCCESS","building":false},
+				{"number":4,"url":"https://jenkins.example.com/job/app/4/","result":"FAILURE","building":true},
+				{"number":3,"url":"https://jenkins.example.com/job/app/3/","result":"SUCCESS","building":false}
+			]}`)
+		case "/job/app/5/testReport/api/json", "/job/app/3/testReport/api/json":
+			writeJSON(w, `{"totalCount":1,"failCount":0,"skipCount":0,"passCount":1,"suites":[{"name":"Suite","cases":[
+				{"className":"Class","name":"passing","status":"PASSED"}
+			]}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	_, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 3, Result: "SUCCESS"})
+	r.NoError(err, "FlakyTestStats() error")
+	r.Len(listLimits, 1, "build list requests")
+	r.Contains(listLimits[0], "{0,3}", "lastBuilds should bound the build-summary selection window before filtering")
+	r.Equal([]string{
+		"/job/app/api/json",
+		"/job/app/5/testReport/api/json",
+		"/job/app/3/testReport/api/json",
+	}, requested, "requested paths")
+}
+
+func TestFlakyTestStatsRejectsTooManyUniqueExplicitBuildsBeforeFetching(t *testing.T) {
+	r := require.New(t)
+
+	var requested []string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		http.NotFound(w, r)
+	})
+	builds := make([]int, 0, 101)
+	for i := 1; i <= 101; i++ {
+		builds = append(builds, i)
+	}
+	_, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", Builds: builds})
+	r.Error(err, "FlakyTestStats() should reject too many explicit builds")
+	appErr, ok := err.(*apperrors.Error)
+	r.True(ok, "error type")
+	r.Equal(apperrors.CodeInvalidRequest, appErr.Code, "error code")
+	r.Empty(requested, "should not fetch build summaries after cap rejection")
+}
+
 func flakyStatsReportJSON(highStatus, mediumStatus, onceStatus string) string {
 	return fmt.Sprintf(`{"totalCount":3,"failCount":1,"skipCount":0,"passCount":2,"suites":[{"name":"Suite","cases":[
 		{"className":"Class","name":"high","status":%q},

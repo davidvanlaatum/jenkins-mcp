@@ -1396,38 +1396,25 @@ func selectedFlakyStatsBuilds(ctx context.Context, api *jenkinsapi.API, job stri
 	}
 	want := pagination.BoundLimit(in.LastBuilds, 20, 100)
 	var out []model.BuildSummary
-	offset := 0
-	for len(out) < want {
-		page, err := api.ListBuilds(ctx, job, offset, 100)
-		if err != nil {
-			return nil, err
+	page, err := api.ListBuilds(ctx, job, 0, want)
+	if err != nil {
+		return nil, err
+	}
+	for _, build := range page {
+		if build.Building {
+			continue
 		}
-		if len(page) == 0 {
-			break
+		if resultFilter != "" && build.Result != resultFilter {
+			continue
 		}
-		for _, build := range page {
-			if build.Building {
-				continue
-			}
-			if resultFilter != "" && build.Result != resultFilter {
-				continue
-			}
-			out = append(out, build)
-			if len(out) >= want {
-				break
-			}
-		}
-		offset += len(page)
-		if len(page) < 100 {
-			break
-		}
+		out = append(out, build)
 	}
 	return out, nil
 }
 
 func explicitFlakyStatsBuilds(ctx context.Context, api *jenkinsapi.API, job string, numbers []int, resultFilter model.BuildResult) ([]model.BuildSummary, error) {
 	seen := map[int]bool{}
-	var out []model.BuildSummary
+	var uniqueNumbers []int
 	for _, number := range numbers {
 		if number <= 0 {
 			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "invalid build number", map[string]any{"build": number})
@@ -1436,9 +1423,13 @@ func explicitFlakyStatsBuilds(ctx context.Context, api *jenkinsapi.API, job stri
 			continue
 		}
 		seen[number] = true
-		if len(out) >= 100 {
+		uniqueNumbers = append(uniqueNumbers, number)
+		if len(uniqueNumbers) > 100 {
 			return nil, apperrors.Wrap(apperrors.CodeInvalidRequest, "too many builds selected", map[string]any{"maxBuilds": 100})
 		}
+	}
+	var out []model.BuildSummary
+	for _, number := range uniqueNumbers {
 		build, err := api.GetBuildSummary(ctx, job, number)
 		if err != nil {
 			return nil, err
