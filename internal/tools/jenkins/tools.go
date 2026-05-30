@@ -1321,7 +1321,7 @@ func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestRepor
 type FlakyTestStatsRequest struct {
 	Controller     string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job            string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
-	LastBuilds     int    `json:"lastBuilds,omitempty" jsonschema:"Number of recent completed builds to analyze when builds or number range are not provided; defaults to 20 and is capped at 100"`
+	LastBuilds     int    `json:"lastBuilds,omitempty" jsonschema:"Number of recent build summaries to consider before dropping running, result-filtered, or no-JUnit builds; defaults to 20 and is capped at 100"`
 	Builds         []int  `json:"builds,omitempty" jsonschema:"Explicit Jenkins build numbers to analyze; when provided, lastBuilds and numberMin/numberMax are ignored"`
 	NumberMin      *int   `json:"numberMin,omitempty" jsonschema:"Minimum Jenkins build number to analyze when using a build number range"`
 	NumberMax      *int   `json:"numberMax,omitempty" jsonschema:"Maximum Jenkins build number to analyze when using a build number range"`
