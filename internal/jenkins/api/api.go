@@ -1531,6 +1531,46 @@ func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]st
 	return headers.Get("Location"), nil
 }
 
+func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string, map[string]string, bool, bool, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/api/json"
+	var raw struct {
+		OriginalScript        string            `json:"originalScript"`
+		OriginalLoadedScripts map[string]string `json:"originalLoadedScripts"`
+		Enabled               bool              `json:"enabled"`
+		RebuildEnabled        bool              `json:"rebuildEnabled"`
+	}
+	tree := "originalScript,originalLoadedScripts,isEnabled,isRebuildEnabled"
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+		return "", nil, false, false, err
+	}
+	return raw.OriginalScript, raw.OriginalLoadedScripts, raw.Enabled, raw.RebuildEnabled, nil
+}
+
+func (a *API) ReplayBuild(ctx context.Context, job string, number int, mainScript string, loadedScripts map[string]string, rebuild bool) (string, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/rebuild"
+	var form url.Values
+	if !rebuild {
+		path = urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/run"
+		payload := map[string]string{"mainScript": mainScript}
+		for id, script := range loadedScripts {
+			payload[strings.ReplaceAll(id, ".", "_")] = script
+		}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return "", apperrors.Wrap(apperrors.CodeInvalidRequest, "failed to encode replay form", err.Error())
+		}
+		form = url.Values{"json": {string(b)}}
+	}
+	status, _, headers, err := a.client.Post(ctx, path, nil, form)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status > 399 {
+		return "", jenkinsHTTPError(status)
+	}
+	return headers.Get("Location"), nil
+}
+
 func jenkinsHTTPError(status int) error {
 	msg := fmt.Sprintf("Jenkins returned HTTP %d", status)
 	detail := map[string]any{"status": status}

@@ -159,6 +159,35 @@ type BuildReference struct {
 	URL        string `json:"url" jsonschema:"Original Jenkins build URL"`
 }
 
+type ReplayScript struct {
+	ID          string `json:"id" jsonschema:"Stable Jenkins Replay script identifier; loaded-script overrides should use this value as the map key"`
+	Kind        string `json:"kind" jsonschema:"Replay script kind: main for the primary Pipeline script or loaded for an auxiliary loaded script"`
+	Content     string `json:"content,omitempty" jsonschema:"Pipeline script content, omitted or truncated when requested limits do not allow the full body"`
+	SizeBytes   int64  `json:"sizeBytes" jsonschema:"Original script size in UTF-8 bytes before tool-level truncation"`
+	Truncated   bool   `json:"truncated" jsonschema:"Whether content was truncated by the requested or configured limit"`
+	SHA256      string `json:"sha256,omitempty" jsonschema:"SHA-256 digest of the original full script content"`
+	OverrideKey string `json:"overrideKey,omitempty" jsonschema:"Request key to use in loadedScriptOverrides for this script; present for loaded scripts"`
+}
+
+type ReplayScriptSet struct {
+	SourceBuild BuildReference `json:"sourceBuild" jsonschema:"Jenkins build whose Replay action exposed these scripts"`
+	Scripts     []ReplayScript `json:"scripts" jsonschema:"Replayable Pipeline scripts exposed by Jenkins"`
+	Truncated   bool           `json:"truncated" jsonschema:"Whether one or more script bodies were truncated"`
+	TotalBytes  int64          `json:"totalBytes" jsonschema:"Total UTF-8 bytes across all original script bodies before truncation"`
+}
+
+type ReplayBuild struct {
+	SourceBuild             BuildReference  `json:"sourceBuild" jsonschema:"Jenkins build that was replayed"`
+	ScheduledBuild          *BuildReference `json:"scheduledBuild,omitempty" jsonschema:"Predicted build reference from the job nextBuildNumber captured before replay; Jenkins may still leave the item queued briefly"`
+	QueueURL                string          `json:"queueUrl,omitempty" jsonschema:"Jenkins queue item URL when the Replay endpoint exposes one"`
+	RedirectURL             string          `json:"redirectUrl,omitempty" jsonschema:"Jenkins redirect URL returned by the native Replay web endpoint"`
+	Replayed                bool            `json:"replayed" jsonschema:"Whether Jenkins accepted the native Replay request"`
+	UsedOriginalScripts     bool            `json:"usedOriginalScripts" jsonschema:"Whether the replay used the original primary and loaded scripts without overrides"`
+	MainScriptOverridden    bool            `json:"mainScriptOverridden" jsonschema:"Whether the primary Pipeline script was overridden"`
+	LoadedScriptOverrideIDs []string        `json:"loadedScriptOverrideIds,omitempty" jsonschema:"Loaded Replay script identifiers overridden in the request"`
+	IncludedScriptIDs       []string        `json:"includedScriptIds,omitempty" jsonschema:"Replay script identifiers included in the submitted replacement set, without script bodies"`
+}
+
 type Build struct {
 	BuildSummary
 	Description       string          `json:"description,omitempty" jsonschema:"Jenkins build description"`

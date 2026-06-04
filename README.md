@@ -25,6 +25,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
+- `jenkins_get_replay_scripts`: Fetch the native Jenkins Pipeline Replay script set for a build, including primary and loaded-script identifiers, script content, truncation metadata, and digests.
 - `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes; keep `waitTimeoutMs` below any MCP host tool-call timeout.
 - `jenkins_watch_queue_item`: Long-poll a Jenkins queue item watcher until stable queue fields change, it receives an executable build, is cancelled, disappears, or times out; Jenkins `why` text changes such as quiet-period countdowns do not wake the long poll by themselves, and `waitTimeoutMs` should stay below any MCP host tool-call timeout.
 - `jenkins_list_issues`: List paged, typed Warnings NG issues for a build. The response includes discovered tools so callers can select a tool when a build has multiple Warnings NG results.
@@ -40,6 +41,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 
 ### Jenkins-Mutating Tools
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
+- `jenkins_replay_build`: Replay a Jenkins Pipeline build through native Pipeline Replay, optionally with full primary and loaded-script overrides.
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item.
 - `jenkins_cancel_build`: Cancel a running Jenkins build.
 

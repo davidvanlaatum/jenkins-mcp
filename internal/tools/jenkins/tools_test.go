@@ -297,6 +297,125 @@ func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
 	r.Error(err, "TriggerBuild() succeeded with mutations disabled")
 }
 
+func TestReplayScriptsReturnsScriptMetadataAndTruncation(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/7/replay/api/json":
+			writeJSON(w, `{
+				"originalScript": "pipeline-main",
+				"originalLoadedScripts": {
+					"Script1.groovy": "loaded-one"
+				},
+				"enabled": true,
+				"rebuildEnabled": true
+			}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ReplayScripts(t.Context(), deps, ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 8})
+	r.NoError(err, "ReplayScripts() error")
+	r.Equal("app", got.Scripts.SourceBuild.Job, "source job")
+	r.Equal(7, got.Scripts.SourceBuild.Build, "source build")
+	r.True(got.Scripts.Truncated, "script set truncated")
+	r.Equal(int64(len("pipeline-main")+len("loaded-one")), got.Scripts.TotalBytes, "total bytes")
+	r.Len(got.Scripts.Scripts, 2, "scripts")
+	mainScript := got.Scripts.Scripts[0]
+	r.Equal("main", mainScript.ID, "main id")
+	r.Equal("main", mainScript.Kind, "main kind")
+	r.Equal("pipeline", mainScript.Content, "main content should be truncated on UTF-8 boundary")
+	r.True(mainScript.Truncated, "main truncated")
+	r.NotEmpty(mainScript.SHA256, "main digest")
+	loadedScript := got.Scripts.Scripts[1]
+	r.Equal("Script1.groovy", loadedScript.ID, "loaded id")
+	r.Equal("loaded", loadedScript.Kind, "loaded kind")
+	r.Equal("Script1.groovy", loadedScript.OverrideKey, "override key")
+}
+
+func TestReplayBuildRequiresMutationEnablement(t *testing.T) {
+	r := require.New(t)
+
+	_, err := ReplayBuild(t.Context(), Deps{
+		Config: config.Config{
+			DefaultController: "default",
+			Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		},
+	}, ReplayBuildRequest{Job: "app", Build: 7})
+	r.Error(err, "ReplayBuild() succeeded with mutations disabled")
+	var appErr *apperrors.Error
+	r.ErrorAs(err, &appErr, "error type")
+	r.Equal(apperrors.CodeMutationDisabled, appErr.Code, "error code")
+}
+
+func TestReplayBuildLoadedScriptOnlyOverrideReusesOriginalPrimaryAndEmitsAudit(t *testing.T) {
+	r := require.New(t)
+
+	var gotJSON string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/crumbIssuer/api/json":
+			http.NotFound(w, req)
+		case "/job/app/api/json":
+			writeJSON(w, `{"name":"app","fullName":"app","url":"https://jenkins.example.com/job/app/","color":"red","buildable":true,"inQueue":false,"nextBuildNumber":8}`)
+		case "/job/app/7/replay/api/json":
+			writeJSON(w, `{
+				"originalScript": "pipeline { echo 'original' }",
+				"originalLoadedScripts": {
+					"Script1.groovy": "echo 'one'",
+					"Script2.groovy": "echo 'two'"
+				},
+				"enabled": true,
+				"rebuildEnabled": true
+			}`)
+		case "/job/app/7/replay/run":
+			err := req.ParseForm()
+			r.NoError(err, "ParseForm()")
+			gotJSON = req.Form.Get("json")
+			w.Header().Set("Location", "https://jenkins.example.com/job/app/")
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+	deps.Config.Mutations.Enabled = true
+	auditPath := t.TempDir() + "/audit.jsonl"
+	auditer, err := audit.New(config.AuditConfig{Path: auditPath})
+	r.NoError(err, "audit.New()")
+	deps.Audit = auditer
+
+	got, err := ReplayBuild(t.Context(), deps, ReplayBuildRequest{
+		Job:   "app",
+		Build: 7,
+		LoadedScriptOverrides: map[string]string{
+			"Script2.groovy": "echo 'changed'",
+		},
+	})
+	r.NoError(err, "ReplayBuild() error")
+	r.True(got.Replay.Replayed, "replayed")
+	r.False(got.Replay.UsedOriginalScripts, "used original scripts")
+	r.False(got.Replay.MainScriptOverridden, "main overridden")
+	r.Equal([]string{"Script2.groovy"}, got.Replay.LoadedScriptOverrideIDs, "override ids")
+	r.Equal([]string{"main", "Script1.groovy", "Script2.groovy"}, got.Replay.IncludedScriptIDs, "included ids")
+	r.NotNil(got.Replay.ScheduledBuild, "scheduled build")
+	r.Equal(8, got.Replay.ScheduledBuild.Build, "scheduled build number")
+
+	var form map[string]string
+	err = json.Unmarshal([]byte(gotJSON), &form)
+	r.NoError(err, "unmarshal replay form")
+	r.Equal("pipeline { echo 'original' }", form["mainScript"], "original primary script should be submitted")
+	r.Equal("echo 'one'", form["Script1_groovy"], "omitted loaded script should remain unchanged")
+	r.Equal("echo 'changed'", form["Script2_groovy"], "overridden loaded script")
+
+	auditBytes, err := os.ReadFile(auditPath)
+	r.NoError(err, "ReadFile(audit)")
+	r.Contains(string(auditBytes), `"action":"replay_build"`, "audit action")
+	r.Contains(string(auditBytes), `"target":"app#7"`, "audit target")
+	r.Contains(string(auditBytes), `"outcome":"success"`, "audit outcome")
+}
+
 func TestResolveBuildURL(t *testing.T) {
 	r := require.New(t)
 
