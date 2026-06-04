@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -823,8 +824,11 @@ func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
 
 	var listLimits []string
 	var requested []string
+	var requestedMu sync.Mutex
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requestedMu.Lock()
 		requested = append(requested, r.URL.Path)
+		requestedMu.Unlock()
 		switch r.URL.Path {
 		case "/job/app/api/json":
 			listLimits = append(listLimits, r.URL.Query().Get("tree"))
@@ -845,11 +849,14 @@ func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
 	r.NoError(err, "FlakyTestStats() error")
 	r.Len(listLimits, 1, "build list requests")
 	r.Contains(listLimits[0], "{0,3}", "lastBuilds should bound the build-summary selection window before filtering")
-	r.Equal([]string{
-		"/job/app/api/json",
+	requestedMu.Lock()
+	gotRequested := append([]string(nil), requested...)
+	requestedMu.Unlock()
+	r.Equal("/job/app/api/json", gotRequested[0], "build list should be fetched before test reports")
+	r.ElementsMatch([]string{
 		"/job/app/5/testReport/api/json",
 		"/job/app/3/testReport/api/json",
-	}, requested, "requested paths")
+	}, gotRequested[1:], "JUnit report fetch order is intentionally parallel")
 }
 
 func TestFlakyTestStatsRejectsTooManyUniqueExplicitBuildsBeforeFetching(t *testing.T) {
