@@ -1539,7 +1539,7 @@ func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string
 		Enabled               bool              `json:"enabled"`
 		RebuildEnabled        bool              `json:"rebuildEnabled"`
 	}
-	tree := "originalScript,originalLoadedScripts,isEnabled,isRebuildEnabled"
+	tree := "originalScript,originalLoadedScripts,enabled,rebuildEnabled"
 	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
 		return "", nil, false, false, err
 	}

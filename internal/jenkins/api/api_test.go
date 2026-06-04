@@ -66,7 +66,7 @@ func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
 			http.NotFound(w, req)
 			return
 		}
-		r.Contains(req.URL.Query().Get("tree"), "originalScript", "tree")
+		r.Equal("originalScript,originalLoadedScripts,enabled,rebuildEnabled", req.URL.Query().Get("tree"), "tree")
 		writeAPIJSON(w, `{
 			"originalScript": "pipeline { echo 'main' }",
 			"originalLoadedScripts": {
