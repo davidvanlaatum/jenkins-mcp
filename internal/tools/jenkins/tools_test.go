@@ -303,15 +303,16 @@ func TestReplayScriptsReturnsScriptMetadataAndTruncation(t *testing.T) {
 
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/job/app/7/replay/api/json":
-			writeJSON(w, `{
-				"originalScript": "pipeline-main",
-				"originalLoadedScripts": {
-					"Script1.groovy": "loaded-one"
-				},
-				"enabled": true,
-				"rebuildEnabled": true
-			}`)
+		case "/job/app/7/replay/":
+			_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline-main</textarea>
+      <textarea name="_.Script1.groovy">loaded-one</textarea>
+    </form>
+  </body>
+</html>`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -361,16 +362,17 @@ func TestReplayBuildLoadedScriptOnlyOverrideReusesOriginalPrimaryAndEmitsAudit(t
 			http.NotFound(w, req)
 		case "/job/app/api/json":
 			writeJSON(w, `{"name":"app","fullName":"app","url":"https://jenkins.example.com/job/app/","color":"red","buildable":true,"inQueue":false,"nextBuildNumber":8}`)
-		case "/job/app/7/replay/api/json":
-			writeJSON(w, `{
-				"originalScript": "pipeline { echo 'original' }",
-				"originalLoadedScripts": {
-					"Script1.groovy": "echo 'one'",
-					"Script2.groovy": "echo 'two'"
-				},
-				"enabled": true,
-				"rebuildEnabled": true
-			}`)
+		case "/job/app/7/replay/":
+			_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline { echo &#39;original&#39; }</textarea>
+      <textarea name="_.Script1.groovy">echo &#39;one&#39;</textarea>
+      <textarea name="_.Script2.groovy">echo &#39;two&#39;</textarea>
+    </form>
+  </body>
+</html>`))
 		case "/job/app/7/replay/run":
 			err := req.ParseForm()
 			r.NoError(err, "ParseForm()")

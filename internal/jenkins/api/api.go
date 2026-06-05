@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -1532,18 +1533,19 @@ func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]st
 }
 
 func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string, map[string]string, bool, bool, error) {
-	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/api/json"
-	var raw struct {
-		OriginalScript        string            `json:"originalScript"`
-		OriginalLoadedScripts map[string]string `json:"originalLoadedScripts"`
-		Enabled               bool              `json:"enabled"`
-		RebuildEnabled        bool              `json:"rebuildEnabled"`
-	}
-	tree := "originalScript,originalLoadedScripts,enabled,rebuildEnabled"
-	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/"
+	status, body, _, err := a.client.GetText(ctx, path, nil)
+	if err != nil {
 		return "", nil, false, false, err
 	}
-	return raw.OriginalScript, raw.OriginalLoadedScripts, raw.Enabled, raw.RebuildEnabled, nil
+	if status < 200 || status > 299 {
+		return "", nil, false, false, jenkinsHTTPError(status)
+	}
+	mainScript, loadedScripts, err := parseReplayScriptsPage(string(body))
+	if err != nil {
+		return "", nil, false, false, err
+	}
+	return mainScript, loadedScripts, true, true, nil
 }
 
 func (a *API) ReplayBuild(ctx context.Context, job string, number int, mainScript string, loadedScripts map[string]string, rebuild bool) (string, error) {
@@ -1569,6 +1571,48 @@ func (a *API) ReplayBuild(ctx context.Context, job string, number int, mainScrip
 		return "", jenkinsHTTPError(status)
 	}
 	return headers.Get("Location"), nil
+}
+
+var (
+	replayTextareaPattern = regexp.MustCompile(`(?is)<textarea\b([^>]*)>(.*?)</textarea>`)
+	replayNamePattern     = regexp.MustCompile(`(?is)\bname\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+)
+
+func parseReplayScriptsPage(page string) (string, map[string]string, error) {
+	loadedScripts := map[string]string{}
+	mainScript := ""
+	for _, match := range replayTextareaPattern.FindAllStringSubmatch(page, -1) {
+		name := replayTextareaName(match[1])
+		if !strings.HasPrefix(name, "_.") {
+			continue
+		}
+		field := strings.TrimPrefix(name, "_.")
+		content := html.UnescapeString(match[2])
+		if field == "mainScript" {
+			mainScript = content
+			continue
+		}
+		if field != "" {
+			loadedScripts[field] = content
+		}
+	}
+	if mainScript == "" {
+		return "", nil, apperrors.New(apperrors.CodeInvalidRequest, "Jenkins Replay page did not expose an editable primary Pipeline script")
+	}
+	return mainScript, loadedScripts, nil
+}
+
+func replayTextareaName(attrs string) string {
+	match := replayNamePattern.FindStringSubmatch(attrs)
+	if match == nil {
+		return ""
+	}
+	for _, value := range match[1:] {
+		if value != "" {
+			return html.UnescapeString(value)
+		}
+	}
+	return ""
 }
 
 func jenkinsHTTPError(status int) error {

@@ -62,25 +62,25 @@ func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
 func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/job/app/7/replay/api/json" {
+		if req.URL.Path != "/job/app/7/replay/" {
 			http.NotFound(w, req)
 			return
 		}
-		r.Equal("originalScript,originalLoadedScripts,enabled,rebuildEnabled", req.URL.Query().Get("tree"), "tree")
-		writeAPIJSON(w, `{
-			"originalScript": "pipeline { echo 'main' }",
-			"originalLoadedScripts": {
-				"Script1.groovy": "echo 'loaded'"
-			},
-			"enabled": true,
-			"rebuildEnabled": true
-		}`)
+		_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline { echo &#39;main&#39; }</textarea>
+      <textarea name="_.Script1_groovy">echo &#39;loaded&#39;</textarea>
+    </form>
+  </body>
+</html>`))
 	})
 
 	mainScript, loadedScripts, enabled, rebuildEnabled, err := api.ReplayScripts(t.Context(), "app", 7)
 	r.NoError(err, "ReplayScripts() error")
 	r.Equal("pipeline { echo 'main' }", mainScript, "main script")
-	r.Equal("echo 'loaded'", loadedScripts["Script1.groovy"], "loaded script")
+	r.Equal("echo 'loaded'", loadedScripts["Script1_groovy"], "loaded script")
 	r.True(enabled, "enabled")
 	r.True(rebuildEnabled, "rebuild enabled")
 }

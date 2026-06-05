@@ -949,6 +949,100 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(nodeLog.Log.Text, "hello from pipeline", "pipeline node log text")
 		r.False(nodeLog.Log.Truncated, "pipeline node log should fit in requested bytes")
 	})
+
+	t.Run("pipeline replay tools", func(t *testing.T) {
+		r := require.New(t)
+		clientSession, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "admin", func(cfg *config.Config) {
+			cfg.Mutations.Enabled = true
+		})
+		defer cleanup()
+
+		scripts := callIntegrationTool[struct {
+			Scripts struct {
+				SourceBuild struct {
+					Job   string `json:"job"`
+					Build int    `json:"build"`
+				} `json:"sourceBuild"`
+				Scripts []struct {
+					ID        string `json:"id"`
+					Kind      string `json:"kind"`
+					Content   string `json:"content"`
+					SizeBytes int64  `json:"sizeBytes"`
+					Truncated bool   `json:"truncated"`
+					SHA256    string `json:"sha256"`
+				} `json:"scripts"`
+				Truncated  bool  `json:"truncated"`
+				TotalBytes int64 `json:"totalBytes"`
+			} `json:"scripts"`
+		}](t, clientSession, "jenkins_get_replay_scripts", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      pipelineBuild,
+		})
+		r.Equal("example-pipeline", scripts.Scripts.SourceBuild.Job, "replay source job")
+		r.Equal(pipelineBuild, scripts.Scripts.SourceBuild.Build, "replay source build")
+		r.False(scripts.Scripts.Truncated, "full replay script response should not be truncated")
+		r.Greater(scripts.Scripts.TotalBytes, int64(0), "replay script total bytes")
+
+		mainScript := ""
+		for _, script := range scripts.Scripts.Scripts {
+			if script.ID == "main" && script.Kind == "main" {
+				mainScript = script.Content
+				r.Greater(script.SizeBytes, int64(0), "main script size")
+				r.NotEmpty(script.SHA256, "main script digest")
+				r.False(script.Truncated, "main script should not be truncated")
+				break
+			}
+		}
+		r.Contains(mainScript, "hello from pipeline", "native replay should expose the original Pipeline script")
+		replayedScript := strings.Replace(mainScript, "hello from pipeline", "hello from replay integration", 1)
+		r.NotEqual(mainScript, replayedScript, "replay script override should change the script")
+
+		replay := callIntegrationTool[struct {
+			Replay struct {
+				SourceBuild struct {
+					Job   string `json:"job"`
+					Build int    `json:"build"`
+				} `json:"sourceBuild"`
+				ScheduledBuild *struct {
+					Job   string `json:"job"`
+					Build int    `json:"build"`
+				} `json:"scheduledBuild"`
+				Replayed             bool     `json:"replayed"`
+				UsedOriginalScripts  bool     `json:"usedOriginalScripts"`
+				MainScriptOverridden bool     `json:"mainScriptOverridden"`
+				IncludedScriptIDs    []string `json:"includedScriptIds"`
+			} `json:"replay"`
+		}](t, clientSession, "jenkins_replay_build", map[string]any{
+			"controller":         jenkinscontainer.ControllerID,
+			"job":                "example-pipeline",
+			"build":              pipelineBuild,
+			"mainScriptOverride": replayedScript,
+		})
+		r.True(replay.Replay.Replayed, "replay should be accepted")
+		r.False(replay.Replay.UsedOriginalScripts, "replay should use the edited script")
+		r.True(replay.Replay.MainScriptOverridden, "main script should be marked overridden")
+		r.Equal("example-pipeline", replay.Replay.SourceBuild.Job, "replay source job")
+		r.Equal(pipelineBuild, replay.Replay.SourceBuild.Build, "replay source build")
+		r.NotNil(replay.Replay.ScheduledBuild, "replay should report predicted scheduled build")
+		r.Equal("example-pipeline", replay.Replay.ScheduledBuild.Job, "scheduled build job")
+		r.Greater(replay.Replay.ScheduledBuild.Build, pipelineBuild, "scheduled build number")
+		r.Contains(replay.Replay.IncludedScriptIDs, "main", "submitted script ids should include main")
+
+		jenkinscontainer.WaitForBuildNumberResult(t, api, "example-pipeline", replay.Replay.ScheduledBuild.Build, model.BuildResultSuccess)
+		replayedLog := callIntegrationTool[struct {
+			Log struct {
+				Text string `json:"text"`
+			} `json:"log"`
+		}](t, clientSession, "jenkins_get_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      replay.Replay.ScheduledBuild.Build,
+			"maxBytes":   8192,
+		})
+		r.Contains(replayedLog.Log.Text, "hello from replay integration", "replayed build should run the edited script")
+		r.NotContains(replayedLog.Log.Text, "hello from pipeline", "replayed build should not use the original echo")
+	})
 }
 
 func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, name string, args map[string]any) T {
