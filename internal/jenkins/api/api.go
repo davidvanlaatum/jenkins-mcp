@@ -697,7 +697,7 @@ func (a *API) testCaseDetailsFromClassChildren(ctx context.Context, job string, 
 		if err == nil {
 			return details, nil
 		}
-		if !isTestCaseDetailNotFound(err) {
+		if !isTestCaseDetailNotFound(err) && !isJenkinsResponseSizeError(err) {
 			return model.TestCase{}, err
 		}
 	}
@@ -856,11 +856,19 @@ func isTestCaseDetailNotFound(err error) bool {
 }
 
 func compactReportSizeError(err error) error {
-	var appErr *apperrors.Error
-	if !errors.As(err, &appErr) || appErr.Code != apperrors.CodeJenkins || appErr.Message != "Jenkins response exceeded maximum body size" {
+	if !isJenkinsResponseSizeError(err) {
 		return err
 	}
+	var appErr *apperrors.Error
+	_ = errors.As(err, &appErr)
 	return apperrors.WrapCause(apperrors.CodeJenkins, "Jenkins compact test metadata exceeded maximum body size; narrow the request with exact className and caseName filters", appErr.Detail, err)
+}
+
+func isJenkinsResponseSizeError(err error) bool {
+	var appErr *apperrors.Error
+	return errors.As(err, &appErr) &&
+		appErr.Code == apperrors.CodeJenkins &&
+		appErr.Message == "Jenkins response exceeded maximum body size"
 }
 
 func isCompactReportSizeError(err error) bool {
