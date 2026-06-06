@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -295,6 +296,127 @@ func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
 		},
 	}, TriggerBuildRequest{Job: "app"})
 	r.Error(err, "TriggerBuild() succeeded with mutations disabled")
+}
+
+func TestReplayScriptsReturnsScriptMetadataAndTruncation(t *testing.T) {
+	r := require.New(t)
+
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/job/app/7/replay/":
+			_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline-main</textarea>
+      <textarea name="_.Script1.groovy">loaded-one</textarea>
+    </form>
+  </body>
+</html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := ReplayScripts(t.Context(), deps, ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 8})
+	r.NoError(err, "ReplayScripts() error")
+	r.Equal("app", got.Scripts.SourceBuild.Job, "source job")
+	r.Equal(7, got.Scripts.SourceBuild.Build, "source build")
+	r.True(got.Scripts.Truncated, "script set truncated")
+	r.Equal(int64(len("pipeline-main")+len("loaded-one")), got.Scripts.TotalBytes, "total bytes")
+	r.Len(got.Scripts.Scripts, 2, "scripts")
+	mainScript := got.Scripts.Scripts[0]
+	r.Equal("main", mainScript.ID, "main id")
+	r.Equal("main", mainScript.Kind, "main kind")
+	r.Equal("pipeline", mainScript.Content, "main content should be truncated on UTF-8 boundary")
+	r.True(mainScript.Truncated, "main truncated")
+	r.NotEmpty(mainScript.SHA256, "main digest")
+	loadedScript := got.Scripts.Scripts[1]
+	r.Equal("Script1.groovy", loadedScript.ID, "loaded id")
+	r.Equal("loaded", loadedScript.Kind, "loaded kind")
+	r.Equal("Script1.groovy", loadedScript.OverrideKey, "override key")
+}
+
+func TestReplayBuildRequiresMutationEnablement(t *testing.T) {
+	r := require.New(t)
+
+	_, err := ReplayBuild(t.Context(), Deps{
+		Config: config.Config{
+			DefaultController: "default",
+			Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		},
+	}, ReplayBuildRequest{Job: "app", Build: 7})
+	r.Error(err, "ReplayBuild() succeeded with mutations disabled")
+	var appErr *apperrors.Error
+	r.ErrorAs(err, &appErr, "error type")
+	r.Equal(apperrors.CodeMutationDisabled, appErr.Code, "error code")
+}
+
+func TestReplayBuildLoadedScriptOnlyOverrideReusesOriginalPrimaryAndEmitsAudit(t *testing.T) {
+	r := require.New(t)
+
+	var gotJSON string
+	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/crumbIssuer/api/json":
+			http.NotFound(w, req)
+		case "/job/app/api/json":
+			writeJSON(w, `{"name":"app","fullName":"app","url":"https://jenkins.example.com/job/app/","color":"red","buildable":true,"inQueue":false,"nextBuildNumber":8}`)
+		case "/job/app/7/replay/":
+			_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline { echo &#39;original&#39; }</textarea>
+      <textarea name="_.Script1.groovy">echo &#39;one&#39;</textarea>
+      <textarea name="_.Script2.groovy">echo &#39;two&#39;</textarea>
+    </form>
+  </body>
+</html>`))
+		case "/job/app/7/replay/run":
+			err := req.ParseForm()
+			r.NoError(err, "ParseForm()")
+			gotJSON = req.Form.Get("json")
+			w.Header().Set("Location", "https://jenkins.example.com/job/app/")
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+	deps.Config.Mutations.Enabled = true
+	auditPath := t.TempDir() + "/audit.jsonl"
+	auditer, err := audit.New(config.AuditConfig{Path: auditPath})
+	r.NoError(err, "audit.New()")
+	deps.Audit = auditer
+
+	got, err := ReplayBuild(t.Context(), deps, ReplayBuildRequest{
+		Job:   "app",
+		Build: 7,
+		LoadedScriptOverrides: map[string]string{
+			"Script2.groovy": "echo 'changed'",
+		},
+	})
+	r.NoError(err, "ReplayBuild() error")
+	r.True(got.Replay.Replayed, "replayed")
+	r.False(got.Replay.UsedOriginalScripts, "used original scripts")
+	r.False(got.Replay.MainScriptOverridden, "main overridden")
+	r.Equal([]string{"Script2.groovy"}, got.Replay.LoadedScriptOverrideIDs, "override ids")
+	r.Equal([]string{"main", "Script1.groovy", "Script2.groovy"}, got.Replay.IncludedScriptIDs, "included ids")
+	r.NotNil(got.Replay.ScheduledBuild, "scheduled build")
+	r.Equal(8, got.Replay.ScheduledBuild.Build, "scheduled build number")
+
+	var form map[string]string
+	err = json.Unmarshal([]byte(gotJSON), &form)
+	r.NoError(err, "unmarshal replay form")
+	r.Equal("pipeline { echo 'original' }", form["mainScript"], "original primary script should be submitted")
+	r.Equal("echo 'one'", form["Script1_groovy"], "omitted loaded script should remain unchanged")
+	r.Equal("echo 'changed'", form["Script2_groovy"], "overridden loaded script")
+
+	auditBytes, err := os.ReadFile(auditPath)
+	r.NoError(err, "ReadFile(audit)")
+	r.Contains(string(auditBytes), `"action":"replay_build"`, "audit action")
+	r.Contains(string(auditBytes), `"target":"app#7"`, "audit target")
+	r.Contains(string(auditBytes), `"outcome":"success"`, "audit outcome")
 }
 
 func TestResolveBuildURL(t *testing.T) {
@@ -704,8 +826,11 @@ func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
 
 	var listLimits []string
 	var requested []string
+	var requestedMu sync.Mutex
 	deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, r *http.Request) {
+		requestedMu.Lock()
 		requested = append(requested, r.URL.Path)
+		requestedMu.Unlock()
 		switch r.URL.Path {
 		case "/job/app/api/json":
 			listLimits = append(listLimits, r.URL.Query().Get("tree"))
@@ -726,11 +851,14 @@ func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
 	r.NoError(err, "FlakyTestStats() error")
 	r.Len(listLimits, 1, "build list requests")
 	r.Contains(listLimits[0], "{0,3}", "lastBuilds should bound the build-summary selection window before filtering")
-	r.Equal([]string{
-		"/job/app/api/json",
+	requestedMu.Lock()
+	gotRequested := append([]string(nil), requested...)
+	requestedMu.Unlock()
+	r.Equal("/job/app/api/json", gotRequested[0], "build list should be fetched before test reports")
+	r.ElementsMatch([]string{
 		"/job/app/5/testReport/api/json",
 		"/job/app/3/testReport/api/json",
-	}, requested, "requested paths")
+	}, gotRequested[1:], "JUnit report fetch order is intentionally parallel")
 }
 
 func TestFlakyTestStatsRejectsTooManyUniqueExplicitBuildsBeforeFetching(t *testing.T) {

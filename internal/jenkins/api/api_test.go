@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -56,6 +57,80 @@ func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
 	r.NotContains(appErr.Message, "SECRET_TOKEN_VALUE", "message should not include Jenkins response body")
 	_, hasExcerpt := detail["bodyExcerpt"]
 	r.False(hasExcerpt, "trigger build errors should not expose Jenkins response bodies")
+}
+
+func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/job/app/7/replay/" {
+			http.NotFound(w, req)
+			return
+		}
+		_, _ = w.Write([]byte(`
+<html>
+  <body data-model-type="org.jenkinsci.plugins.workflow.cps.replay.ReplayAction">
+    <form method="POST" action="run">
+      <textarea name="_.mainScript">pipeline { echo &#39;main&#39; }</textarea>
+      <textarea name="_.Script1_groovy">echo &#39;loaded&#39;</textarea>
+    </form>
+  </body>
+</html>`))
+	})
+
+	mainScript, loadedScripts, enabled, rebuildEnabled, err := api.ReplayScripts(t.Context(), "app", 7)
+	r.NoError(err, "ReplayScripts() error")
+	r.Equal("pipeline { echo 'main' }", mainScript, "main script")
+	r.Equal("echo 'loaded'", loadedScripts["Script1_groovy"], "loaded script")
+	r.True(enabled, "enabled")
+	r.True(rebuildEnabled, "rebuild enabled")
+}
+
+func TestReplayBuildSubmitsNativeReplayJSONForm(t *testing.T) {
+	r := require.New(t)
+	var gotJSON string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/crumbIssuer/api/json":
+			http.NotFound(w, req)
+		case "/job/app/7/replay/run":
+			err := req.ParseForm()
+			r.NoError(err, "ParseForm()")
+			gotJSON = req.Form.Get("json")
+			w.Header().Set("Location", "https://jenkins.example.com/job/app/")
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	redirect, err := api.ReplayBuild(t.Context(), "app", 7, "pipeline { echo 'new' }", map[string]string{"Script1.groovy": "echo 'loaded'"}, false)
+	r.NoError(err, "ReplayBuild() error")
+	r.Equal("https://jenkins.example.com/job/app/", redirect, "redirect")
+	var form map[string]string
+	err = json.Unmarshal([]byte(gotJSON), &form)
+	r.NoError(err, "unmarshal replay json form")
+	r.Equal("pipeline { echo 'new' }", form["mainScript"], "mainScript form field")
+	r.Equal("echo 'loaded'", form["Script1_groovy"], "loaded script form field should use Jenkins sanitized identifier")
+}
+
+func TestReplayBuildUsesNativeRebuildEndpointForUnchangedReplay(t *testing.T) {
+	r := require.New(t)
+	var gotPath string
+	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/crumbIssuer/api/json":
+			http.NotFound(w, r)
+		case "/job/app/7/replay/rebuild":
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	_, err := api.ReplayBuild(t.Context(), "app", 7, "", nil, true)
+	r.NoError(err, "ReplayBuild() error")
+	r.Equal("/job/app/7/replay/rebuild", gotPath, "rebuild path")
 }
 
 func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {

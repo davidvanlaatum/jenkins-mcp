@@ -166,6 +166,29 @@ func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result mo
 	return 0
 }
 
+func WaitForBuildNumberResult(t *testing.T, api *jenkinsapi.API, job string, number int, result model.BuildResult) {
+	t.Helper()
+
+	r := require.New(t)
+	deadline := time.Now().Add(90 * time.Second)
+	var lastSeen string
+	for time.Now().Before(deadline) {
+		build, err := api.GetBuild(t.Context(), job, number)
+		if err != nil {
+			lastSeen = err.Error()
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		lastSeen = string(build.Result)
+		if !build.Building && build.Result != "" {
+			r.Equal(result, build.Result, "%s #%d integration build result", job, number)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	r.Failf("wait for integration build", "timed out waiting for %s #%d to complete; last seen: %s", job, number, lastSeen)
+}
+
 func missingJobs(seen map[string]bool) []string {
 	var missing []string
 	for _, job := range expectedJobs {

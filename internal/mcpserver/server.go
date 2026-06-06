@@ -253,6 +253,9 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_node_log", "Get Pipeline Node Log", "Fetch bounded log output for a Pipeline flow node id. Prefer this over jenkins_get_log for Pipeline builds to reduce noise and context size."), func(ctx context.Context, in jenkinstools.PipelineNodeLogRequest) (jenkinstools.PipelineNodeLogResponse, error) {
 		return jenkinstools.PipelineNodeLog(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, readOnlyTool("jenkins_get_replay_scripts", "Get Replay Scripts", "Fetch the native Jenkins Pipeline Replay script set for a build, including primary and loaded-script identifiers, content, size, truncation state, and digest metadata."), func(ctx context.Context, in jenkinstools.ReplayScriptsRequest) (jenkinstools.ReplayScriptsResponse, error) {
+		return jenkinstools.ReplayScripts(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe local artifact directory. This does not change Jenkins state and is not gated by mutations.enabled."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
 		return jenkinstools.DownloadArtifact(ctx, s.deps, in)
 	})
@@ -273,6 +276,9 @@ func (s *Server) register() {
 	})
 	addConfiguredTool(s, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {
 		return jenkinstools.TriggerBuild(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, additiveMutationTool("jenkins_replay_build", "Replay Build", "Replay a Jenkins Pipeline build through the native Pipeline Replay action, optionally replacing the primary script and loaded scripts. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.ReplayBuildRequest) (jenkinstools.ReplayBuildResponse, error) {
+		return jenkinstools.ReplayBuild(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_queue_item", "Get Queue Item", "Inspect a Jenkins queue item by id."), func(ctx context.Context, in jenkinstools.QueueItemRequest) (jenkinstools.QueueItemResponse, error) {
 		return jenkinstools.QueueItem(ctx, s.deps, in)

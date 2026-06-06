@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/david/jenkins-mcp/internal/artifacts"
 	"github.com/david/jenkins-mcp/internal/audit"
@@ -2388,6 +2389,124 @@ type TriggerBuildResponse struct {
 	Triggered bool   `json:"triggered" jsonschema:"Whether Jenkins accepted the build trigger request"`
 }
 
+type ReplayScriptsRequest struct {
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build      int    `json:"build" jsonschema:"Jenkins build number whose native Pipeline Replay action should be inspected"`
+	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum bytes of content to return per script; omit or set to 0 to return full script bodies"`
+}
+
+type ReplayScriptsResponse struct {
+	Scripts model.ReplayScriptSet `json:"scripts" jsonschema:"Native Jenkins Pipeline Replay script set for the source build"`
+}
+
+func ReplayScripts(ctx context.Context, deps Deps, in ReplayScriptsRequest) (ReplayScriptsResponse, error) {
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return ReplayScriptsResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ReplayScriptsResponse{}, err
+	}
+	mainScript, loadedScripts, enabled, rebuildEnabled, err := api.ReplayScripts(ctx, in.Job, in.Build)
+	if err != nil {
+		return ReplayScriptsResponse{}, err
+	}
+	if !enabled && !rebuildEnabled {
+		return ReplayScriptsResponse{}, apperrors.New(apperrors.CodeInvalidRequest, "Jenkins build does not expose an enabled Pipeline Replay action")
+	}
+	ref := replayBuildReference(deps, api, in.Controller, in.Job, in.Build)
+	return ReplayScriptsResponse{Scripts: buildReplayScriptSet(ref, mainScript, loadedScripts, in.MaxBytes)}, nil
+}
+
+type ReplayBuildRequest struct {
+	Controller            string            `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job                   string            `json:"job" jsonschema:"Jenkins job path, using / for folders"`
+	Build                 int               `json:"build" jsonschema:"Jenkins build number to replay using the native Pipeline Replay action"`
+	MainScriptOverride    *string           `json:"mainScriptOverride,omitempty" jsonschema:"Full replacement primary Pipeline script content; omit to reuse the original primary script"`
+	LoadedScriptOverrides map[string]string `json:"loadedScriptOverrides,omitempty" jsonschema:"Full replacement loaded-script bodies keyed by Jenkins Replay script identifier from jenkins_get_replay_scripts"`
+}
+
+type ReplayBuildResponse struct {
+	Replay model.ReplayBuild `json:"replay" jsonschema:"Native Jenkins Pipeline Replay scheduling result"`
+}
+
+func ReplayBuild(ctx context.Context, deps Deps, in ReplayBuildRequest) (ReplayBuildResponse, error) {
+	if !deps.Config.Mutations.Enabled {
+		return ReplayBuildResponse{}, apperrors.New(apperrors.CodeMutationDisabled, "mutating Jenkins tools are disabled")
+	}
+	if err := validateBuild(in.Job, in.Build); err != nil {
+		return ReplayBuildResponse{}, err
+	}
+	if err := validateLoadedScriptOverrides(in.LoadedScriptOverrides); err != nil {
+		return ReplayBuildResponse{}, err
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return ReplayBuildResponse{}, err
+	}
+	job, err := api.GetJob(ctx, in.Job)
+	if err != nil {
+		return ReplayBuildResponse{}, err
+	}
+	sourceBuild := replayBuildReference(deps, api, in.Controller, in.Job, in.Build)
+	scheduledBuild := predictedReplayBuildReference(deps, api, in.Controller, in.Job, job.NextBuildNumber)
+	unchangedReplay := in.MainScriptOverride == nil && len(in.LoadedScriptOverrides) == 0
+
+	mainScript := ""
+	loadedScripts := map[string]string{}
+	includedIDs := []string{}
+	if !unchangedReplay {
+		originalMainScript, originalLoadedScripts, enabled, _, err := api.ReplayScripts(ctx, in.Job, in.Build)
+		if err != nil {
+			emit(deps, in.Controller, "replay_build", fmt.Sprintf("%s#%d", in.Job, in.Build), err)
+			return ReplayBuildResponse{}, err
+		}
+		if !enabled {
+			err := apperrors.New(apperrors.CodeInvalidRequest, "Jenkins build does not allow edited Pipeline Replay")
+			emit(deps, in.Controller, "replay_build", fmt.Sprintf("%s#%d", in.Job, in.Build), err)
+			return ReplayBuildResponse{}, err
+		}
+		mainScript = originalMainScript
+		if in.MainScriptOverride != nil {
+			mainScript = *in.MainScriptOverride
+		}
+		for id, script := range originalLoadedScripts {
+			loadedScripts[id] = script
+		}
+		for id, script := range in.LoadedScriptOverrides {
+			if _, ok := originalLoadedScripts[id]; !ok {
+				err := apperrors.Wrap(apperrors.CodeInvalidRequest, "unknown loaded replay script identifier", map[string]any{"id": id})
+				emit(deps, in.Controller, "replay_build", fmt.Sprintf("%s#%d", in.Job, in.Build), err)
+				return ReplayBuildResponse{}, err
+			}
+			loadedScripts[id] = script
+		}
+		includedIDs = append([]string{"main"}, replayScriptIDs(loadedScripts)...)
+	}
+
+	redirect, err := api.ReplayBuild(ctx, in.Job, in.Build, mainScript, loadedScripts, unchangedReplay)
+	emit(deps, in.Controller, "replay_build", fmt.Sprintf("%s#%d", in.Job, in.Build), err)
+	if err != nil {
+		return ReplayBuildResponse{}, err
+	}
+	overrideIDs := replayScriptIDs(in.LoadedScriptOverrides)
+	replay := model.ReplayBuild{
+		SourceBuild:             sourceBuild,
+		ScheduledBuild:          scheduledBuild,
+		RedirectURL:             redirect,
+		Replayed:                true,
+		UsedOriginalScripts:     unchangedReplay,
+		MainScriptOverridden:    in.MainScriptOverride != nil,
+		LoadedScriptOverrideIDs: overrideIDs,
+		IncludedScriptIDs:       includedIDs,
+	}
+	if strings.Contains(redirect, "/queue/item/") {
+		replay.QueueURL = redirect
+	}
+	return ReplayBuildResponse{Replay: replay}, nil
+}
+
 func TriggerBuild(ctx context.Context, deps Deps, in TriggerBuildRequest) (TriggerBuildResponse, error) {
 	if !deps.Config.Mutations.Enabled {
 		return TriggerBuildResponse{}, apperrors.New(apperrors.CodeMutationDisabled, "mutating Jenkins tools are disabled")
@@ -2409,6 +2528,96 @@ func TriggerBuild(ctx context.Context, deps Deps, in TriggerBuildRequest) (Trigg
 	location, err := api.TriggerBuild(ctx, in.Job, in.Parameters)
 	emit(deps, in.Controller, "trigger_build", in.Job, err)
 	return TriggerBuildResponse{QueueURL: location, Triggered: err == nil}, err
+}
+
+func validateLoadedScriptOverrides(overrides map[string]string) error {
+	for id := range overrides {
+		if strings.TrimSpace(id) == "" {
+			return apperrors.New(apperrors.CodeInvalidRequest, "loaded replay script identifier must not be empty")
+		}
+	}
+	return nil
+}
+
+func buildReplayScriptSet(sourceBuild model.BuildReference, mainScript string, loadedScripts map[string]string, maxBytes int64) model.ReplayScriptSet {
+	scripts := []model.ReplayScript{replayScript("main", "main", mainScript, maxBytes)}
+	ids := replayScriptIDs(loadedScripts)
+	for _, id := range ids {
+		script := replayScript(id, "loaded", loadedScripts[id], maxBytes)
+		script.OverrideKey = id
+		scripts = append(scripts, script)
+	}
+	out := model.ReplayScriptSet{SourceBuild: sourceBuild, Scripts: scripts}
+	for _, script := range scripts {
+		out.TotalBytes += script.SizeBytes
+		out.Truncated = out.Truncated || script.Truncated
+	}
+	return out
+}
+
+func replayScript(id, kind, content string, maxBytes int64) model.ReplayScript {
+	size := int64(len([]byte(content)))
+	digest := sha256.Sum256([]byte(content))
+	script := model.ReplayScript{
+		ID:        id,
+		Kind:      kind,
+		Content:   content,
+		SizeBytes: size,
+		SHA256:    fmt.Sprintf("%x", digest),
+	}
+	if maxBytes > 0 && size > maxBytes {
+		script.Content = truncateUTF8Bytes(content, maxBytes)
+		script.Truncated = true
+	}
+	return script
+}
+
+func truncateUTF8Bytes(s string, maxBytes int64) string {
+	if maxBytes <= 0 || int64(len([]byte(s))) <= maxBytes {
+		return s
+	}
+	truncated := []byte(s)[:maxBytes]
+	for !utf8.Valid(truncated) && len(truncated) > 0 {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return string(truncated)
+}
+
+func replayScriptIDs(scripts map[string]string) []string {
+	ids := make([]string, 0, len(scripts))
+	for id := range scripts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func replayBuildReference(deps Deps, api *jenkinsapi.API, controller, job string, build int) model.BuildReference {
+	if controller == "" {
+		controller = deps.Config.DefaultController
+	}
+	return model.BuildReference{Controller: controller, Job: job, Build: build, URL: replayBuildURL(api, job, build)}
+}
+
+func predictedReplayBuildReference(deps Deps, api *jenkinsapi.API, controller, job string, build int) *model.BuildReference {
+	if build <= 0 {
+		return nil
+	}
+	ref := replayBuildReference(deps, api, controller, job, build)
+	return &ref
+}
+
+func replayBuildURL(api *jenkinsapi.API, job string, build int) string {
+	return strings.TrimRight(api.BaseURL(), "/") + "/" + strings.TrimLeft(jenkinsapiJobPath(job), "/") + "/" + strconv.Itoa(build) + "/"
+}
+
+func jenkinsapiJobPath(job string) string {
+	parts := strings.Split(strings.Trim(job, "/"), "/")
+	encoded := make([]string, 0, len(parts)*2)
+	for _, part := range parts {
+		encoded = append(encoded, "job", url.PathEscape(part))
+	}
+	return strings.Join(encoded, "/")
 }
 
 func validateTriggerParameters(definitions []model.ParameterDefinition, parameters map[string]string) error {
