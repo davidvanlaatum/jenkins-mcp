@@ -400,12 +400,35 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
 		defer cleanup()
 
+		broadReport := callIntegrationTool[struct {
+			Report struct {
+				FailureDetailsIncluded bool `json:"failureDetailsIncluded"`
+				Suites                 []struct {
+					Cases []map[string]any `json:"cases"`
+				} `json:"suites"`
+			} `json:"report"`
+		}](t, clientSession, "jenkins_get_test_report", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-junit",
+			"build":      junitBuild,
+			"status":     "FAILED",
+			"limit":      1,
+		})
+		r.False(broadReport.Report.FailureDetailsIncluded, "broad report should omit failure details")
+		r.Len(broadReport.Report.Suites, 1, "broad suite count")
+		r.Len(broadReport.Report.Suites[0].Cases, 1, "broad failed case count")
+		_, hasErrorDetails := broadReport.Report.Suites[0].Cases[0]["errorDetails"]
+		r.False(hasErrorDetails, "broad report should not include errorDetails")
+		_, hasErrorStackTrace := broadReport.Report.Suites[0].Cases[0]["errorStackTrace"]
+		r.False(hasErrorStackTrace, "broad report should not include errorStackTrace")
+
 		report := callIntegrationTool[struct {
 			Report struct {
-				TotalCount int `json:"totalCount"`
-				FailCount  int `json:"failCount"`
-				PassCount  int `json:"passCount"`
-				Suites     []struct {
+				TotalCount             int  `json:"totalCount"`
+				FailCount              int  `json:"failCount"`
+				PassCount              int  `json:"passCount"`
+				FailureDetailsIncluded bool `json:"failureDetailsIncluded"`
+				Suites                 []struct {
 					Name  string `json:"name"`
 					Cases []struct {
 						ClassName    string `json:"className"`
@@ -421,12 +444,15 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"job":        "example-junit",
 			"build":      junitBuild,
 			"status":     "FAILED",
+			"className":  "example.JUnitTest",
+			"caseName":   "fails",
 			"limit":      1,
 		})
 		r.Equal(2, report.Report.TotalCount, "total test count")
 		r.Equal(1, report.Report.FailCount, "failed test count")
 		r.Equal(1, report.Report.PassCount, "passing test count")
 		r.False(report.Report.Truncated, "single failed case should fit")
+		r.True(report.Report.FailureDetailsIncluded, "exact follow-up should include failure details")
 		r.Len(report.Report.Suites, 1, "suite count")
 		r.Len(report.Report.Suites[0].Cases, 1, "failed case count")
 		failed := report.Report.Suites[0].Cases[0]

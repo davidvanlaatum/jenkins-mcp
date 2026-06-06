@@ -510,6 +510,61 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	if err != nil {
 		return model.TestReport{}, err
 	}
+	report, err := a.compactFilteredTestReport(ctx, job, number, matcher, limit)
+	if err != nil {
+		if isCompactReportSizeError(err) && matcher.canFetchExactCaseDirectly() {
+			return a.exactTestCaseReport(ctx, job, number, filter, matcher)
+		}
+		return model.TestReport{}, err
+	}
+	if !matcher.shouldFetchFailureDetails() {
+		return report, nil
+	}
+	if err := a.addFailureDetails(ctx, job, number, &report); err != nil {
+		return model.TestReport{}, err
+	}
+	report.FailureDetailsIncluded = true
+	return report, nil
+}
+
+func (a *API) exactTestCaseReport(ctx context.Context, job string, number int, filter model.TestCaseFilter, matcher testCaseMatcher) (model.TestReport, error) {
+	report, err := a.TestReportSummary(ctx, job, number)
+	if err != nil {
+		return model.TestReport{}, err
+	}
+	details, err := a.exactTestCaseDetails(ctx, job, number, filter.ClassName, filter.CaseName)
+	if err != nil {
+		return model.TestReport{}, err
+	}
+	if !matcher.matches(filter.SuiteName, details) {
+		return report, nil
+	}
+	suiteName := filter.SuiteName
+	if suiteName == "" {
+		suiteName, _ = splitJUnitClassName(details.ClassName)
+	}
+	report.Suites = []model.TestSuite{{
+		Name:  suiteName,
+		Cases: []model.TestCase{details},
+	}}
+	report.FailureDetailsIncluded = true
+	return report, nil
+}
+
+func (a *API) exactTestCaseDetails(ctx context.Context, job string, number int, className string, caseName string) (model.TestCase, error) {
+	cases, err := a.testClassCases(ctx, job, number, className)
+	if err == nil {
+		for _, testCase := range cases {
+			if testCase.ClassName == className && testCase.Name == caseName {
+				return testCase, nil
+			}
+		}
+		return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case not found")
+	}
+	return a.testCaseDetails(ctx, job, number, "", className, caseName, "")
+}
+
+func (a *API) compactFilteredTestReport(ctx context.Context, job string, number int, matcher testCaseMatcher, limit int) (model.TestReport, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
 	var raw struct {
 		TotalCount int `json:"totalCount"`
@@ -521,8 +576,9 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 			Cases []model.TestCase `json:"cases"`
 		} `json:"suites"`
 	}
-	if err := a.client.GetJSON(ctx, path, nil, &raw); err != nil {
-		return model.TestReport{}, err
+	tree := "totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]"
+	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+		return model.TestReport{}, compactReportSizeError(err)
 	}
 	totalCount := raw.TotalCount
 	if totalCount == 0 {
@@ -533,6 +589,8 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	for _, s := range raw.Suites {
 		suite := model.TestSuite{Name: s.Name}
 		for _, c := range s.Cases {
+			c.ErrorDetails = ""
+			c.ErrorStackTrace = ""
 			if !matcher.matches(s.Name, c) {
 				continue
 			}
@@ -553,6 +611,130 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	return report, nil
 }
 
+func (a *API) addFailureDetails(ctx context.Context, job string, number int, report *model.TestReport) error {
+	for suiteIndex := range report.Suites {
+		for caseIndex := range report.Suites[suiteIndex].Cases {
+			testCase := &report.Suites[suiteIndex].Cases[caseIndex]
+			details, err := a.testCaseDetails(ctx, job, number, report.Suites[suiteIndex].Name, testCase.ClassName, testCase.Name, testCase.SafeName)
+			if err != nil {
+				return err
+			}
+			testCase.ErrorDetails = details.ErrorDetails
+			testCase.ErrorStackTrace = details.ErrorStackTrace
+		}
+	}
+	return nil
+}
+
+func (a *API) testCaseDetails(ctx context.Context, job string, number int, suiteName string, className string, caseName string, caseURLName string) (model.TestCase, error) {
+	var lastErr error
+	for _, path := range testCaseDetailPaths(job, number, suiteName, className, caseName, caseURLName) {
+		var out model.TestCase
+		tree := "className,name,status,duration,errorDetails,errorStackTrace"
+		if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &out); err != nil {
+			if isTestCaseDetailNotFound(err) {
+				lastErr = err
+				continue
+			}
+			return model.TestCase{}, err
+		}
+		return out, nil
+	}
+	if lastErr != nil {
+		return model.TestCase{}, lastErr
+	}
+	return model.TestCase{}, apperrors.New(apperrors.CodeInvalidRequest, "test case identity is incomplete")
+}
+
+func (a *API) testClassCases(ctx context.Context, job string, number int, className string) ([]model.TestCase, error) {
+	var lastErr error
+	for _, path := range testClassDetailPaths(job, number, className) {
+		var raw struct {
+			Cases []model.TestCase `json:"cases"`
+		}
+		tree := "cases[className,name,safeName,status,duration,errorDetails,errorStackTrace]"
+		if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
+			if isTestCaseDetailNotFound(err) {
+				lastErr = err
+				continue
+			}
+			return nil, err
+		}
+		return raw.Cases, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, apperrors.New(apperrors.CodeInvalidRequest, "test class identity is incomplete")
+}
+
+func testClassDetailPaths(job string, number int, className string) []string {
+	base := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport"
+	var paths []string
+	if packageName, simpleClassName := splitJUnitClassName(className); packageName != "" && simpleClassName != "" {
+		paths = append(paths, base+"/junit/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/api/json")
+	}
+	if len(paths) == 0 && className != "" {
+		paths = append(paths, base+"/junit/"+url.PathEscape(className)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(className)+"/api/json")
+	}
+	return paths
+}
+
+func testCaseDetailPaths(job string, number int, suiteName string, className string, caseName string, caseURLName string) []string {
+	base := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport"
+	var paths []string
+	if caseURLName == "" {
+		caseURLName = caseName
+	}
+	if packageName, simpleClassName := splitJUnitClassName(className); packageName != "" && simpleClassName != "" {
+		paths = append(paths, base+"/junit/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseURLName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseName)+"/api/json")
+	}
+	if suiteName != "" && className != "" {
+		paths = append(paths, base+"/junit/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseName)+"/api/json")
+	}
+	if len(paths) == 0 && className != "" {
+		paths = append(paths, base+"/junit/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseName)+"/api/json")
+	}
+	return paths
+}
+
+func splitJUnitClassName(className string) (string, string) {
+	className = strings.TrimSpace(className)
+	if className == "" {
+		return "", ""
+	}
+	lastDot := strings.LastIndex(className, ".")
+	if lastDot < 0 {
+		return "(root)", className
+	}
+	return className[:lastDot], className[lastDot+1:]
+}
+
+func isTestCaseDetailNotFound(err error) bool {
+	var appErr *apperrors.Error
+	return errors.As(err, &appErr) && appErr.Code == apperrors.CodeNotFound
+}
+
+func compactReportSizeError(err error) error {
+	var appErr *apperrors.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperrors.CodeJenkins || appErr.Message != "Jenkins response exceeded maximum body size" {
+		return err
+	}
+	return apperrors.WrapCause(apperrors.CodeJenkins, "Jenkins compact test metadata exceeded maximum body size; narrow the request with exact className and caseName filters", appErr.Detail, err)
+}
+
+func isCompactReportSizeError(err error) bool {
+	var appErr *apperrors.Error
+	return errors.As(err, &appErr) &&
+		appErr.Code == apperrors.CodeJenkins &&
+		appErr.Message == "Jenkins compact test metadata exceeded maximum body size; narrow the request with exact className and caseName filters"
+}
+
 func (a *API) CompactTestReport(ctx context.Context, job string, number int) (model.TestReport, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport/api/json"
 	var raw struct {
@@ -565,7 +747,7 @@ func (a *API) CompactTestReport(ctx context.Context, job string, number int) (mo
 			Cases []model.TestCase `json:"cases"`
 		} `json:"suites"`
 	}
-	tree := "totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,status,duration]]"
+	tree := "totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]"
 	if err := a.client.GetJSON(ctx, path, url.Values{"tree": {tree}}, &raw); err != nil {
 		return model.TestReport{}, err
 	}
@@ -587,36 +769,32 @@ func (a *API) CompactTestReport(ctx context.Context, job string, number int) (mo
 }
 
 type testCaseMatcher struct {
-	active                  bool
-	status                  string
-	suiteName               string
-	suiteNameContains       string
-	suiteNameRegex          *regexp.Regexp
-	caseName                string
-	caseNameContains        string
-	caseNameRegex           *regexp.Regexp
-	className               string
-	classNameContains       string
-	classNameRegex          *regexp.Regexp
-	durationMillisMin       *int64
-	durationMillisMax       *int64
-	errorDetailsContains    string
-	errorStackTraceContains string
+	active            bool
+	status            string
+	suiteName         string
+	suiteNameContains string
+	suiteNameRegex    *regexp.Regexp
+	caseName          string
+	caseNameContains  string
+	caseNameRegex     *regexp.Regexp
+	className         string
+	classNameContains string
+	classNameRegex    *regexp.Regexp
+	durationMillisMin *int64
+	durationMillisMax *int64
 }
 
 func newTestCaseMatcher(filter model.TestCaseFilter) (testCaseMatcher, error) {
 	matcher := testCaseMatcher{
-		status:                  strings.ToUpper(strings.TrimSpace(filter.Status)),
-		suiteName:               filter.SuiteName,
-		suiteNameContains:       strings.ToLower(filter.SuiteNameContains),
-		caseName:                filter.CaseName,
-		caseNameContains:        strings.ToLower(filter.CaseNameContains),
-		className:               filter.ClassName,
-		classNameContains:       strings.ToLower(filter.ClassNameContains),
-		durationMillisMin:       filter.DurationMillisMin,
-		durationMillisMax:       filter.DurationMillisMax,
-		errorDetailsContains:    strings.ToLower(filter.ErrorDetailsContains),
-		errorStackTraceContains: strings.ToLower(filter.ErrorStackTraceContains),
+		status:            strings.ToUpper(strings.TrimSpace(filter.Status)),
+		suiteName:         filter.SuiteName,
+		suiteNameContains: strings.ToLower(filter.SuiteNameContains),
+		caseName:          filter.CaseName,
+		caseNameContains:  strings.ToLower(filter.CaseNameContains),
+		className:         filter.ClassName,
+		classNameContains: strings.ToLower(filter.ClassNameContains),
+		durationMillisMin: filter.DurationMillisMin,
+		durationMillisMax: filter.DurationMillisMax,
 	}
 	var err error
 	if matcher.suiteNameRegex, err = compileTestCaseRegex("suiteNameRegex", filter.SuiteNameRegex); err != nil {
@@ -633,8 +811,7 @@ func newTestCaseMatcher(filter model.TestCaseFilter) (testCaseMatcher, error) {
 		matcher.suiteNameContains != "" || matcher.suiteNameRegex != nil ||
 		matcher.caseNameContains != "" || matcher.caseNameRegex != nil ||
 		matcher.classNameContains != "" || matcher.classNameRegex != nil ||
-		matcher.durationMillisMin != nil || matcher.durationMillisMax != nil ||
-		matcher.errorDetailsContains != "" || matcher.errorStackTraceContains != ""
+		matcher.durationMillisMin != nil || matcher.durationMillisMax != nil
 	return matcher, nil
 }
 
@@ -691,13 +868,16 @@ func (m testCaseMatcher) matches(suiteName string, testCase model.TestCase) bool
 	if m.durationMillisMax != nil && durationMillis > float64(*m.durationMillisMax) {
 		return false
 	}
-	if m.errorDetailsContains != "" && !strings.Contains(strings.ToLower(testCase.ErrorDetails), m.errorDetailsContains) {
-		return false
-	}
-	if m.errorStackTraceContains != "" && !strings.Contains(strings.ToLower(testCase.ErrorStackTrace), m.errorStackTraceContains) {
-		return false
-	}
 	return true
+}
+
+func (m testCaseMatcher) shouldFetchFailureDetails() bool {
+	return m.className != "" || m.caseName != ""
+}
+
+func (m testCaseMatcher) canFetchExactCaseDirectly() bool {
+	return m.className != "" && m.caseName != "" &&
+		m.suiteName == "" && m.suiteNameContains == "" && m.suiteNameRegex == nil
 }
 
 func (a *API) TestReportSummary(ctx context.Context, job string, number int) (model.TestReport, error) {

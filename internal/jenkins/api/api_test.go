@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/config"
@@ -135,11 +136,13 @@ func TestReplayBuildUsesNativeRebuildEndpointForUnchangedReplay(t *testing.T) {
 
 func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
 	r := require.New(t)
+	var tree string
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/app/7/testReport/api/json" {
 			http.NotFound(w, r)
 			return
 		}
+		tree = r.URL.Query().Get("tree")
 		writeAPIJSON(w, `{
 			"totalCount": 4,
 			"failCount": 1,
@@ -159,7 +162,9 @@ func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
 
 	got, err := api.TestReport(t.Context(), "app", 7, model.TestCaseFilter{Status: "PASSED"}, 2)
 	r.NoError(err, "TestReport() error")
+	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]", tree, "tree query")
 	r.Equal(4, got.TotalCount, "summary total should remain full report count")
+	r.False(got.FailureDetailsIncluded, "broad report should omit failure details")
 	r.True(got.Truncated, "third matching passed case should be truncated")
 	r.Len(got.Suites, 1, "suite count")
 	r.Len(got.Suites[0].Cases, 2, "limit should apply after filtering")
@@ -167,7 +172,7 @@ func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
 	r.Equal("passesTwo", got.Suites[0].Cases[1].Name, "second returned case")
 }
 
-func TestTestReportFiltersByTextRegexAndDuration(t *testing.T) {
+func TestTestReportFiltersByRegexAndDuration(t *testing.T) {
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/app/8/testReport/api/json" {
@@ -197,46 +202,58 @@ func TestTestReportFiltersByTextRegexAndDuration(t *testing.T) {
 	maxMillis := int64(2000)
 
 	got, err := api.TestReport(t.Context(), "app", 8, model.TestCaseFilter{
-		Status:                  "failed",
-		SuiteNameContains:       "auth",
-		CaseNameRegex:           "^Login",
-		ClassNameContains:       "service",
-		DurationMillisMin:       &minMillis,
-		DurationMillisMax:       &maxMillis,
-		ErrorDetailsContains:    "DATABASE",
-		ErrorStackTraceContains: "timeoutexception",
+		Status:            "failed",
+		SuiteNameContains: "auth",
+		CaseNameRegex:     "^Login",
+		ClassNameContains: "service",
+		DurationMillisMin: &minMillis,
+		DurationMillisMax: &maxMillis,
 	}, 50)
 	r.NoError(err, "TestReport() error")
 	r.Len(got.Suites, 1, "suite count")
 	r.Len(got.Suites[0].Cases, 1, "filtered cases")
 	r.Equal("LoginTimeout", got.Suites[0].Cases[0].Name, "matching case")
+	r.Empty(got.Suites[0].Cases[0].ErrorDetails, "failure details should not be included without exact follow-up filters")
 }
 
-func TestTestReportFiltersByExactSuiteClassAndCase(t *testing.T) {
+func TestTestReportFetchesFailureDetailsForExactFollowUp(t *testing.T) {
 	r := require.New(t)
-	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/job/app/9/testReport/api/json" {
-			http.NotFound(w, r)
-			return
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path)
+		switch req.URL.Path {
+		case "/job/app/9/testReport/api/json":
+			r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]", req.URL.Query().Get("tree"), "compact tree query")
+			writeAPIJSON(w, `{
+				"totalCount": 3,
+				"failCount": 2,
+				"skipCount": 0,
+				"passCount": 1,
+				"suites": [{
+					"name": "AuthSuite",
+					"cases": [
+						{"className":"example.AuthTest","name":"Login","status":"FAILED","duration":0.1},
+						{"className":"example.AuthTest","name":"Logout","status":"FAILED","duration":0.1}
+					]
+				}, {
+					"name": "OtherSuite",
+					"cases": [
+						{"className":"example.AuthTest","name":"Login","status":"PASSED","duration":0.1}
+					]
+				}]
+			}`)
+		case "/job/app/9/testReport/junit/example/AuthTest/Login/api/json":
+			writeAPIJSON(w, `{
+				"className":"example.AuthTest",
+				"name":"Login",
+				"status":"FAILED",
+				"duration":0.1,
+				"errorDetails":"login failed",
+				"errorStackTrace":"stack trace"
+			}`)
+		default:
+			http.NotFound(w, req)
 		}
-		writeAPIJSON(w, `{
-			"totalCount": 3,
-			"failCount": 2,
-			"skipCount": 0,
-			"passCount": 1,
-			"suites": [{
-				"name": "AuthSuite",
-				"cases": [
-					{"className":"example.AuthTest","name":"Login","status":"FAILED","duration":0.1},
-					{"className":"example.AuthTest","name":"Logout","status":"FAILED","duration":0.1}
-				]
-			}, {
-				"name": "OtherSuite",
-				"cases": [
-					{"className":"example.AuthTest","name":"Login","status":"PASSED","duration":0.1}
-				]
-			}]
-		}`)
 	})
 
 	got, err := api.TestReport(t.Context(), "app", 9, model.TestCaseFilter{
@@ -249,6 +266,53 @@ func TestTestReportFiltersByExactSuiteClassAndCase(t *testing.T) {
 	r.Len(got.Suites[0].Cases, 1, "case count")
 	r.Equal("AuthSuite", got.Suites[0].Name, "suite name")
 	r.Equal("Login", got.Suites[0].Cases[0].Name, "case name")
+	r.Equal("login failed", got.Suites[0].Cases[0].ErrorDetails, "failure details")
+	r.Equal("stack trace", got.Suites[0].Cases[0].ErrorStackTrace, "failure stack")
+	r.True(got.FailureDetailsIncluded, "exact follow-up should include failure details")
+	r.Equal([]string{"/job/app/9/testReport/api/json", "/job/app/9/testReport/junit/example/AuthTest/Login/api/json"}, paths, "request paths")
+}
+
+func TestTestReportUsesJenkinsSafeNameForCaseDetailURL(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path)
+		switch req.URL.Path {
+		case "/job/app/13/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "ParamSuite",
+					"cases": [
+						{"className":"example.ParamTest","name":"case with spaces","safeName":"case_with_spaces","status":"FAILED","duration":0.1}
+					]
+				}]
+			}`)
+		case "/job/app/13/testReport/junit/example/ParamTest/case_with_spaces/api/json":
+			writeAPIJSON(w, `{
+				"className":"example.ParamTest",
+				"name":"case with spaces",
+				"status":"FAILED",
+				"duration":0.1,
+				"errorDetails":"parameter failed"
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 13, model.TestCaseFilter{
+		CaseName: "case with spaces",
+	}, 50)
+	r.NoError(err, "TestReport() error")
+	r.True(got.FailureDetailsIncluded, "exact follow-up should include failure details")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("parameter failed", got.Suites[0].Cases[0].ErrorDetails, "failure details")
+	r.Equal([]string{"/job/app/13/testReport/api/json", "/job/app/13/testReport/junit/example/ParamTest/case_with_spaces/api/json"}, paths, "request paths")
 }
 
 func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
@@ -276,11 +340,158 @@ func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
 
 	got, err := api.CompactTestReport(t.Context(), "app", 10)
 	r.NoError(err, "CompactTestReport() error")
-	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,status,duration]]", tree, "tree query")
+	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]", tree, "tree query")
 	r.Len(got.Suites, 1, "suite count")
 	r.Len(got.Suites[0].Cases, 1, "case count")
 	r.Empty(got.Suites[0].Cases[0].ErrorDetails, "error details")
 	r.Empty(got.Suites[0].Cases[0].ErrorStackTrace, "error stack")
+}
+
+func TestTestReportExactFollowUpUsesClassEndpointWhenCompactMetadataIsTooLarge(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch {
+		case req.URL.Path == "/job/app/11/testReport/api/json" && strings.Contains(req.URL.Query().Get("tree"), "suites["):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", 8*1024*1024+1))
+		case req.URL.Path == "/job/app/11/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0
+			}`)
+		case req.URL.Path == "/job/app/11/testReport/junit/example/AuthTest/api/json":
+			writeAPIJSON(w, `{
+				"cases": [{
+					"className":"example.AuthTest",
+					"name":"case with spaces",
+					"safeName":"case_with_spaces",
+					"status":"FAILED",
+					"duration":0.1,
+					"errorDetails":"login failed",
+					"errorStackTrace":"stack trace"
+				}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 11, model.TestCaseFilter{
+		ClassName: "example.AuthTest",
+		CaseName:  "case with spaces",
+	}, 50)
+	r.NoError(err, "TestReport() error")
+	r.True(got.FailureDetailsIncluded, "direct exact lookup should include failure details")
+	r.Len(got.Suites, 1, "suite count")
+	r.Equal("example", got.Suites[0].Name, "derived suite name")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("login failed", got.Suites[0].Cases[0].ErrorDetails, "failure details")
+	r.Equal([]string{
+		"/job/app/11/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/11/testReport/api/json?tree=totalCount,failCount,skipCount,passCount",
+		"/job/app/11/testReport/junit/example/AuthTest/api/json?tree=cases[className,name,safeName,status,duration,errorDetails,errorStackTrace]",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteFilter(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		if req.URL.Path == "/job/app/12/testReport/api/json" && strings.Contains(req.URL.Query().Get("tree"), "suites[") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", 8*1024*1024+1))
+			return
+		}
+		http.NotFound(w, req)
+	})
+
+	_, err := api.TestReport(t.Context(), "app", 12, model.TestCaseFilter{
+		SuiteName: "OtherSuite",
+		ClassName: "example.AuthTest",
+		CaseName:  "Login",
+	}, 50)
+	r.Error(err, "TestReport() should not bypass compact metadata with an exact suite filter")
+	appErr, ok := err.(*apperrors.Error)
+	r.True(ok, "error type")
+	r.Equal(apperrors.CodeJenkins, appErr.Code, "error code")
+	r.Contains(appErr.Message, "compact test metadata exceeded", "error message")
+	r.Equal([]string{
+		"/job/app/12/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteSubstringFilter(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		if req.URL.Path == "/job/app/15/testReport/api/json" && strings.Contains(req.URL.Query().Get("tree"), "suites[") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", 8*1024*1024+1))
+			return
+		}
+		http.NotFound(w, req)
+	})
+
+	_, err := api.TestReport(t.Context(), "app", 15, model.TestCaseFilter{
+		SuiteNameContains: "auth",
+		ClassName:         "example.AuthTest",
+		CaseName:          "Login",
+	}, 50)
+	r.Error(err, "TestReport() should not bypass compact metadata with a suite substring filter")
+	appErr, ok := err.(*apperrors.Error)
+	r.True(ok, "error type")
+	r.Equal(apperrors.CodeJenkins, appErr.Code, "error code")
+	r.Contains(appErr.Message, "compact test metadata exceeded", "error message")
+	r.Equal([]string{
+		"/job/app/15/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpAppliesFiltersAfterClassEndpointLookup(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/job/app/14/testReport/api/json" && strings.Contains(req.URL.Query().Get("tree"), "suites["):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", 8*1024*1024+1))
+		case req.URL.Path == "/job/app/14/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0
+			}`)
+		case req.URL.Path == "/job/app/14/testReport/junit/example/AuthTest/api/json":
+			writeAPIJSON(w, `{
+				"cases": [{
+					"className":"example.AuthTest",
+					"name":"Login",
+					"safeName":"Login",
+					"status":"FAILED",
+					"duration":0.1,
+					"errorDetails":"login failed"
+				}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 14, model.TestCaseFilter{
+		ClassName: "example.AuthTest",
+		CaseName:  "Login",
+		Status:    "PASSED",
+	}, 50)
+	r.NoError(err, "TestReport() error")
+	r.Equal(1, got.TotalCount, "summary total should remain full report count")
+	r.Empty(got.Suites, "status filter should exclude the found exact case")
+	r.False(got.FailureDetailsIncluded, "filtered-out detail should not be reported as included")
 }
 
 func TestTestReportRejectsInvalidRegex(t *testing.T) {

@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 type ControllerInfo struct {
 	ID          string `json:"id" jsonschema:"Configured Jenkins controller id"`
 	URL         string `json:"url,omitempty" jsonschema:"Base URL for the Jenkins controller"`
@@ -245,28 +247,27 @@ type LogSearchResult struct {
 	Truncated    bool       `json:"truncated" jsonschema:"Whether search results were truncated by limits"`
 }
 type TestReport struct {
-	TotalCount int         `json:"totalCount" jsonschema:"Total number of test cases reported by Jenkins"`
-	FailCount  int         `json:"failCount" jsonschema:"Number of failed test cases"`
-	SkipCount  int         `json:"skipCount" jsonschema:"Number of skipped test cases"`
-	PassCount  int         `json:"passCount" jsonschema:"Number of passing test cases"`
-	Suites     []TestSuite `json:"suites,omitempty" jsonschema:"JUnit test suites and bounded test cases"`
-	Truncated  bool        `json:"truncated" jsonschema:"Whether test case details were truncated by limits"`
+	TotalCount             int         `json:"totalCount" jsonschema:"Total number of test cases reported by Jenkins"`
+	FailCount              int         `json:"failCount" jsonschema:"Number of failed test cases"`
+	SkipCount              int         `json:"skipCount" jsonschema:"Number of skipped test cases"`
+	PassCount              int         `json:"passCount" jsonschema:"Number of passing test cases"`
+	Suites                 []TestSuite `json:"suites,omitempty" jsonschema:"JUnit test suites and bounded compact test case metadata"`
+	Truncated              bool        `json:"truncated" jsonschema:"Whether matching test case metadata was truncated by limits"`
+	FailureDetailsIncluded bool        `json:"failureDetailsIncluded" jsonschema:"Whether returned test cases include Jenkins failure details and stack traces"`
 }
 type TestCaseFilter struct {
-	Status                  string `json:"status,omitempty" jsonschema:"Exact Jenkins/JUnit test case status to return, matched case-insensitively, such as PASSED, FAILED, REGRESSION, or SKIPPED"`
-	SuiteName               string `json:"suiteName,omitempty" jsonschema:"Exact JUnit suite name to return, matched case-sensitively"`
-	SuiteNameContains       string `json:"suiteNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit suite names"`
-	SuiteNameRegex          string `json:"suiteNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit suite names"`
-	CaseName                string `json:"caseName,omitempty" jsonschema:"Exact JUnit test case name to return, matched case-sensitively"`
-	CaseNameContains        string `json:"caseNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit test case names"`
-	CaseNameRegex           string `json:"caseNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit test case names"`
-	ClassName               string `json:"className,omitempty" jsonschema:"Exact JUnit class name to return, matched case-sensitively"`
-	ClassNameContains       string `json:"classNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit class names"`
-	ClassNameRegex          string `json:"classNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit class names"`
-	DurationMillisMin       *int64 `json:"durationMillisMin,omitempty" jsonschema:"Minimum test case duration in milliseconds, inclusive"`
-	DurationMillisMax       *int64 `json:"durationMillisMax,omitempty" jsonschema:"Maximum test case duration in milliseconds, inclusive"`
-	ErrorDetailsContains    string `json:"errorDetailsContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error details"`
-	ErrorStackTraceContains string `json:"errorStackTraceContains,omitempty" jsonschema:"Case-insensitive substring filter for Jenkins failure or error stack traces"`
+	Status            string `json:"status,omitempty" jsonschema:"Exact Jenkins/JUnit test case status to return, matched case-insensitively, such as PASSED, FAILED, REGRESSION, or SKIPPED"`
+	SuiteName         string `json:"suiteName,omitempty" jsonschema:"Exact JUnit suite name to return, matched case-sensitively"`
+	SuiteNameContains string `json:"suiteNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit suite names"`
+	SuiteNameRegex    string `json:"suiteNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit suite names"`
+	CaseName          string `json:"caseName,omitempty" jsonschema:"Exact JUnit test case name to return, matched case-sensitively"`
+	CaseNameContains  string `json:"caseNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit test case names"`
+	CaseNameRegex     string `json:"caseNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit test case names"`
+	ClassName         string `json:"className,omitempty" jsonschema:"Exact JUnit class name to return, matched case-sensitively"`
+	ClassNameContains string `json:"classNameContains,omitempty" jsonschema:"Case-insensitive substring filter for JUnit class names"`
+	ClassNameRegex    string `json:"classNameRegex,omitempty" jsonschema:"Regular expression filter for JUnit class names"`
+	DurationMillisMin *int64 `json:"durationMillisMin,omitempty" jsonschema:"Minimum test case duration in milliseconds, inclusive"`
+	DurationMillisMax *int64 `json:"durationMillisMax,omitempty" jsonschema:"Maximum test case duration in milliseconds, inclusive"`
 }
 type TestIdentity struct {
 	SuiteName string `json:"suiteName" jsonschema:"JUnit suite name"`
@@ -327,7 +328,23 @@ type TestCase struct {
 	Duration        float64 `json:"duration,omitempty" jsonschema:"Test case duration in seconds"`
 	ErrorDetails    string  `json:"errorDetails,omitempty" jsonschema:"Failure or error details for the test case"`
 	ErrorStackTrace string  `json:"errorStackTrace,omitempty" jsonschema:"Failure or error stack trace for the test case"`
+	SafeName        string  `json:"-" jsonschema:"-"`
 }
+
+func (t *TestCase) UnmarshalJSON(data []byte) error {
+	type testCaseAlias TestCase
+	var raw struct {
+		*testCaseAlias
+		SafeName string `json:"safeName"`
+	}
+	raw.testCaseAlias = (*testCaseAlias)(t)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.SafeName = raw.SafeName
+	return nil
+}
+
 type QueueItem struct {
 	ID         int64         `json:"id" jsonschema:"Jenkins queue item id"`
 	URL        string        `json:"url,omitempty" jsonschema:"Jenkins queue item URL"`

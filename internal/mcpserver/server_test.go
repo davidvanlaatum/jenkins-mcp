@@ -497,13 +497,13 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 	r.NoError(err, "client connect")
 	defer func() { _ = clientSession.Close() }()
 
-	wantFilters := []string{"status", "suiteName", "suiteNameContains", "suiteNameRegex", "caseName", "caseNameContains", "caseNameRegex", "className", "classNameContains", "classNameRegex", "durationMillisMin", "durationMillisMax", "errorDetailsContains", "errorStackTraceContains"}
+	wantFilters := []string{"status", "suiteName", "suiteNameContains", "suiteNameRegex", "caseName", "caseNameContains", "caseNameRegex", "className", "classNameContains", "classNameRegex", "durationMillisMin", "durationMillisMax"}
 	for tool, err := range clientSession.Tools(ctx, nil) {
 		r.NoError(err, "Tools()")
 		if tool.Name != "jenkins_get_test_report" {
 			continue
 		}
-		for _, want := range []string{"status", "suite name", "case name", "class name", "duration", "failure text", "Summary counts"} {
+		for _, want := range []string{"status", "suite name", "case name", "class name", "duration", "failure details", "Summary counts"} {
 			r.Contains(tool.Description, want, "description")
 		}
 
@@ -523,6 +523,10 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 		}
 		_, hasFailedOnly := schema.Properties["failedOnly"]
 		r.False(hasFailedOnly, "failedOnly should not remain in input schema")
+		_, hasErrorDetailsContains := schema.Properties["errorDetailsContains"]
+		r.False(hasErrorDetailsContains, "errorDetailsContains should not remain in input schema")
+		_, hasErrorStackTraceContains := schema.Properties["errorStackTraceContains"]
+		r.False(hasErrorStackTraceContains, "errorStackTraceContains should not remain in input schema")
 		return
 	}
 	r.Fail("jenkins_get_test_report tool not found")
@@ -695,6 +699,42 @@ func TestGetBuildOutputSchemaDescribesCoverageFields(t *testing.T) {
 	r.Fail("jenkins_get_build tool not found")
 }
 
+func TestGetTestReportOutputSchemaOmitsInternalSafeName(t *testing.T) {
+	r := require.New(t)
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	for tool, err := range clientSession.Tools(ctx, nil) {
+		r.NoError(err, "Tools()")
+		if tool.Name != "jenkins_get_test_report" {
+			continue
+		}
+		raw, err := json.Marshal(tool.OutputSchema)
+		r.NoError(err, "marshal output schema")
+		var schema any
+		err = json.Unmarshal(raw, &schema)
+		r.NoError(err, "unmarshal output schema")
+		r.False(schemaContainsProperty(schema, "safeName"), "safeName should remain internal and absent from output schema")
+		return
+	}
+	r.Fail("jenkins_get_test_report tool not found")
+}
+
 func schemaContainsDescribedProperty(schema any, propertyName string) bool {
 	object, ok := schema.(map[string]any)
 	if !ok {
@@ -717,6 +757,33 @@ func schemaContainsDescribedProperty(schema any, propertyName string) bool {
 		case []any:
 			for _, item := range value {
 				if schemaContainsDescribedProperty(item, propertyName) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func schemaContainsProperty(schema any, propertyName string) bool {
+	object, ok := schema.(map[string]any)
+	if !ok {
+		return false
+	}
+	if properties, ok := object["properties"].(map[string]any); ok {
+		if _, ok := properties[propertyName]; ok {
+			return true
+		}
+	}
+	for _, value := range object {
+		switch value := value.(type) {
+		case map[string]any:
+			if schemaContainsProperty(value, propertyName) {
+				return true
+			}
+		case []any:
+			for _, item := range value {
+				if schemaContainsProperty(item, propertyName) {
 					return true
 				}
 			}
