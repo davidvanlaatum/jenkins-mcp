@@ -487,7 +487,7 @@ func (a *API) SearchLog(ctx context.Context, job string, number int, start int64
 		scanned += int64(len(chunk.Text))
 		cursor = chunk.NextStart
 		more = chunk.More
-		if maxMatches > 0 && countLogMatches(text.String(), query) >= maxMatches {
+		if maxMatches > 0 && len(findLogMatches(text.String(), query, maxMatches, 0).matches) >= maxMatches {
 			break
 		}
 		if !chunk.More {
@@ -501,12 +501,15 @@ func (a *API) SearchLog(ctx context.Context, job string, number int, start int64
 		scanLimitReached = true
 	}
 	scannedText := text.String()
-	totalScannedMatches := countLogMatches(scannedText, query)
-	matches := findLogMatches(scannedText, query, maxMatches, contextLines)
-	matchLimitReached := maxMatches > 0 && len(matches) >= maxMatches && (more || totalScannedMatches > len(matches))
+	matchResult := findLogMatches(scannedText, query, maxMatches, contextLines)
+	matchLimitReached := maxMatches > 0 && len(matchResult.matches) >= maxMatches && (more || matchResult.moreMatches)
+	if matchLimitReached && matchResult.nextOffset > 0 {
+		cursor = start + matchResult.nextOffset
+		more = true
+	}
 	return model.LogSearchResult{
 		Query:            query,
-		Matches:          matches,
+		Matches:          matchResult.matches,
 		ScannedBytes:     scanned,
 		NextStart:        cursor,
 		More:             more,
@@ -515,12 +518,32 @@ func (a *API) SearchLog(ctx context.Context, job string, number int, start int64
 	}, nil
 }
 
-func findLogMatches(text string, query string, maxMatches int, contextLines int) []model.LogMatch {
+type logMatchSearch struct {
+	matches     []model.LogMatch
+	nextOffset  int64
+	moreMatches bool
+}
+
+func findLogMatches(text string, query string, maxMatches int, contextLines int) logMatchSearch {
 	lines := strings.Split(text, "\n")
 	matches := make([]model.LogMatch, 0)
+	offset := int64(0)
+	nextOffset := int64(0)
 	for i, line := range lines {
+		lineStart := offset
+		lineEnd := lineStart + int64(len(line))
+		if i < len(lines)-1 || strings.HasSuffix(text, "\n") {
+			lineEnd++
+		}
+		offset = lineEnd
 		if !strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
 			continue
+		}
+		if maxMatches > 0 && len(matches) >= maxMatches {
+			if nextOffset == 0 {
+				nextOffset = lineStart
+			}
+			return logMatchSearch{matches: matches, nextOffset: nextOffset, moreMatches: true}
 		}
 		match := model.LogMatch{Line: i + 1, Text: line}
 		if contextLines > 0 {
@@ -530,24 +553,10 @@ func findLogMatches(text string, query string, maxMatches int, contextLines int)
 		}
 		matches = append(matches, match)
 		if maxMatches > 0 && len(matches) >= maxMatches {
-			break
+			nextOffset = lineEnd
 		}
 	}
-	return matches
-}
-
-func countLogMatches(text string, query string) int {
-	if query == "" {
-		return 0
-	}
-	needle := strings.ToLower(query)
-	count := 0
-	for _, line := range strings.Split(text, "\n") {
-		if strings.Contains(strings.ToLower(line), needle) {
-			count++
-		}
-	}
-	return count
+	return logMatchSearch{matches: matches, nextOffset: nextOffset}
 }
 
 func (a *API) TailLog(ctx context.Context, job string, number int, tailBytes int64) (model.LogChunk, error) {

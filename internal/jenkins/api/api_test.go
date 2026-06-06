@@ -894,6 +894,36 @@ func TestSearchLogStopsAtScanBudget(t *testing.T) {
 	r.True(got.Truncated, "truncated")
 }
 
+func TestSearchLogCanContinueAfterMatchLimitWithinChunk(t *testing.T) {
+	r := require.New(t)
+	log := "first error\nnoise\nsecond error\n"
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		if start > len(log) {
+			start = len(log)
+		}
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	})
+
+	first, err := api.SearchLog(t.Context(), "app", 9, 0, "error", 1024, 1024, 1, 0)
+	r.NoError(err, "first SearchLog() error")
+	r.Len(first.Matches, 1, "first matches")
+	r.Equal("first error", first.Matches[0].Text, "first match")
+	r.True(first.More, "first more")
+	r.True(first.Truncated, "first truncated")
+	r.Positive(first.NextStart, "first next start")
+	r.Less(first.NextStart, int64(len(log)), "first next start should not skip the rest of the scanned chunk")
+
+	second, err := api.SearchLog(t.Context(), "app", 9, first.NextStart, "error", 1024, 1024, 1, 0)
+	r.NoError(err, "second SearchLog() error")
+	r.Len(second.Matches, 1, "second matches")
+	r.Equal("second error", second.Matches[0].Text, "second match")
+	r.False(second.ScanLimitReached, "second scan limit")
+}
+
 func newTestAPI(t *testing.T, handler http.HandlerFunc) *API {
 	t.Helper()
 	r := require.New(t)
