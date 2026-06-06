@@ -1304,7 +1304,7 @@ type TestReportRequest struct {
 	Limit int `json:"limit,omitempty" jsonschema:"Maximum number of matching test cases to return; defaults to 50 and is capped at 500"`
 }
 type TestReportResponse struct {
-	Report model.TestReport `json:"report" jsonschema:"JUnit test summary and bounded test case details"`
+	Report model.TestReport `json:"report" jsonschema:"JUnit test summary and bounded compact test case metadata"`
 }
 
 func TestReport(ctx context.Context, deps Deps, in TestReportRequest) (TestReportResponse, error) {
