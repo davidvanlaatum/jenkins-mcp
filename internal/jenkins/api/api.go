@@ -693,11 +693,33 @@ func (a *API) testCaseDetailsFromClassChildren(ctx context.Context, job string, 
 			}
 			return out, nil
 		}
+		details, err := a.testCaseDetailsFromClassDepth(ctx, path, caseName)
+		if err == nil {
+			return details, nil
+		}
+		if !isTestCaseDetailNotFound(err) {
+			return model.TestCase{}, err
+		}
 	}
 	if lastErr != nil {
 		return model.TestCase{}, lastErr
 	}
 	return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case detail URL not found")
+}
+
+func (a *API) testCaseDetailsFromClassDepth(ctx context.Context, classPath string, caseName string) (model.TestCase, error) {
+	var raw struct {
+		Children []model.TestCase `json:"child"`
+	}
+	if err := a.client.GetJSON(ctx, classPath, url.Values{"depth": {"1"}}, &raw); err != nil {
+		return model.TestCase{}, err
+	}
+	for _, child := range raw.Children {
+		if child.Name == caseName {
+			return child, nil
+		}
+	}
+	return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case detail not found in class children")
 }
 
 func (a *API) testCaseDetailPathFromChildURL(childURL string) (string, bool) {
