@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -685,22 +686,48 @@ func testClassDetailPaths(job string, number int, className string) []string {
 func testCaseDetailPaths(job string, number int, suiteName string, className string, caseName string, caseURLName string) []string {
 	base := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/testReport"
 	var paths []string
-	if caseURLName == "" {
-		caseURLName = caseName
-	}
-	if packageName, simpleClassName := splitJUnitClassName(className); packageName != "" && simpleClassName != "" {
-		paths = append(paths, base+"/junit/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseURLName)+"/api/json")
-	}
-	if suiteName != "" && className != "" {
-		paths = append(paths, base+"/junit/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
-	}
-	if len(paths) == 0 && className != "" {
-		paths = append(paths, base+"/junit/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
+	caseURLNames := testCaseURLNames(caseName, caseURLName)
+	for _, candidateCaseURLName := range caseURLNames {
+		if packageName, simpleClassName := splitJUnitClassName(className); packageName != "" && simpleClassName != "" {
+			paths = append(paths, base+"/junit/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+			paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+		}
+		if suiteName != "" && className != "" {
+			paths = append(paths, base+"/junit/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+			paths = append(paths, base+"/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+		}
+		if len(paths) == 0 && className != "" {
+			paths = append(paths, base+"/junit/"+url.PathEscape(className)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+			paths = append(paths, base+"/"+url.PathEscape(className)+"/"+url.PathEscape(candidateCaseURLName)+"/api/json")
+		}
 	}
 	return paths
+}
+
+func testCaseURLNames(caseName string, caseURLName string) []string {
+	if caseURLName != "" {
+		return []string{caseURLName}
+	}
+	safeName := jenkinsSafeName(caseName)
+	if safeName == caseName {
+		return []string{caseName}
+	}
+	return []string{safeName, caseName}
+}
+
+func jenkinsSafeName(name string) string {
+	if name == "" {
+		return "(empty)"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	return b.String()
 }
 
 func splitJUnitClassName(className string) (string, string) {

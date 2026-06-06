@@ -365,6 +365,55 @@ func TestTestReportUsesJenkinsSafeNameForLegacyCaseDetailURL(t *testing.T) {
 	}, paths, "request paths")
 }
 
+func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch req.URL.Path {
+		case "/job/app/17/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "CalendarRulesTest",
+					"cases": [
+						{"className":"CalendarRulesTest","name":"test should refresh seasonal cutoff date","status":"FAILED","duration":0.05}
+					]
+				}]
+			}`)
+		case "/job/app/17/testReport/junit/(root)/CalendarRulesTest/test_should_refresh_seasonal_cutoff_date/api/json":
+			writeAPIJSON(w, `{
+				"className":"CalendarRulesTest",
+				"name":"test should refresh seasonal cutoff date",
+				"status":"FAILED",
+				"duration":0.05,
+				"errorDetails":"seasonal cutoff date mismatch",
+				"errorStackTrace":"calendar stack"
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 17, model.TestCaseFilter{
+		ClassName: "CalendarRulesTest",
+		CaseName:  "test should refresh seasonal cutoff date",
+	}, 10)
+	r.NoError(err, "TestReport() error")
+	r.True(got.FailureDetailsIncluded, "exact follow-up should include failure details")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("seasonal cutoff date mismatch", got.Suites[0].Cases[0].ErrorDetails, "failure details")
+	r.Equal("calendar stack", got.Suites[0].Cases[0].ErrorStackTrace, "failure stack")
+	r.Equal([]string{
+		"/job/app/17/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/17/testReport/junit/(root)/CalendarRulesTest/test_should_refresh_seasonal_cutoff_date/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+	}, paths, "request paths")
+}
+
 func TestTestCaseDetailPathsUseJenkinsSafeNameForLegacyURLs(t *testing.T) {
 	r := require.New(t)
 

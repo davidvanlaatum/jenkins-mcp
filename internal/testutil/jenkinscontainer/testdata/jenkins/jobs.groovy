@@ -12,10 +12,13 @@ freeStyleJob('example-junit') {
 mkdir -p reports
 cat > reports/junit.xml <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="example.junit" tests="2" failures="1" skipped="0">
+<testsuite name="example.junit" tests="3" failures="2" skipped="0">
   <testcase classname="example.JUnitTest" name="passes"/>
   <testcase classname="example.JUnitTest" name="fails">
     <failure message="intentional fixture failure">expected true but was false</failure>
+  </testcase>
+  <testcase classname="CalendarRulesTest" name="test should refresh seasonal cutoff date">
+    <failure message="seasonal cutoff date mismatch">calendar stack</failure>
   </testcase>
 </testsuite>
 EOF
