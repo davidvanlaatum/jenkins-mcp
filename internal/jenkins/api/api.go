@@ -521,10 +521,11 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	if !matcher.shouldFetchFailureDetails() {
 		return report, nil
 	}
-	if err := a.addFailureDetails(ctx, job, number, &report); err != nil {
+	included, err := a.addFailureDetails(ctx, job, number, &report)
+	if err != nil {
 		return model.TestReport{}, err
 	}
-	report.FailureDetailsIncluded = true
+	report.FailureDetailsIncluded = included
 	return report, nil
 }
 
@@ -612,19 +613,24 @@ func (a *API) compactFilteredTestReport(ctx context.Context, job string, number 
 	return report, nil
 }
 
-func (a *API) addFailureDetails(ctx context.Context, job string, number int, report *model.TestReport) error {
+func (a *API) addFailureDetails(ctx context.Context, job string, number int, report *model.TestReport) (bool, error) {
+	included := false
 	for suiteIndex := range report.Suites {
 		for caseIndex := range report.Suites[suiteIndex].Cases {
 			testCase := &report.Suites[suiteIndex].Cases[caseIndex]
 			details, err := a.testCaseDetails(ctx, job, number, report.Suites[suiteIndex].Name, testCase.ClassName, testCase.Name, testCase.SafeName)
 			if err != nil {
-				return err
+				if isTestCaseDetailNotFound(err) {
+					continue
+				}
+				return included, err
 			}
 			testCase.ErrorDetails = details.ErrorDetails
 			testCase.ErrorStackTrace = details.ErrorStackTrace
+			included = true
 		}
 	}
-	return nil
+	return included, nil
 }
 
 func (a *API) testCaseDetails(ctx context.Context, job string, number int, suiteName string, className string, caseName string, caseURLName string) (model.TestCase, error) {

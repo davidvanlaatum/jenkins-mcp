@@ -414,6 +414,53 @@ func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T
 	}, paths, "request paths")
 }
 
+func TestTestReportExactFollowUpReturnsCompactMatchWhenDetailLookup404s(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch req.URL.Path {
+		case "/job/app/18/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "PublicHolidayTest",
+					"cases": [
+						{"className":"PublicHolidayTest","name":"testThisShouldBeUpdatedFor2026GrandFinal","status":"FAILED","duration":0.054784}
+					]
+				}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 18, model.TestCaseFilter{
+		ClassName: "PublicHolidayTest",
+		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
+	}, 10)
+	r.NoError(err, "TestReport() should return compact matches when detail URL inference returns 404")
+	r.False(got.FailureDetailsIncluded, "failure details should report unavailable")
+	r.Len(got.Suites, 1, "suite count")
+	r.Equal("PublicHolidayTest", got.Suites[0].Name, "suite name")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	testCase := got.Suites[0].Cases[0]
+	r.Equal("PublicHolidayTest", testCase.ClassName, "class name")
+	r.Equal("testThisShouldBeUpdatedFor2026GrandFinal", testCase.Name, "case name")
+	r.Empty(testCase.ErrorDetails, "failure details")
+	r.Empty(testCase.ErrorStackTrace, "failure stack")
+	r.Equal([]string{
+		"/job/app/18/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/18/testReport/junit/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/junit/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+	}, paths, "request paths")
+}
+
 func TestTestCaseDetailPathsUseJenkinsSafeNameForLegacyURLs(t *testing.T) {
 	r := require.New(t)
 
