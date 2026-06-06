@@ -448,8 +448,8 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"caseName":   "fails",
 			"limit":      1,
 		})
-		r.Equal(2, report.Report.TotalCount, "total test count")
-		r.Equal(1, report.Report.FailCount, "failed test count")
+		r.Equal(3, report.Report.TotalCount, "total test count")
+		r.Equal(2, report.Report.FailCount, "failed test count")
 		r.Equal(1, report.Report.PassCount, "passing test count")
 		r.False(report.Report.Truncated, "single failed case should fit")
 		r.True(report.Report.FailureDetailsIncluded, "exact follow-up should include failure details")
@@ -460,6 +460,36 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal("fails", failed.Name, "failed case")
 		r.Equal("FAILED", failed.Status, "failed status")
 		r.Contains(failed.ErrorDetails, "intentional fixture failure", "failure details")
+
+		rootReport := callIntegrationTool[struct {
+			Report struct {
+				FailureDetailsIncluded bool `json:"failureDetailsIncluded"`
+				Suites                 []struct {
+					Cases []struct {
+						ClassName    string `json:"className"`
+						Name         string `json:"name"`
+						Status       string `json:"status"`
+						ErrorDetails string `json:"errorDetails"`
+					} `json:"cases"`
+				} `json:"suites"`
+			} `json:"report"`
+		}](t, clientSession, "jenkins_get_test_report", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-junit",
+			"build":      junitBuild,
+			"status":     "FAILED",
+			"className":  "CalendarRulesTest",
+			"caseName":   "test should refresh seasonal cutoff date",
+			"limit":      1,
+		})
+		r.True(rootReport.Report.FailureDetailsIncluded, "root-package exact follow-up should include failure details")
+		r.Len(rootReport.Report.Suites, 1, "root-package suite count")
+		r.Len(rootReport.Report.Suites[0].Cases, 1, "root-package failed case count")
+		rootFailed := rootReport.Report.Suites[0].Cases[0]
+		r.Equal("CalendarRulesTest", rootFailed.ClassName, "root-package failed class")
+		r.Equal("test should refresh seasonal cutoff date", rootFailed.Name, "root-package failed case")
+		r.Equal("FAILED", rootFailed.Status, "root-package failed status")
+		r.Contains(rootFailed.ErrorDetails, "seasonal cutoff date mismatch", "root-package failure details")
 
 		missing, err := clientSession.CallTool(t.Context(), &mcp.CallToolParams{
 			Name: "jenkins_get_test_report",
