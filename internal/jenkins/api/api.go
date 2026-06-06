@@ -690,15 +690,15 @@ func testCaseDetailPaths(job string, number int, suiteName string, className str
 	}
 	if packageName, simpleClassName := splitJUnitClassName(className); packageName != "" && simpleClassName != "" {
 		paths = append(paths, base+"/junit/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(packageName)+"/"+url.PathEscape(simpleClassName)+"/"+url.PathEscape(caseURLName)+"/api/json")
 	}
 	if suiteName != "" && className != "" {
 		paths = append(paths, base+"/junit/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(suiteName)+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
 	}
 	if len(paths) == 0 && className != "" {
 		paths = append(paths, base+"/junit/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
-		paths = append(paths, base+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseName)+"/api/json")
+		paths = append(paths, base+"/"+url.PathEscape(className)+"/"+url.PathEscape(caseURLName)+"/api/json")
 	}
 	return paths
 }

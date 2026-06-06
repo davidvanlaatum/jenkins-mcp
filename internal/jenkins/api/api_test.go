@@ -315,6 +315,71 @@ func TestTestReportUsesJenkinsSafeNameForCaseDetailURL(t *testing.T) {
 	r.Equal([]string{"/job/app/13/testReport/api/json", "/job/app/13/testReport/junit/example/ParamTest/case_with_spaces/api/json"}, paths, "request paths")
 }
 
+func TestTestReportUsesJenkinsSafeNameForLegacyCaseDetailURL(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch req.URL.Path {
+		case "/job/app/16/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "CalendarRulesTest",
+					"cases": [
+						{"className":"CalendarRulesTest","name":"testShouldRefreshSeasonalCutoffDate","safeName":"unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate","status":"FAILED","duration":0.05}
+					]
+				}]
+			}`)
+		case "/job/app/16/testReport/(root)/CalendarRulesTest/unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate/api/json":
+			writeAPIJSON(w, `{
+				"className":"CalendarRulesTest",
+				"name":"testShouldRefreshSeasonalCutoffDate",
+				"status":"FAILED",
+				"duration":0.05,
+				"errorDetails":"seasonal cutoff date mismatch",
+				"errorStackTrace":"calendar stack"
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 16, model.TestCaseFilter{
+		ClassName: "CalendarRulesTest",
+		CaseName:  "testShouldRefreshSeasonalCutoffDate",
+	}, 10)
+	r.NoError(err, "TestReport() error")
+	r.True(got.FailureDetailsIncluded, "exact follow-up should include failure details")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("seasonal cutoff date mismatch", got.Suites[0].Cases[0].ErrorDetails, "failure details")
+	r.Equal("calendar stack", got.Suites[0].Cases[0].ErrorStackTrace, "failure stack")
+	r.Equal([]string{
+		"/job/app/16/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/16/testReport/junit/(root)/CalendarRulesTest/unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/16/testReport/(root)/CalendarRulesTest/unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+	}, paths, "request paths")
+}
+
+func TestTestCaseDetailPathsUseJenkinsSafeNameForLegacyURLs(t *testing.T) {
+	r := require.New(t)
+
+	paths := testCaseDetailPaths(
+		"apps/billing/feature%2Fcalendar-refresh",
+		191,
+		"",
+		"CalendarRulesTest",
+		"testShouldRefreshSeasonalCutoffDate",
+		"unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate",
+	)
+
+	r.Contains(paths, "job/apps/job/billing/job/feature%252Fcalendar-refresh/191/testReport/%28root%29/CalendarRulesTest/unit___Unit_Tests___testShouldRefreshSeasonalCutoffDate/api/json")
+}
+
 func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
 	r := require.New(t)
 	var tree string
