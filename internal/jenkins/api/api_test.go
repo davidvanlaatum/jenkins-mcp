@@ -414,6 +414,224 @@ func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T
 	}, paths, "request paths")
 }
 
+func TestTestReportExactFollowUpFetchesDetailsFromClassChildURL(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch req.URL.Path {
+		case "/job/app/18/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "PublicHolidayTest",
+					"cases": [
+						{"className":"PublicHolidayTest","name":"testThisShouldBeUpdatedFor2026GrandFinal","status":"FAILED","duration":0.054784}
+					]
+				}]
+			}`)
+		case "/job/app/18/testReport/(root)/PublicHolidayTest/api/json":
+			writeAPIJSON(w, `{
+				"child": [{
+					"name": "testThisShouldBeUpdatedFor2026GrandFinal",
+					"url": "http://jenkins.example/job/app/18/testReport/(root)/PublicHolidayTest/unit___Unit_Tests___testThisShouldBeUpdatedFor2026GrandFinal/"
+				}]
+			}`)
+		case "/job/app/18/testReport/(root)/PublicHolidayTest/unit___Unit_Tests___testThisShouldBeUpdatedFor2026GrandFinal/api/json":
+			writeAPIJSON(w, `{
+				"className":"PublicHolidayTest",
+				"name":"testThisShouldBeUpdatedFor2026GrandFinal",
+				"status":"FAILED",
+				"duration":0.054784,
+				"errorDetails":"grand final holiday mismatch",
+				"errorStackTrace":"holiday stack"
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 18, model.TestCaseFilter{
+		ClassName: "PublicHolidayTest",
+		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
+	}, 10)
+	r.NoError(err, "TestReport() should follow Jenkins class child URLs after direct detail probes 404")
+	r.True(got.FailureDetailsIncluded, "failure details should report available")
+	r.Len(got.Suites, 1, "suite count")
+	r.Equal("PublicHolidayTest", got.Suites[0].Name, "suite name")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	testCase := got.Suites[0].Cases[0]
+	r.Equal("PublicHolidayTest", testCase.ClassName, "class name")
+	r.Equal("testThisShouldBeUpdatedFor2026GrandFinal", testCase.Name, "case name")
+	r.Equal("grand final holiday mismatch", testCase.ErrorDetails, "failure details")
+	r.Equal("holiday stack", testCase.ErrorStackTrace, "failure stack")
+	r.Equal([]string{
+		"/job/app/18/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/18/testReport/junit/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/junit/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/18/testReport/junit/(root)/PublicHolidayTest/api/json?tree=child[name,url]",
+		"/job/app/18/testReport/(root)/PublicHolidayTest/api/json?tree=child[name,url]",
+		"/job/app/18/testReport/(root)/PublicHolidayTest/unit___Unit_Tests___testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpReturnsCompactMatchWhenDetailLookup404s(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?tree="+req.URL.Query().Get("tree"))
+		switch req.URL.Path {
+		case "/job/app/19/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "PublicHolidayTest",
+					"cases": [
+						{"className":"PublicHolidayTest","name":"testThisShouldBeUpdatedFor2026GrandFinal","status":"FAILED","duration":0.054784}
+					]
+				}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 19, model.TestCaseFilter{
+		ClassName: "PublicHolidayTest",
+		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
+	}, 10)
+	r.NoError(err, "TestReport() should return compact matches when detail URL inference returns 404")
+	r.False(got.FailureDetailsIncluded, "failure details should report unavailable")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("testThisShouldBeUpdatedFor2026GrandFinal", got.Suites[0].Cases[0].Name, "case name")
+	r.Equal([]string{
+		"/job/app/19/testReport/api/json?tree=totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]",
+		"/job/app/19/testReport/junit/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/19/testReport/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/19/testReport/junit/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/19/testReport/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className,name,status,duration,errorDetails,errorStackTrace",
+		"/job/app/19/testReport/junit/(root)/PublicHolidayTest/api/json?tree=child[name,url]",
+		"/job/app/19/testReport/(root)/PublicHolidayTest/api/json?tree=child[name,url]",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpFetchesDetailsFromClassDepthChild(t *testing.T) {
+	r := require.New(t)
+	var paths []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		paths = append(paths, req.URL.Path+"?"+req.URL.RawQuery)
+		switch {
+		case req.URL.Path == "/job/app/20/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "PublicHolidayTest",
+					"cases": [
+						{"className":"PublicHolidayTest","name":"testThisShouldBeUpdatedFor2026GrandFinal","status":"FAILED","duration":0.054784}
+					]
+				}]
+			}`)
+		case req.URL.Path == "/job/app/20/testReport/(root)/PublicHolidayTest/api/json" && req.URL.Query().Get("tree") == "child[name,url]":
+			writeAPIJSON(w, `{
+				"child": [{
+					"name": "testThisShouldBeUpdatedFor2026GrandFinal"
+				}]
+			}`)
+		case req.URL.Path == "/job/app/20/testReport/(root)/PublicHolidayTest/api/json" && req.URL.Query().Get("depth") == "1":
+			writeAPIJSON(w, `{
+				"child": [{
+					"className":"PublicHolidayTest",
+					"name":"testThisShouldBeUpdatedFor2026GrandFinal",
+					"status":"FAILED",
+					"duration":0.054784,
+					"errorDetails":null,
+					"errorStackTrace":"Friday before the AFL Grand Final for VIC must be updated for 2026!"
+				}]
+			}`)
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 20, model.TestCaseFilter{
+		ClassName: "PublicHolidayTest",
+		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
+	}, 10)
+	r.NoError(err, "TestReport() should fetch failure details from class depth children")
+	r.True(got.FailureDetailsIncluded, "failure details should report available")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	testCase := got.Suites[0].Cases[0]
+	r.Equal("PublicHolidayTest", testCase.ClassName, "class name")
+	r.Equal("testThisShouldBeUpdatedFor2026GrandFinal", testCase.Name, "case name")
+	r.Empty(testCase.ErrorDetails, "failure details")
+	r.Contains(testCase.ErrorStackTrace, "Grand Final", "failure stack")
+	r.Equal([]string{
+		"/job/app/20/testReport/api/json?tree=totalCount%2CfailCount%2CskipCount%2CpassCount%2Csuites%5Bname%2Ccases%5BclassName%2Cname%2CsafeName%2Cstatus%2Cduration%5D%5D",
+		"/job/app/20/testReport/junit/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className%2Cname%2Cstatus%2Cduration%2CerrorDetails%2CerrorStackTrace",
+		"/job/app/20/testReport/(root)/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className%2Cname%2Cstatus%2Cduration%2CerrorDetails%2CerrorStackTrace",
+		"/job/app/20/testReport/junit/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className%2Cname%2Cstatus%2Cduration%2CerrorDetails%2CerrorStackTrace",
+		"/job/app/20/testReport/PublicHolidayTest/PublicHolidayTest/testThisShouldBeUpdatedFor2026GrandFinal/api/json?tree=className%2Cname%2Cstatus%2Cduration%2CerrorDetails%2CerrorStackTrace",
+		"/job/app/20/testReport/junit/(root)/PublicHolidayTest/api/json?tree=child%5Bname%2Curl%5D",
+		"/job/app/20/testReport/(root)/PublicHolidayTest/api/json?tree=child%5Bname%2Curl%5D",
+		"/job/app/20/testReport/(root)/PublicHolidayTest/api/json?depth=1",
+	}, paths, "request paths")
+}
+
+func TestTestReportExactFollowUpFallsBackWhenClassDepthExceedsLimit(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/job/app/21/testReport/api/json":
+			writeAPIJSON(w, `{
+				"totalCount": 1,
+				"failCount": 1,
+				"skipCount": 0,
+				"passCount": 0,
+				"suites": [{
+					"name": "PublicHolidayTest",
+					"cases": [
+						{"className":"PublicHolidayTest","name":"testThisShouldBeUpdatedFor2026GrandFinal","status":"FAILED","duration":0.054784}
+					]
+				}]
+			}`)
+		case req.URL.Path == "/job/app/21/testReport/(root)/PublicHolidayTest/api/json" && req.URL.Query().Get("tree") == "child[name,url]":
+			writeAPIJSON(w, `{
+				"child": [{
+					"name": "testThisShouldBeUpdatedFor2026GrandFinal"
+				}]
+			}`)
+		case req.URL.Path == "/job/app/21/testReport/(root)/PublicHolidayTest/api/json" && req.URL.Query().Get("depth") == "1":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", 8*1024*1024+1))
+		default:
+			http.NotFound(w, req)
+		}
+	})
+
+	got, err := api.TestReport(t.Context(), "app", 21, model.TestCaseFilter{
+		ClassName: "PublicHolidayTest",
+		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
+	}, 10)
+	r.NoError(err, "oversized class depth response should not fail compact exact matches")
+	r.False(got.FailureDetailsIncluded, "failure details should report unavailable")
+	r.Len(got.Suites, 1, "suite count")
+	r.Len(got.Suites[0].Cases, 1, "case count")
+	r.Equal("testThisShouldBeUpdatedFor2026GrandFinal", got.Suites[0].Cases[0].Name, "case name")
+}
+
 func TestTestCaseDetailPathsUseJenkinsSafeNameForLegacyURLs(t *testing.T) {
 	r := require.New(t)
 

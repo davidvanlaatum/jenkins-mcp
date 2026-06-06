@@ -521,10 +521,11 @@ func (a *API) TestReport(ctx context.Context, job string, number int, filter mod
 	if !matcher.shouldFetchFailureDetails() {
 		return report, nil
 	}
-	if err := a.addFailureDetails(ctx, job, number, &report); err != nil {
+	included, err := a.addFailureDetails(ctx, job, number, &report)
+	if err != nil {
 		return model.TestReport{}, err
 	}
-	report.FailureDetailsIncluded = true
+	report.FailureDetailsIncluded = included
 	return report, nil
 }
 
@@ -612,19 +613,24 @@ func (a *API) compactFilteredTestReport(ctx context.Context, job string, number 
 	return report, nil
 }
 
-func (a *API) addFailureDetails(ctx context.Context, job string, number int, report *model.TestReport) error {
+func (a *API) addFailureDetails(ctx context.Context, job string, number int, report *model.TestReport) (bool, error) {
+	included := false
 	for suiteIndex := range report.Suites {
 		for caseIndex := range report.Suites[suiteIndex].Cases {
 			testCase := &report.Suites[suiteIndex].Cases[caseIndex]
 			details, err := a.testCaseDetails(ctx, job, number, report.Suites[suiteIndex].Name, testCase.ClassName, testCase.Name, testCase.SafeName)
 			if err != nil {
-				return err
+				if isTestCaseDetailNotFound(err) {
+					continue
+				}
+				return included, err
 			}
 			testCase.ErrorDetails = details.ErrorDetails
 			testCase.ErrorStackTrace = details.ErrorStackTrace
+			included = true
 		}
 	}
-	return nil
+	return included, nil
 }
 
 func (a *API) testCaseDetails(ctx context.Context, job string, number int, suiteName string, className string, caseName string, caseURLName string) (model.TestCase, error) {
@@ -641,10 +647,112 @@ func (a *API) testCaseDetails(ctx context.Context, job string, number int, suite
 		}
 		return out, nil
 	}
+	if details, err := a.testCaseDetailsFromClassChildren(ctx, job, number, className, caseName); err == nil {
+		return details, nil
+	} else if !isTestCaseDetailNotFound(err) {
+		return model.TestCase{}, err
+	}
 	if lastErr != nil {
 		return model.TestCase{}, lastErr
 	}
 	return model.TestCase{}, apperrors.New(apperrors.CodeInvalidRequest, "test case identity is incomplete")
+}
+
+func (a *API) testCaseDetailsFromClassChildren(ctx context.Context, job string, number int, className string, caseName string) (model.TestCase, error) {
+	var lastErr error
+	for _, path := range testClassDetailPaths(job, number, className) {
+		var raw struct {
+			Children []struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"child"`
+		}
+		if err := a.client.GetJSON(ctx, path, url.Values{"tree": {"child[name,url]"}}, &raw); err != nil {
+			if isTestCaseDetailNotFound(err) {
+				lastErr = err
+				continue
+			}
+			return model.TestCase{}, err
+		}
+		for _, child := range raw.Children {
+			if child.Name != caseName {
+				continue
+			}
+			detailPath, ok := a.testCaseDetailPathFromChildURL(child.URL)
+			if !ok {
+				continue
+			}
+			var out model.TestCase
+			tree := "className,name,status,duration,errorDetails,errorStackTrace"
+			if err := a.client.GetJSON(ctx, detailPath, url.Values{"tree": {tree}}, &out); err != nil {
+				if isTestCaseDetailNotFound(err) {
+					lastErr = err
+					continue
+				}
+				return model.TestCase{}, err
+			}
+			return out, nil
+		}
+		details, err := a.testCaseDetailsFromClassDepth(ctx, path, caseName)
+		if err == nil {
+			return details, nil
+		}
+		if !isTestCaseDetailNotFound(err) && !isJenkinsResponseSizeError(err) {
+			return model.TestCase{}, err
+		}
+	}
+	if lastErr != nil {
+		return model.TestCase{}, lastErr
+	}
+	return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case detail URL not found")
+}
+
+func (a *API) testCaseDetailsFromClassDepth(ctx context.Context, classPath string, caseName string) (model.TestCase, error) {
+	var raw struct {
+		Children []model.TestCase `json:"child"`
+	}
+	if err := a.client.GetJSON(ctx, classPath, url.Values{"depth": {"1"}}, &raw); err != nil {
+		return model.TestCase{}, err
+	}
+	for _, child := range raw.Children {
+		if child.Name == caseName {
+			return child, nil
+		}
+	}
+	return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case detail not found in class children")
+}
+
+func (a *API) testCaseDetailPathFromChildURL(childURL string) (string, bool) {
+	childURL = strings.TrimSpace(childURL)
+	if childURL == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(childURL)
+	if err != nil {
+		return "", false
+	}
+	detailPath := strings.TrimLeft(parsed.EscapedPath(), "/")
+	if parsed.IsAbs() {
+		base, err := url.Parse(a.BaseURL())
+		if err != nil {
+			return "", false
+		}
+		basePath := strings.TrimRight(base.EscapedPath(), "/")
+		if basePath != "" && basePath != "/" {
+			prefix := strings.TrimLeft(basePath, "/") + "/"
+			detailPath = strings.TrimPrefix(detailPath, prefix)
+		}
+	} else if detailPath == "" {
+		detailPath = strings.TrimLeft(childURL, "/")
+	}
+	detailPath = strings.TrimRight(detailPath, "/")
+	if detailPath == "" {
+		return "", false
+	}
+	if strings.HasSuffix(detailPath, "/api/json") {
+		return detailPath, true
+	}
+	return detailPath + "/api/json", true
 }
 
 func (a *API) testClassCases(ctx context.Context, job string, number int, className string) ([]model.TestCase, error) {
@@ -748,11 +856,19 @@ func isTestCaseDetailNotFound(err error) bool {
 }
 
 func compactReportSizeError(err error) error {
-	var appErr *apperrors.Error
-	if !errors.As(err, &appErr) || appErr.Code != apperrors.CodeJenkins || appErr.Message != "Jenkins response exceeded maximum body size" {
+	if !isJenkinsResponseSizeError(err) {
 		return err
 	}
+	var appErr *apperrors.Error
+	_ = errors.As(err, &appErr)
 	return apperrors.WrapCause(apperrors.CodeJenkins, "Jenkins compact test metadata exceeded maximum body size; narrow the request with exact className and caseName filters", appErr.Detail, err)
+}
+
+func isJenkinsResponseSizeError(err error) bool {
+	var appErr *apperrors.Error
+	return errors.As(err, &appErr) &&
+		appErr.Code == apperrors.CodeJenkins &&
+		appErr.Message == "Jenkins response exceeded maximum body size"
 }
 
 func isCompactReportSizeError(err error) bool {
