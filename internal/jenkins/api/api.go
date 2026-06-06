@@ -441,7 +441,7 @@ func (a *API) GetBuild(ctx context.Context, job string, number int) (model.Build
 
 func (a *API) GetLog(ctx context.Context, job string, number int, start, max int64) (model.LogChunk, error) {
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/logText/progressiveText"
-	status, body, headers, err := a.client.GetText(ctx, path, url.Values{"start": {strconv.FormatInt(start, 10)}})
+	status, body, headers, truncated, err := a.client.GetTextLimited(ctx, path, url.Values{"start": {strconv.FormatInt(start, 10)}}, max)
 	if err != nil {
 		return model.LogChunk{}, err
 	}
@@ -449,25 +449,74 @@ func (a *API) GetLog(ctx context.Context, job string, number int, start, max int
 		return model.LogChunk{}, fmt.Errorf("jenkins returned HTTP %d", status)
 	}
 	text := string(body)
-	truncated := false
-	if max > 0 && int64(len(text)) > max {
-		text = text[:max]
-		truncated = true
-	}
 	next, _ := strconv.ParseInt(headers.Get("X-Text-Size"), 10, 64)
+	if truncated {
+		next = start + int64(len(body))
+	}
 	more := strings.EqualFold(headers.Get("X-More-Data"), "true")
+	if truncated {
+		more = true
+	}
 	return model.LogChunk{Text: text, Start: start, NextStart: next, More: more, Truncated: truncated}, nil
 }
 
-func (a *API) SearchLog(ctx context.Context, job string, number int, start int64, query string, maxBytes int64, maxMatches int, contextLines int) (model.LogSearchResult, error) {
+func (a *API) SearchLog(ctx context.Context, job string, number int, start int64, query string, chunkBytes int64, maxScanBytes int64, maxMatches int, contextLines int) (model.LogSearchResult, error) {
 	if query == "" {
 		return model.LogSearchResult{}, fmt.Errorf("query is required")
 	}
-	chunk, err := a.GetLog(ctx, job, number, start, maxBytes)
-	if err != nil {
-		return model.LogSearchResult{}, err
+	cursor := start
+	scanned := int64(0)
+	var text strings.Builder
+	more := false
+	scanLimitReached := false
+	for scanned < maxScanBytes {
+		remaining := maxScanBytes - scanned
+		limit := chunkBytes
+		if limit <= 0 || limit > remaining {
+			limit = remaining
+		}
+		chunk, err := a.GetLog(ctx, job, number, cursor, limit)
+		if err != nil {
+			return model.LogSearchResult{}, err
+		}
+		if chunk.Text == "" && chunk.NextStart <= cursor {
+			more = chunk.More
+			break
+		}
+		text.WriteString(chunk.Text)
+		scanned += int64(len(chunk.Text))
+		cursor = chunk.NextStart
+		more = chunk.More
+		if maxMatches > 0 && countLogMatches(text.String(), query) >= maxMatches {
+			break
+		}
+		if !chunk.More {
+			break
+		}
+		if chunk.NextStart <= chunk.Start {
+			break
+		}
 	}
-	lines := strings.Split(chunk.Text, "\n")
+	if scanned >= maxScanBytes && more {
+		scanLimitReached = true
+	}
+	scannedText := text.String()
+	totalScannedMatches := countLogMatches(scannedText, query)
+	matches := findLogMatches(scannedText, query, maxMatches, contextLines)
+	matchLimitReached := maxMatches > 0 && len(matches) >= maxMatches && (more || totalScannedMatches > len(matches))
+	return model.LogSearchResult{
+		Query:            query,
+		Matches:          matches,
+		ScannedBytes:     scanned,
+		NextStart:        cursor,
+		More:             more,
+		ScanLimitReached: scanLimitReached,
+		Truncated:        scanLimitReached || matchLimitReached,
+	}, nil
+}
+
+func findLogMatches(text string, query string, maxMatches int, contextLines int) []model.LogMatch {
+	lines := strings.Split(text, "\n")
 	matches := make([]model.LogMatch, 0)
 	for i, line := range lines {
 		if !strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
@@ -484,14 +533,21 @@ func (a *API) SearchLog(ctx context.Context, job string, number int, start int64
 			break
 		}
 	}
-	return model.LogSearchResult{
-		Query:        query,
-		Matches:      matches,
-		ScannedBytes: int64(len(chunk.Text)),
-		NextStart:    chunk.NextStart,
-		More:         chunk.More,
-		Truncated:    chunk.Truncated || (maxMatches > 0 && len(matches) >= maxMatches),
-	}, nil
+	return matches
+}
+
+func countLogMatches(text string, query string) int {
+	if query == "" {
+		return 0
+	}
+	needle := strings.ToLower(query)
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(strings.ToLower(line), needle) {
+			count++
+		}
+	}
+	return count
 }
 
 func (a *API) TailLog(ctx context.Context, job string, number int, tailBytes int64) (model.LogChunk, error) {

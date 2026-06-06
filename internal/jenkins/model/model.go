@@ -239,12 +239,13 @@ type LogMatch struct {
 }
 
 type LogSearchResult struct {
-	Query        string     `json:"query" jsonschema:"Search query used against the console log"`
-	Matches      []LogMatch `json:"matches" jsonschema:"Matching log lines"`
-	ScannedBytes int64      `json:"scannedBytes" jsonschema:"Number of log bytes scanned"`
-	NextStart    int64      `json:"nextStart" jsonschema:"Byte offset to use for a subsequent search"`
-	More         bool       `json:"more" jsonschema:"Whether more log content may be available after nextStart"`
-	Truncated    bool       `json:"truncated" jsonschema:"Whether search results were truncated by limits"`
+	Query            string     `json:"query" jsonschema:"Search query used against the console log"`
+	Matches          []LogMatch `json:"matches" jsonschema:"Matching log lines"`
+	ScannedBytes     int64      `json:"scannedBytes" jsonschema:"Number of log bytes scanned"`
+	NextStart        int64      `json:"nextStart" jsonschema:"Byte offset to use for a subsequent search"`
+	More             bool       `json:"more" jsonschema:"Whether more log content may be available after nextStart"`
+	ScanLimitReached bool       `json:"scanLimitReached" jsonschema:"Whether the search stopped before the end of the log because it reached the scan byte budget"`
+	Truncated        bool       `json:"truncated" jsonschema:"Whether search results were truncated by match or scan limits"`
 }
 type TestReport struct {
 	TotalCount             int         `json:"totalCount" jsonschema:"Total number of test cases reported by Jenkins"`

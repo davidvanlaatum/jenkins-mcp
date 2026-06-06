@@ -73,6 +73,10 @@ func (c *Client) GetText(ctx context.Context, path string, query url.Values) (in
 	return c.Do(ctx, http.MethodGet, path, query, nil, nil)
 }
 
+func (c *Client) GetTextLimited(ctx context.Context, path string, query url.Values, maxBytes int64) (int, []byte, http.Header, bool, error) {
+	return c.DoLimited(ctx, http.MethodGet, path, query, nil, nil, maxBytes)
+}
+
 func (c *Client) Post(ctx context.Context, path string, query url.Values, form url.Values) (int, []byte, http.Header, error) {
 	encodedForm := ""
 	if form != nil {
@@ -100,13 +104,22 @@ func (c *Client) postOnce(ctx context.Context, path string, query url.Values, ha
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body io.Reader, headers http.Header) (int, []byte, http.Header, error) {
+	const maxBytes = 8 * 1024 * 1024
+	status, b, responseHeaders, truncated, err := c.DoLimited(ctx, method, path, query, body, headers, maxBytes)
+	if err == nil && truncated {
+		err = apperrors.Wrap(apperrors.CodeJenkins, "Jenkins response exceeded maximum body size", map[string]any{"maxBytes": maxBytes})
+	}
+	return status, b, responseHeaders, err
+}
+
+func (c *Client) DoLimited(ctx context.Context, method, path string, query url.Values, body io.Reader, headers http.Header, maxBytes int64) (int, []byte, http.Header, bool, error) {
 	u, err := c.endpointURL(path, query)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, false, err
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, false, err
 	}
 	if c.username != "" || c.token != "" {
 		req.SetBasicAuth(c.username, c.token)
@@ -123,22 +136,22 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	res, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return 0, nil, nil, err
+			return 0, nil, nil, false, err
 		}
 		if c.logger != nil {
 			c.logger.Warn("Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}
-		return 0, nil, nil, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
+		return 0, nil, nil, false, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
 	}
 	defer func() { _ = res.Body.Close() }()
-	b, err := readBounded(res.Body, 8*1024*1024)
+	b, truncated, err := readLimited(res.Body, maxBytes)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, false, err
 	}
 	if c.logger != nil {
-		c.logger.Debug("completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "jenkins_version", res.Header.Get("X-Jenkins"))
+		c.logger.Debug("completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "truncated", truncated, "jenkins_version", res.Header.Get("X-Jenkins"))
 	}
-	return res.StatusCode, b, res.Header, nil
+	return res.StatusCode, b, res.Header, truncated, nil
 }
 
 func (c *Client) endpointURL(path string, query url.Values) (*url.URL, error) {
@@ -234,14 +247,28 @@ func (j *resettableCookieJar) Reset() error {
 }
 
 func readBounded(reader io.Reader, maxBytes int64) ([]byte, error) {
-	b, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	b, truncated, err := readLimited(reader, maxBytes)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(b)) > maxBytes {
+	if truncated {
 		return nil, apperrors.Wrap(apperrors.CodeJenkins, "Jenkins response exceeded maximum body size", map[string]any{"maxBytes": maxBytes})
 	}
 	return b, nil
+}
+
+func readLimited(reader io.Reader, maxBytes int64) ([]byte, bool, error) {
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
+	b, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(b)) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
 }
 
 func classify(status int) error {

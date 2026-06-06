@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -837,6 +838,60 @@ func TestTestReportRejectsInvalidRegex(t *testing.T) {
 	appErr, ok := err.(*apperrors.Error)
 	r.True(ok, "error type")
 	r.Equal(apperrors.CodeInvalidRequest, appErr.Code, "error code")
+}
+
+func TestSearchLogPagesProgressiveLogUntilMatch(t *testing.T) {
+	r := require.New(t)
+	log := "start\n" + strings.Repeat("noise\n", 5) + "compiler error: boom\nend\n"
+	var starts []string
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		r.Equal("/job/app/7/logText/progressiveText", req.URL.Path, "path")
+		rawStart := req.URL.Query().Get("start")
+		starts = append(starts, rawStart)
+		start, err := strconv.Atoi(rawStart)
+		r.NoError(err, "parse start")
+		if start > len(log) {
+			start = len(log)
+		}
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	})
+
+	got, err := api.SearchLog(t.Context(), "app", 7, 0, "error", 12, 200, 20, 0)
+	r.NoError(err, "SearchLog() error")
+	r.Greater(len(starts), 1, "search should page through multiple progressive chunks")
+	r.Len(got.Matches, 1, "matches")
+	r.Equal("compiler error: boom", got.Matches[0].Text, "match text")
+	r.Equal(int64(len(log)), got.NextStart, "next start")
+	r.False(got.More, "more")
+	r.False(got.ScanLimitReached, "scan limit")
+	r.False(got.Truncated, "truncated")
+}
+
+func TestSearchLogStopsAtScanBudget(t *testing.T) {
+	r := require.New(t)
+	log := strings.Repeat("noise\n", 20)
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		r.Equal("/job/app/8/logText/progressiveText", req.URL.Path, "path")
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		if start > len(log) {
+			start = len(log)
+		}
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	})
+
+	got, err := api.SearchLog(t.Context(), "app", 8, 0, "error", 10, 15, 20, 0)
+	r.NoError(err, "SearchLog() error")
+	r.Empty(got.Matches, "matches")
+	r.Equal(int64(15), got.ScannedBytes, "scanned bytes")
+	r.Equal(int64(15), got.NextStart, "next start")
+	r.True(got.More, "more")
+	r.True(got.ScanLimitReached, "scan limit")
+	r.True(got.Truncated, "truncated")
 }
 
 func newTestAPI(t *testing.T, handler http.HandlerFunc) *API {

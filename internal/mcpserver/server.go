@@ -232,7 +232,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_log", "Get Log", "Read a bounded progressive console log chunk. For Pipeline builds, prefer jenkins_get_pipeline_node_log to fetch logs for specific stages."), func(ctx context.Context, in jenkinstools.GetLogRequest) (jenkinstools.GetLogResponse, error) {
 		return jenkinstools.GetLog(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, readOnlyTool("jenkins_search_log", "Search Log", "Search a bounded console log chunk for text and return matching lines with optional context."), func(ctx context.Context, in jenkinstools.SearchLogRequest) (jenkinstools.SearchLogResponse, error) {
+	addConfiguredTool(s, readOnlyTool("jenkins_search_log", "Search Log", "Search the progressive console log across bounded server-side pages and return matching lines with optional context."), func(ctx context.Context, in jenkinstools.SearchLogRequest) (jenkinstools.SearchLogResponse, error) {
 		return jenkinstools.SearchLog(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_tail_log", "Tail Log", "Read the tail of a Jenkins console log using progressive log offsets."), func(ctx context.Context, in jenkinstools.TailLogRequest) (jenkinstools.TailLogResponse, error) {
