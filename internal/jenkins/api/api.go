@@ -647,10 +647,90 @@ func (a *API) testCaseDetails(ctx context.Context, job string, number int, suite
 		}
 		return out, nil
 	}
+	if details, err := a.testCaseDetailsFromClassChildren(ctx, job, number, className, caseName); err == nil {
+		return details, nil
+	} else if !isTestCaseDetailNotFound(err) {
+		return model.TestCase{}, err
+	}
 	if lastErr != nil {
 		return model.TestCase{}, lastErr
 	}
 	return model.TestCase{}, apperrors.New(apperrors.CodeInvalidRequest, "test case identity is incomplete")
+}
+
+func (a *API) testCaseDetailsFromClassChildren(ctx context.Context, job string, number int, className string, caseName string) (model.TestCase, error) {
+	var lastErr error
+	for _, path := range testClassDetailPaths(job, number, className) {
+		var raw struct {
+			Children []struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"child"`
+		}
+		if err := a.client.GetJSON(ctx, path, url.Values{"tree": {"child[name,url]"}}, &raw); err != nil {
+			if isTestCaseDetailNotFound(err) {
+				lastErr = err
+				continue
+			}
+			return model.TestCase{}, err
+		}
+		for _, child := range raw.Children {
+			if child.Name != caseName {
+				continue
+			}
+			detailPath, ok := a.testCaseDetailPathFromChildURL(child.URL)
+			if !ok {
+				continue
+			}
+			var out model.TestCase
+			tree := "className,name,status,duration,errorDetails,errorStackTrace"
+			if err := a.client.GetJSON(ctx, detailPath, url.Values{"tree": {tree}}, &out); err != nil {
+				if isTestCaseDetailNotFound(err) {
+					lastErr = err
+					continue
+				}
+				return model.TestCase{}, err
+			}
+			return out, nil
+		}
+	}
+	if lastErr != nil {
+		return model.TestCase{}, lastErr
+	}
+	return model.TestCase{}, apperrors.New(apperrors.CodeNotFound, "Jenkins test case detail URL not found")
+}
+
+func (a *API) testCaseDetailPathFromChildURL(childURL string) (string, bool) {
+	childURL = strings.TrimSpace(childURL)
+	if childURL == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(childURL)
+	if err != nil {
+		return "", false
+	}
+	detailPath := strings.TrimLeft(parsed.EscapedPath(), "/")
+	if parsed.IsAbs() {
+		base, err := url.Parse(a.BaseURL())
+		if err != nil {
+			return "", false
+		}
+		basePath := strings.TrimRight(base.EscapedPath(), "/")
+		if basePath != "" && basePath != "/" {
+			prefix := strings.TrimLeft(basePath, "/") + "/"
+			detailPath = strings.TrimPrefix(detailPath, prefix)
+		}
+	} else if detailPath == "" {
+		detailPath = strings.TrimLeft(childURL, "/")
+	}
+	detailPath = strings.TrimRight(detailPath, "/")
+	if detailPath == "" {
+		return "", false
+	}
+	if strings.HasSuffix(detailPath, "/api/json") {
+		return detailPath, true
+	}
+	return detailPath + "/api/json", true
 }
 
 func (a *API) testClassCases(ctx context.Context, job string, number int, className string) ([]model.TestCase, error) {
