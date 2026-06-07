@@ -44,6 +44,8 @@ type Deps struct {
 const (
 	maxWatchStateTokenBytes        = 8 * 1024
 	maxWatchStateUncompressedBytes = 512 * 1024
+	defaultLogSearchScanBytes      = 8 * 1024 * 1024
+	maxLogSearchScanBytes          = 64 * 1024 * 1024
 )
 
 var (
@@ -1246,7 +1248,8 @@ type SearchLogRequest struct {
 	Build        int    `json:"build" jsonschema:"Jenkins build number"`
 	Query        string `json:"query" jsonschema:"Text to search for in the console log"`
 	Start        int64  `json:"start,omitempty" jsonschema:"Progressive log byte offset to start searching from"`
-	MaxBytes     int64  `json:"maxBytes,omitempty" jsonschema:"Maximum log bytes to search; defaults to the configured response limit"`
+	MaxBytes     int64  `json:"maxBytes,omitempty" jsonschema:"Legacy maximum total log bytes to scan when maxScanBytes is omitted"`
+	MaxScanBytes int64  `json:"maxScanBytes,omitempty" jsonschema:"Maximum progressive log bytes to scan across server-side paging; defaults to 8 MiB and is capped at 64 MiB"`
 	MaxMatches   int    `json:"maxMatches,omitempty" jsonschema:"Maximum matching log lines to return; defaults to 20 and is capped at 200"`
 	ContextLines int    `json:"contextLines,omitempty" jsonschema:"Number of surrounding context lines to include per match; capped at 10"`
 }
@@ -1262,11 +1265,21 @@ func SearchLog(ctx context.Context, deps Deps, in SearchLogRequest) (SearchLogRe
 	if err != nil {
 		return SearchLogResponse{}, err
 	}
-	maxBytes := in.MaxBytes
-	if maxBytes <= 0 || maxBytes > deps.Config.Limits.MaxResponseBytes {
-		maxBytes = deps.Config.Limits.MaxResponseBytes
+	maxScanBytes := in.MaxScanBytes
+	if maxScanBytes <= 0 {
+		maxScanBytes = in.MaxBytes
 	}
-	result, err := api.SearchLog(ctx, in.Job, in.Build, in.Start, in.Query, maxBytes, pagination.BoundLimit(in.MaxMatches, 20, 200), pagination.BoundLimit(in.ContextLines, 0, 10))
+	if maxScanBytes <= 0 {
+		maxScanBytes = defaultLogSearchScanBytes
+	}
+	if maxScanBytes > maxLogSearchScanBytes {
+		maxScanBytes = maxLogSearchScanBytes
+	}
+	chunkBytes := deps.Config.Limits.LogChunkBytes
+	if chunkBytes > maxScanBytes {
+		chunkBytes = maxScanBytes
+	}
+	result, err := api.SearchLog(ctx, in.Job, in.Build, in.Start, in.Query, chunkBytes, maxScanBytes, pagination.BoundLimit(in.MaxMatches, 20, 200), pagination.BoundLimit(in.ContextLines, 0, 10))
 	return SearchLogResponse{Result: result}, err
 }
 

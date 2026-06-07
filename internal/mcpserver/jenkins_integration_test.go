@@ -893,6 +893,33 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Contains(search.Result.Matches[0].Text, "hello from freestyle", "search match text")
 		r.Greater(search.Result.ScannedBytes, int64(0), "search scanned bytes")
 
+		pagedSession, pagedCleanup := connectIntegrationMCPWithConfig(t, jenkins, "read-only", func(cfg *config.Config) {
+			cfg.Limits.LogChunkBytes = 12
+		})
+		defer pagedCleanup()
+		pagedSearch := callIntegrationTool[struct {
+			Result struct {
+				Matches []struct {
+					Text string `json:"text"`
+				} `json:"matches"`
+				ScannedBytes     int64 `json:"scannedBytes"`
+				NextStart        int64 `json:"nextStart"`
+				ScanLimitReached bool  `json:"scanLimitReached"`
+			} `json:"result"`
+		}](t, pagedSession, "jenkins_search_log", map[string]any{
+			"controller":   jenkinscontainer.ControllerID,
+			"job":          "example-freestyle",
+			"build":        freestyleBuild,
+			"query":        "hello from freestyle",
+			"maxScanBytes": 4096,
+			"maxMatches":   1,
+		})
+		r.Len(pagedSearch.Result.Matches, 1, "paged search matches")
+		r.Contains(pagedSearch.Result.Matches[0].Text, "hello from freestyle", "paged search match text")
+		r.Greater(pagedSearch.Result.ScannedBytes, int64(12), "paged search should scan beyond one configured log chunk")
+		r.Greater(pagedSearch.Result.NextStart, int64(12), "paged search next start")
+		r.False(pagedSearch.Result.ScanLimitReached, "paged search scan limit")
+
 		empty := callIntegrationTool[struct {
 			Result struct {
 				Matches []struct{} `json:"matches"`
