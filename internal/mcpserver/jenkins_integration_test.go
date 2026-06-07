@@ -910,12 +910,12 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"controller":   jenkinscontainer.ControllerID,
 			"job":          "example-freestyle",
 			"build":        freestyleBuild,
-			"query":        "hello from freestyle",
-			"maxScanBytes": 4096,
+			"query":        "SUCCESS",
+			"maxScanBytes": 65536,
 			"maxMatches":   1,
 		})
 		r.Len(pagedSearch.Result.Matches, 1, "paged search matches")
-		r.Contains(pagedSearch.Result.Matches[0].Text, "hello from freestyle", "paged search match text")
+		r.Contains(pagedSearch.Result.Matches[0].Text, "SUCCESS", "paged search match text")
 		r.Greater(pagedSearch.Result.ScannedBytes, int64(12), "paged search should scan beyond one configured log chunk")
 		r.Greater(pagedSearch.Result.NextStart, int64(12), "paged search next start")
 		r.False(pagedSearch.Result.ScanLimitReached, "paged search scan limit")
