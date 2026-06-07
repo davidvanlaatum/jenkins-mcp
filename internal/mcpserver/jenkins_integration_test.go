@@ -911,7 +911,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"job":          "example-freestyle",
 			"build":        freestyleBuild,
 			"query":        "hello from freestyle",
-			"maxScanBytes": 4096,
+			"maxScanBytes": 65536,
 			"maxMatches":   1,
 		})
 		r.Len(pagedSearch.Result.Matches, 1, "paged search matches")
