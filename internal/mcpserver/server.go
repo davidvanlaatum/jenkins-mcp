@@ -21,6 +21,17 @@ import (
 	"github.com/david/jenkins-mcp/internal/updatecheck"
 )
 
+const (
+	serverName         = "jenkins-mcp-server"
+	serverTitle        = "Jenkins MCP Server"
+	serverDescription  = "Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, and queue state with guarded build actions."
+	serverWebsiteURL   = "https://github.com/davidvanlaatum/jenkins-mcp"
+	toolListTTLMs      = int(time.Hour / time.Millisecond)
+	serverInstructions = "Call jenkins_get_capabilities before other tools to discover configured controllers, response limits, optional Jenkins plugin capabilities, mutation availability, and update notices. " +
+		"For Pipeline builds, prefer jenkins_get_pipeline_node_log over jenkins_get_log when a stage or node is known. " +
+		"Keep jenkins_watch_build and jenkins_watch_queue_item waitTimeoutMs below the MCP host tool-call timeout and pass the returned state token to subsequent calls."
+)
+
 type Dependencies struct {
 	Config       config.Config
 	Jenkins      map[string]*jenkinsapi.API
@@ -43,15 +54,23 @@ func New(deps Dependencies) *Server {
 	}
 	s := &Server{
 		raw: mcp.NewServer(
-			&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version},
+			&mcp.Implementation{
+				Name:        serverName,
+				Title:       serverTitle,
+				Description: serverDescription,
+				Version:     deps.Version,
+				WebsiteURL:  serverWebsiteURL,
+			},
 			&mcp.ServerOptions{
 				Logger:       logger,
-				Capabilities: &mcp.ServerCapabilities{},
+				Instructions: serverInstructions,
+				Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 			},
 		),
 		deps:   jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate},
 		logger: logger,
 	}
+	s.raw.AddReceivingMiddleware(cacheStaticToolList)
 	s.register()
 	return s
 }
@@ -82,6 +101,26 @@ func additiveMutationTool(name, title, description string) *mcp.Tool {
 func destructiveMutationTool(name, title, description string) *mcp.Tool {
 	destructive := true
 	return tool(name, title, description, &mcp.ToolAnnotations{DestructiveHint: &destructive})
+}
+
+func idempotentDestructiveMutationTool(name, title, description string) *mcp.Tool {
+	t := destructiveMutationTool(name, title, description)
+	t.Annotations.IdempotentHint = true
+	return t
+}
+
+func cacheStaticToolList(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if err != nil {
+			return nil, err
+		}
+		if tools, ok := result.(*mcp.ListToolsResult); ok {
+			tools.TTLMs = toolListTTLMs
+			tools.CacheScope = "public"
+		}
+		return result, nil
+	}
 }
 
 func addConfiguredTool[In, Out any](s *Server, tool *mcp.Tool, handler func(context.Context, In) (Out, error)) {
@@ -299,10 +338,10 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_list_queue", "List Queue", "List current Jenkins queue items."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.ListQueueResponse, error) {
 		return jenkinstools.ListQueue(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, destructiveMutationTool("jenkins_cancel_queue_item", "Cancel Queue Item", "Cancel a queued Jenkins item. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.QueueItemRequest) (jenkinstools.CancelQueueItemResponse, error) {
+	addConfiguredTool(s, idempotentDestructiveMutationTool("jenkins_cancel_queue_item", "Cancel Queue Item", "Cancel a queued Jenkins item. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.QueueItemRequest) (jenkinstools.CancelQueueItemResponse, error) {
 		return jenkinstools.CancelQueueItem(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, destructiveMutationTool("jenkins_cancel_build", "Cancel Build", "Cancel a running Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.CancelBuildResponse, error) {
+	addConfiguredTool(s, idempotentDestructiveMutationTool("jenkins_cancel_build", "Cancel Build", "Cancel a running Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.CancelBuildResponse, error) {
 		return jenkinstools.CancelBuild(ctx, s.deps, in)
 	})
 }

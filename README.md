@@ -42,12 +42,14 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ### Jenkins-Mutating Tools
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
 - `jenkins_replay_build`: Replay a Jenkins Pipeline build through native Pipeline Replay, optionally with full primary and loaded-script overrides.
-- `jenkins_cancel_queue_item`: Cancel a queued Jenkins item.
-- `jenkins_cancel_build`: Cancel a running Jenkins build.
+- `jenkins_cancel_queue_item`: Cancel a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
+- `jenkins_cancel_build`: Cancel a running Jenkins build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
 
 Jenkins-mutating tools are disabled unless explicitly enabled in configuration. `jenkins_download_artifact` does not change Jenkins state and is not gated by `mutations.enabled`, but it does write to the configured local artifact directory. `jenkins_update_server` is also separate from Jenkins mutations; it is disabled unless `updates.selfUpdateEnabled` is true because it writes to the local server installation.
 
 > **Note:** When adding or modifying tools, ensure the tool definitions in `internal/mcpserver/server.go`, documentation in `docs/tools/jenkins.md`, and this list in `README.md` are all kept in sync.
+
+MCP discovery identifies the server with a human-readable title, description, project URL, and usage instructions. Because the registered tool definitions are fixed for the lifetime of the process and are identical for every caller, the server advertises `tools.listChanged=false` and gives `tools/list` a one-hour public cache TTL. This caches tool definitions only; Jenkins data and tool-call results are not cached by MCP.
 
 ## Quick Start
 
