@@ -41,7 +41,17 @@ func New(deps Dependencies) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{raw: mcp.NewServer(&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version}, &mcp.ServerOptions{Logger: logger}), deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate}, logger: logger}
+	s := &Server{
+		raw: mcp.NewServer(
+			&mcp.Implementation{Name: "jenkins-mcp-server", Version: deps.Version},
+			&mcp.ServerOptions{
+				Logger:       logger,
+				Capabilities: &mcp.ServerCapabilities{},
+			},
+		),
+		deps:   jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate},
+		logger: logger,
+	}
 	s.register()
 	return s
 }
