@@ -288,8 +288,8 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_trigger_build":         {destructive: ptrBool(false)},
 		"jenkins_replay_build":          {destructive: ptrBool(false)},
 		"jenkins_update_server":         {destructive: ptrBool(true)},
-		"jenkins_cancel_queue_item":     {destructive: ptrBool(true)},
-		"jenkins_cancel_build":          {destructive: ptrBool(true)},
+		"jenkins_cancel_queue_item":     {destructive: ptrBool(true), idempotent: true},
+		"jenkins_cancel_build":          {destructive: ptrBool(true), idempotent: true},
 	}
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
@@ -340,11 +340,23 @@ func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
 	r.NotNil(result, "initialize result")
 	r.Equal("2026-07-28", result.ProtocolVersion, "protocol version")
 	r.NotNil(result.Capabilities.Tools, "tools capability")
+	r.False(result.Capabilities.Tools.ListChanged, "static tool list should not advertise changes")
 	capabilitiesJSON, err := json.Marshal(result.Capabilities)
 	r.NoError(err, "marshal capabilities")
 	r.NotContains(string(capabilitiesJSON), `"logging"`, "deprecated logging capability")
 	r.Equal("jenkins-mcp-server", result.ServerInfo.Name, "server name")
+	r.Equal("Jenkins MCP Server", result.ServerInfo.Title, "server title")
+	r.Equal("Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, and queue state with guarded build actions.", result.ServerInfo.Description, "server description")
 	r.Equal("test-version", result.ServerInfo.Version, "server version")
+	r.Equal("https://github.com/davidvanlaatum/jenkins-mcp", result.ServerInfo.WebsiteURL, "server website")
+	r.Contains(result.Instructions, "jenkins_get_capabilities", "server instructions capability discovery")
+	r.Contains(result.Instructions, "jenkins_get_pipeline_node_log", "server instructions Pipeline logs")
+	r.Contains(result.Instructions, "waitTimeoutMs", "server instructions watch timeout")
+
+	tools, err := clientSession.ListTools(ctx, nil)
+	r.NoError(err, "list tools")
+	r.Equal(3_600_000, tools.TTLMs, "tool list TTL")
+	r.Equal("public", tools.CacheScope, "tool list cache scope")
 }
 
 func TestRegisteredToolTitles(t *testing.T) {

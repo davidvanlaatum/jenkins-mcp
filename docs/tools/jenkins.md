@@ -36,10 +36,14 @@
 
 - `jenkins_trigger_build`: triggers a build or parameterized build.
 - `jenkins_replay_build`: replays a Pipeline build through Jenkins' native Pipeline Replay action. With no overrides, it uses Jenkins' unchanged Replay/Rebuild endpoint. With `mainScriptOverride` or `loadedScriptOverrides`, it fetches the original Replay script set, fills omitted scripts with their original content, and submits full replacement script bodies to Jenkins. `loadedScriptOverrides` keys must match loaded-script ids from `jenkins_get_replay_scripts`; omitted loaded scripts are replayed unchanged, and a loaded-script-only override reuses the original primary script. The response avoids script bodies and reports the source build, whether original scripts or overrides were used, overridden and included script identifiers, Jenkins' redirect URL, and a predicted `scheduledBuild` from the job `nextBuildNumber` captured before replay. Native Replay web endpoints usually redirect back to the job rather than exposing a queue item; if Jenkins returns a queue URL, it is included as `queueUrl`.
-- `jenkins_cancel_queue_item`: cancels a queued Jenkins item.
-- `jenkins_cancel_build`: stops a running build.
+- `jenkins_cancel_queue_item`: cancels a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
+- `jenkins_cancel_build`: stops a running build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
 
 Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger, replay, and cancel attempts emit JSONL audit events when `audit.path` is configured. Artifact downloads are local file side effects rather than Jenkins mutations, so they remain available when Jenkins mutations are disabled.
+
+## MCP Discovery and Tool Caching
+
+MCP discovery identifies the server with a human-readable title, description, project URL, and usage instructions. The instructions direct agents to discover Jenkins capabilities first, prefer stage-specific Pipeline logs, and keep watch waits below host tool-call timeouts. Because registered tool definitions are fixed for the lifetime of the process and identical for every caller, the server advertises `tools.listChanged=false` and gives `tools/list` a one-hour public cache TTL. This caches tool definitions only; Jenkins data and tool-call results are not cached by MCP.
 
 ## Diagnostics Logging
 
