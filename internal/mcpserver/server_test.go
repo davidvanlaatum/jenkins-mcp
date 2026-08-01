@@ -316,6 +316,37 @@ func ptrBool(v bool) *bool {
 	return &v
 }
 
+func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
+	r := require.New(t)
+	cfg := config.Config{
+		DefaultController: "default",
+		Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
+		Limits:            config.Defaults().Limits,
+		Artifacts:         config.Defaults().Artifacts,
+	}
+	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test-version"}).Raw()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := t.Context()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err, "server connect")
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err, "client connect")
+	defer func() { _ = clientSession.Close() }()
+
+	result := clientSession.InitializeResult()
+	r.NotNil(result, "initialize result")
+	r.Equal("2026-07-28", result.ProtocolVersion, "protocol version")
+	r.NotNil(result.Capabilities.Tools, "tools capability")
+	capabilitiesJSON, err := json.Marshal(result.Capabilities)
+	r.NoError(err, "marshal capabilities")
+	r.NotContains(string(capabilitiesJSON), `"logging"`, "deprecated logging capability")
+	r.Equal("jenkins-mcp-server", result.ServerInfo.Name, "server name")
+	r.Equal("test-version", result.ServerInfo.Version, "server version")
+}
+
 func TestRegisteredToolTitles(t *testing.T) {
 	r := require.New(t)
 	cfg := config.Config{
