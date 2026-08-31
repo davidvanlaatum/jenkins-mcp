@@ -160,7 +160,7 @@ available. Those tests build a dedicated Jenkins LTS image with JCasC, Job DSL,
 and the plugins needed by the MCP tool surface. Exclude them with
 `go test -tags=no_integration ./...`.
 
-GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, GoReleaser snapshot validation, and an informational Gremlins mutation-testing baseline over selected non-integration utility packages. Tagged releases matching `v*` are built and published with GoReleaser.
+GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, GoReleaser snapshot validation, and an informational Gremlins mutation-testing baseline over selected non-integration utility packages. Canonical `vMAJOR.MINOR.PATCH` tags are built and published with GoReleaser; other `v*` tags are rejected before publication.
 
 Release versions follow the [release number policy](docs/release.md#release-number-policy): patches are backward-compatible maintenance, minors add compatible capabilities (and carry pre-`1.0.0` breaking changes), and majors represent breaking stable-contract changes after `1.0.0`. Selecting or publishing an exact release version and commit requires explicit operator confirmation.
 

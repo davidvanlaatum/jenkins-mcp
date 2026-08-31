@@ -68,6 +68,10 @@ that the approved tag does not exist, then create and push that exact tag:
 ```bash
 approved_tag='<approved-tag>'
 approved_commit='<approved-commit-sha>'
+if [[ ! "$approved_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "unsupported release tag: $approved_tag" >&2
+  exit 1
+fi
 git fetch origin main --tags
 test "$(git rev-parse origin/main)" = "$approved_commit"
 if git ls-remote --exit-code --tags origin "refs/tags/$approved_tag"; then
