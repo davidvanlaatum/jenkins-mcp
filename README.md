@@ -162,7 +162,7 @@ and the plugins needed by the MCP tool surface. Exclude them with
 
 GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, GoReleaser snapshot validation, and an informational Gremlins mutation-testing baseline over selected non-integration utility packages. Tagged releases matching `v*` are built and published with GoReleaser.
 
-Release versions follow the [release number policy](docs/release.md#release-number-policy): patches are backward-compatible maintenance, minors add compatible capabilities (and carry pre-`1.0.0` breaking changes), and majors represent breaking stable-contract changes after `1.0.0`. Selecting or publishing an exact release version requires explicit operator confirmation.
+Release versions follow the [release number policy](docs/release.md#release-number-policy): patches are backward-compatible maintenance, minors add compatible capabilities (and carry pre-`1.0.0` breaking changes), and majors represent breaking stable-contract changes after `1.0.0`. Selecting or publishing an exact release version and commit requires explicit operator confirmation.
 
 See also:
 

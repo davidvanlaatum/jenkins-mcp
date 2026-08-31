@@ -58,15 +58,24 @@ change, use the highest applicable increment. Pre-release and build-metadata tag
 are not part of the current publishing policy.
 
 Before selecting an exact version, preparing a release-specific change, creating
-a tag, or pushing a tag, confirm the intended version and release scope with the
-operator. Completed work and green CI do not authorize a release.
+a tag, or pushing a tag, confirm the intended version, release scope, and exact
+commit SHA with the operator. Reconfirm if the target commit changes. Completed
+work and green CI do not authorize a release.
 
-After that approval, create and push the authorized tag from an up-to-date
-`main` commit:
+After that approval, verify that `main` still resolves to the approved commit and
+that the approved tag does not exist, then create and push that exact tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+approved_tag='<approved-tag>'
+approved_commit='<approved-commit-sha>'
+git fetch origin main --tags
+test "$(git rev-parse origin/main)" = "$approved_commit"
+if git ls-remote --exit-code --tags origin "refs/tags/$approved_tag"; then
+  echo "tag already exists: $approved_tag" >&2
+  exit 1
+fi
+git tag "$approved_tag" "$approved_commit"
+git push origin "refs/tags/$approved_tag"
 ```
 
 ## Artifacts
