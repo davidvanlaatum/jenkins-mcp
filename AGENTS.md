@@ -25,6 +25,11 @@
 - Documentation-only changes may skip pipeline checks unless the repository requires them.
 - If validation or pipeline checks cannot be run, clearly state what was skipped and why.
 
+### Release Workflow
+- Use the [release number policy](docs/release.md#release-number-policy) to determine the candidate `vMAJOR.MINOR.PATCH` tag from the externally observable contract.
+- Before selecting an exact version, preparing a release-specific change, creating a tag, or pushing a tag, confirm the intended version and release scope with the user. Do not infer release authorization from completed work, green CI, or a request to update release documentation.
+- Release tags trigger GitHub Actions and GoReleaser. Push a release tag only after the user has explicitly authorized that exact release action.
+
 ### Workflow: Adding a New Tool
 1.  **Define Models:** Add request/response types and data structures in `internal/jenkins/model/model.go`.
 2.  **Implement API Call:** Add the corresponding method to `internal/jenkins/api/api.go`. Use tree queries (`?tree=...`) whenever possible to minimize data transfer.
