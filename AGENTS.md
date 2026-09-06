@@ -67,7 +67,7 @@
     - For Pipeline builds, ALWAYS prefer stage-specific logs via `jenkins_get_pipeline_node_log`.
     - Watch guidance must prefer the configured wait default or longer host-supported waits. Recommend shorter windows only for known host deadlines or observed timeouts; do not assume a 30-second limit for unknown clients. Keep agent-facing server instructions, schemas, and documentation consistent.
     - Use bounded readers (`readBounded`) and response limits from `config.LimitsConfig`.
-- **Stability:** The `jenkins_watch_build` tool uses signed and compressed state tokens. Any changes to the `watchState` struct must be backward compatible if possible, or increment the version.
+- **Stability:** Build and queue watchers use short IDs backed by a bounded process-local LRU cache. Expire snapshots after 30 minutes of inactivity with timer-driven cleanup, refreshing expiry on use. Preserve immutable snapshots, target and watcher-kind validation, and re-bootstrap guidance after idle expiry, eviction, or restart. Build waits default to completion or required input; stage-change wakeups require `waitFor: "change"`. When a wait suppresses intermediate changes, retain the latest successful observation separately from its comparison baseline for degraded/error fallbacks. Timeout responses omit snapshots while retaining the latest state in the cache; bootstrap and wakeup responses include snapshots.
 
 ### Critical Considerations
 - **CSRF:** The HTTP client automatically handles crumbs. Do not implement manual crumb fetching in the API layer.

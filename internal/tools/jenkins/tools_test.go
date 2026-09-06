@@ -2295,6 +2295,8 @@ func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 	r.NoError(err, "second WatchBuild() error")
 	r.True(second.Watch.TimedOut, "second WatchBuild() timed out")
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() state")
+	assertCompactWatchTimeout(t, second)
+
 }
 
 func TestWatchBuildCallerDeadlineReturnsStructuredError(t *testing.T) {
@@ -2420,9 +2422,9 @@ func TestWatchBuildReturnsWhenStageStatusChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{WaitFor: "change", Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{WaitFor: "change",
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2597,6 +2599,11 @@ func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
 	r.True(second.Watch.Pipeline.WaitingForInput, "second WatchBuild() pipeline waitingForInput")
 	r.Len(second.Watch.Pipeline.PendingInputActions, 1, "second WatchBuild() pending inputs")
 	r.Equal("approve-prod", second.Watch.Pipeline.PendingInputActions[0].ID, "second WatchBuild() pending input ID")
+	third, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: second.Watch.State})
+	r.NoError(err)
+	r.False(third.Watch.TimedOut, "unchanged pending input must still wake the default wait")
+	r.Equal(second.Watch.State, third.Watch.State)
+
 }
 
 func TestPipelineRunFromStateDerivesWaitingForInputFromPausedStatus(t *testing.T) {
@@ -2737,8 +2744,10 @@ func TestWatchBuildDegradesWhenPipelineEndpointIsFlaky(t *testing.T) {
 	r.NoError(err, "second WatchBuild() error")
 	r.True(second.Watch.TimedOut, "second WatchBuild() should time out when only wfapi is flaky")
 	r.False(second.Watch.Complete, "second WatchBuild() unexpectedly marked build complete")
-	r.NotNil(second.Watch.Pipeline, "second WatchBuild() lost pipeline context during transient wfapi degradation")
-	r.Equal(first.Watch.Pipeline.Status, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
+	assertCompactWatchTimeout(t, second)
+	cached, err := decodeWatchState(second.Watch.State)
+	r.NoError(err)
+	r.Equal(first.Watch.Pipeline.Status, cached.Run.Status, "cache preserves degraded pipeline context")
 }
 
 func TestWatchBuildPreservesPipelineSnapshotWhenBuildCompletesDuringWfapiOutage(t *testing.T) {
@@ -2863,10 +2872,12 @@ func TestWatchBuildTimesOutAfterDeadlineWhenPollingKeepsFailing(t *testing.T) {
 	r.NoError(err, "second WatchBuild() error")
 	r.True(second.Watch.TimedOut, "second WatchBuild() did not time out after repeated polling failures")
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchBuild() changed state after repeated polling failures")
-	r.Equal(first.Watch.Build.URL, second.Watch.Build.URL, "second WatchBuild() build URL")
-	r.NotNil(second.Watch.Pipeline, "second WatchBuild() lost pipeline context after repeated polling failures")
-	r.Equal(first.Watch.Pipeline.Status, second.Watch.Pipeline.Status, "second WatchBuild() pipeline status")
-	r.Len(second.Watch.Pipeline.Stages, len(first.Watch.Pipeline.Stages), "second WatchBuild() pipeline stages")
+	assertCompactWatchTimeout(t, second)
+	cached, err := decodeWatchState(second.Watch.State)
+	r.NoError(err)
+	r.Equal(first.Watch.Build.URL, cached.Summary.URL)
+	r.Equal(first.Watch.Pipeline.Status, cached.Run.Status)
+	r.Len(cached.Stages, len(first.Watch.Pipeline.Stages))
 }
 
 func TestWatchBuildBootstrapHonorsTimeoutOnRepeatedFailures(t *testing.T) {
@@ -3023,6 +3034,8 @@ func TestWatchQueueItemTimesOutWithoutStateChange(t *testing.T) {
 	r.NoError(err, "second WatchQueueItem() error")
 	r.True(second.Watch.TimedOut, "second WatchQueueItem() timed out")
 	r.Equal(first.Watch.State, second.Watch.State, "second WatchQueueItem() state")
+	assertCompactWatchTimeout(t, second)
+
 }
 
 func TestWatchQueueItemCallerDeadlineReturnsStructuredError(t *testing.T) {
@@ -3257,4 +3270,19 @@ func assertAppErrorCode(t *testing.T, err error, want apperrors.Code) {
 	var appErr *apperrors.Error
 	r.ErrorAs(err, &appErr, "error type")
 	r.Equal(want, appErr.Code, "error code")
+}
+
+func assertCompactWatchTimeout(t *testing.T, response any) {
+	t.Helper()
+	r := require.New(t)
+	payload, err := json.Marshal(response)
+	r.NoError(err)
+	var decoded map[string]map[string]any
+	r.NoError(json.Unmarshal(payload, &decoded))
+	watch := decoded["watch"]
+	r.Equal(true, watch["timedOut"])
+	r.NotEmpty(watch["state"])
+	for _, field := range []string{"build", "pipeline", "item"} {
+		r.NotContains(watch, field, "timeout must omit repeated snapshots")
+	}
 }
