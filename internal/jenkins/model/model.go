@@ -357,10 +357,10 @@ type QueueItem struct {
 }
 
 type QueueWatch struct {
-	State       string          `json:"state" jsonschema:"Opaque queue watch state token to pass as lastState on the next jenkins_watch_queue_item call"`
+	State       string          `json:"state" jsonschema:"Short server-held state ID to pass as lastState on the next jenkins_watch_queue_item call; idle expiry, eviction, or restart requires a fresh bootstrap"`
 	Status      string          `json:"status" jsonschema:"Queue watch status: queued, executable, cancelled, or disappeared"`
-	Item        *QueueItem      `json:"item,omitempty" jsonschema:"Latest Jenkins queue item snapshot, when Jenkins still exposes it"`
-	Build       *BuildReference `json:"build,omitempty" jsonschema:"Resolved build reference when Jenkins assigns an executable to the queue item"`
+	Item        *QueueItem      `json:"item,omitempty" jsonschema:"Latest Jenkins queue item snapshot, when Jenkins still exposes it; omitted on timeout responses"`
+	Build       *BuildReference `json:"build,omitempty" jsonschema:"Resolved build reference when Jenkins assigns an executable to the queue item; omitted on timeout responses"`
 	TimedOut    bool            `json:"timedOut" jsonschema:"Whether the long-poll call reached waitTimeoutMs without a queue state change"`
 	Terminal    bool            `json:"terminal" jsonschema:"Whether the queue item reached a terminal state and no further queue watching is needed"`
 	Cancelled   bool            `json:"cancelled" jsonschema:"Whether Jenkins reports the queue item was cancelled"`
@@ -542,9 +542,9 @@ type IssuesPage struct {
 }
 
 type BuildWatch struct {
-	State    string       `json:"state,omitempty" jsonschema:"Opaque state token to pass as lastState on the next watch call"`
-	Build    BuildSummary `json:"build" jsonschema:"Current build summary"`
-	Pipeline *PipelineRun `json:"pipeline,omitempty" jsonschema:"Current Pipeline run, stage state, and pending input-step state, when available"`
-	Complete bool         `json:"complete" jsonschema:"Whether the watched build has completed"`
-	TimedOut bool         `json:"timedOut" jsonschema:"Whether the watch call returned because the wait timeout elapsed"`
+	State    string        `json:"state,omitempty" jsonschema:"Short server-held state ID to pass as lastState on the next watch call; idle expiry, eviction, or restart requires a fresh bootstrap"`
+	Build    *BuildSummary `json:"build,omitempty" jsonschema:"Current build summary; omitted on timeout responses"`
+	Pipeline *PipelineRun  `json:"pipeline,omitempty" jsonschema:"Current Pipeline run, stage state, and pending input-step state, when available; omitted on timeout responses"`
+	Complete bool          `json:"complete" jsonschema:"Whether the watched build has completed"`
+	TimedOut bool          `json:"timedOut" jsonschema:"Whether the watch call returned because the wait timeout elapsed"`
 }

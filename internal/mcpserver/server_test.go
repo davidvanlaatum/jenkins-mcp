@@ -659,6 +659,13 @@ func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
 		r.True(ok, "tool %q input schema properties should be an object", tool.Name)
 		r.NotEmpty(properties, "tool %q input schema properties", tool.Name)
 		assertSchemaPropertyDescriptions(t, tool.Name, "input", schema)
+		if tool.Name == "jenkins_watch_build" {
+			mode, ok := properties["waitFor"].(map[string]any)
+			r.True(ok, "build watch describes waitFor")
+			r.Equal("string", mode["type"])
+			r.Contains(mode["description"], "completion_or_input (default)")
+			r.Contains(mode["description"], "change")
+		}
 		checked++
 	}
 	r.NotZero(checked, "tools checked")
@@ -699,6 +706,24 @@ func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
 		r.True(ok, "tool %q output schema properties should be an object", tool.Name)
 		r.NotEmpty(properties, "tool %q output schema properties", tool.Name)
 		assertSchemaPropertyDescriptions(t, tool.Name, "output", schema)
+		if tool.Name == "jenkins_watch_build" || tool.Name == "jenkins_watch_queue_item" {
+			watch, ok := properties["watch"].(map[string]any)
+			r.True(ok)
+			watchProperties, ok := watch["properties"].(map[string]any)
+			r.True(ok)
+			fields := []string{"build", "pipeline"}
+			if tool.Name == "jenkins_watch_queue_item" {
+				fields = []string{"item", "build"}
+			}
+			for _, field := range fields {
+				property, ok := watchProperties[field].(map[string]any)
+				r.True(ok)
+				r.Contains(property["description"], "omitted on timeout")
+				if required, ok := watch["required"].([]any); ok {
+					r.NotContains(required, field)
+				}
+			}
+		}
 		checked++
 	}
 	r.NotZero(checked, "tools checked")
