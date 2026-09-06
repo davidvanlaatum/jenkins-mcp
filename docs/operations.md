@@ -57,10 +57,10 @@ Useful environment variables:
 - `JENKINS_ARTIFACT_DIR`: local artifact download directory.
 - `JENKINS_AUDIT_PATH`: JSONL audit path for mutating actions.
 - `JENKINS_MCP_LOG_LEVEL`: log verbosity; set to `debug` to include redacted Jenkins request URLs.
-- `JENKINS_WATCH_POLL_INTERVAL_MS`: Jenkins polling interval during `jenkins_watch_build` long-polls in milliseconds. Default `3000`.
-- `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS`: default maximum duration for a `jenkins_watch_build` call in milliseconds when the request omits `waitTimeoutMs`. Default `120000`.
-- `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for `jenkins_watch_build` in milliseconds. Default `900000`.
-- `JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES`: consecutive Jenkins poll failures tolerated before `jenkins_watch_build` returns an error. Default `3`.
+- `JENKINS_WATCH_POLL_INTERVAL_MS`: Jenkins polling interval during build and queue watch long-polls in milliseconds. Default `3000`.
+- `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS`: default maximum duration for a build or queue watch call in milliseconds when the request omits `waitTimeoutMs`. Default `120000`.
+- `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for build and queue watches in milliseconds. Default `900000`.
+- `JENKINS_WATCH_MAX_CONSECUTIVE_FAILURES`: consecutive Jenkins poll failures tolerated before a build or queue watch returns an error. Default `3`.
 - `JENKINS_MCP_UPDATE_CHECK`: set to `false` to disable periodic GitHub release checks. Default `true`.
 - `JENKINS_MCP_UPDATE_REPOSITORY`: GitHub `owner/repo` used for release checks. Default `davidvanlaatum/jenkins-mcp`.
 - `JENKINS_MCP_UPDATE_CHECK_INTERVAL_HOURS`: hours between release checks after startup. Default `24`.
@@ -68,7 +68,7 @@ Useful environment variables:
 - `JENKINS_MCP_UPDATE_MAX_DOWNLOAD_BYTES`: maximum release archive or checksum bytes the self-updater will download. Default `268435456`.
 - `JENKINS_MCP_PLUGIN_DISCOVERY`: set to `false` to stop `jenkins_get_capabilities` from querying Jenkins `pluginManager`. Default `true`.
 
-`jenkins_watch_build` and `jenkins_watch_queue_item` use `waitTimeoutMs` to bound one long-poll call, but the MCP host or client may enforce a shorter per-tool-call deadline. If the host cancels the call first, the server returns a structured `unavailable` error with a context deadline or cancellation message instead of a normal `watch.timedOut=true` response. Set `waitTimeoutMs` and `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS` below the host timeout; for conservative or unknown clients, use 25-45 second windows and repeat calls with the returned watch state.
+`jenkins_watch_build` and `jenkins_watch_queue_item` use `waitTimeoutMs` to bound one long-poll call, but the MCP host or client may enforce a shorter per-tool-call deadline. If the host cancels the call first, the server returns a structured `unavailable` error with a context deadline or cancellation message instead of a normal `watch.timedOut=true` response. Prefer omitting `waitTimeoutMs` to use the configured default (120000 ms / 2 minutes). For longer waits, request a window such as 300000 ms / 5 minutes when the host supports it, up to the configured maximum (900000 ms / 15 minutes by default). A longer window reduces repeated tool calls while still returning promptly on relevant state changes; Jenkins is polled every 3000 ms by default. Do not assume a 30-second host limit when it is unknown. Shorten `waitTimeoutMs` or `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS` only for a known shorter host deadline or an observed host timeout, leaving time for Jenkins requests and response delivery. Repeat calls with the returned watch state.
 
 The server checks the GitHub releases API at startup and periodically logs a warning when a newer release is available. The cached result is also returned by `jenkins_get_capabilities` under `updates`, so MCP clients and agents can surface it without reading process logs. When `updates.updateAvailable` is `true`, the response includes `updates.notificationHint` instructing agents to notify the user with the current version, latest version, and release URL. Release checks are best-effort: failures are logged at debug level and do not affect MCP requests. Disable this in network-restricted deployments:
 

@@ -65,6 +65,7 @@
 - **Agent Instruction Feedback:** When a user correction, bug, regression, or review comment reveals a reusable project-specific expectation that was missing or unclear in `AGENTS.md`, update `AGENTS.md` as part of the same change when the instruction is stable and broadly useful for future agents. Keep the new instruction scoped and actionable; do not add one-off preferences, transient task details, or overly broad rules.
 - **Efficiency:**
     - For Pipeline builds, ALWAYS prefer stage-specific logs via `jenkins_get_pipeline_node_log`.
+    - Watch guidance must prefer the configured wait default or longer host-supported waits. Recommend shorter windows only for known host deadlines or observed timeouts; do not assume a 30-second limit for unknown clients. Keep agent-facing server instructions, schemas, and documentation consistent.
     - Use bounded readers (`readBounded`) and response limits from `config.LimitsConfig`.
 - **Stability:** The `jenkins_watch_build` tool uses signed and compressed state tokens. Any changes to the `watchState` struct must be backward compatible if possible, or increment the version.
 
