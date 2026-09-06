@@ -29,7 +29,7 @@ const (
 	toolListTTLMs      = int(time.Hour / time.Millisecond)
 	serverInstructions = "Call jenkins_get_capabilities before other tools to discover configured controllers, response limits, optional Jenkins plugin capabilities, mutation availability, and update notices. " +
 		"For Pipeline builds, prefer jenkins_get_pipeline_node_log over jenkins_get_log when a stage or node is known. " +
-		"Keep jenkins_watch_build and jenkins_watch_queue_item waitTimeoutMs below the MCP host tool-call timeout and pass the returned state token to subsequent calls."
+		"For jenkins_watch_build and jenkins_watch_queue_item, prefer omitting waitTimeoutMs to use the configured default (2 minutes), or use longer waits such as 300000 ms when supported by the host (configured maximum defaults to 15 minutes). Shorten waits only for a known shorter host deadline or an observed host timeout; do not assume a 30-second limit. Watches return early on relevant changes. Pass the returned state token to subsequent calls."
 )
 
 type Dependencies struct {

@@ -26,8 +26,8 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch bounded log output for a Pipeline flow node id.
 - `jenkins_get_replay_scripts`: Fetch the native Jenkins Pipeline Replay script set for a build, including primary and loaded-script identifiers, script content, truncation metadata, and digests.
-- `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes; keep `waitTimeoutMs` below any MCP host tool-call timeout.
-- `jenkins_watch_queue_item`: Long-poll a Jenkins queue item watcher until stable queue fields change, it receives an executable build, is cancelled, disappears, or times out; Jenkins `why` text changes such as quiet-period countdowns do not wake the long poll by themselves, and `waitTimeoutMs` should stay below any MCP host tool-call timeout.
+- `jenkins_watch_build`: Long-poll a Jenkins build watcher for completion, stage-status changes, or pending input-step changes; prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
+- `jenkins_watch_queue_item`: Long-poll a Jenkins queue item watcher until stable queue fields change, it receives an executable build, is cancelled, disappears, or times out; Jenkins `why` text changes such as quiet-period countdowns do not wake the long poll by themselves, and prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
 - `jenkins_list_issues`: List paged, typed Warnings NG issues for a build. The response includes discovered tools so callers can select a tool when a build has multiple Warnings NG results.
 - `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.
 - `jenkins_list_artifacts`: List artifacts for a Jenkins build.

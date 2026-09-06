@@ -1925,7 +1925,7 @@ type WatchBuildRequest struct {
 	Job           string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Build         int    `json:"build" jsonschema:"Jenkins build number"`
 	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque watch state token returned by a previous jenkins_watch_build call"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build completion, Pipeline stage-status changes, or pending input-step changes; MCP hosts may cancel the tool call sooner"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for build completion, Pipeline stage-status changes, or pending input-step changes; omit to use the configured default (120000 ms / 2 minutes), or request longer waits such as 300000 ms when the host supports them. The configured maximum defaults to 900000 ms / 15 minutes. Returns early on relevant changes. Shorten only for known shorter host deadlines or observed host timeouts; do not assume a 30-second limit"`
 }
 type WatchBuildResponse struct {
 	Watch model.BuildWatch `json:"watch" jsonschema:"Current build watch state, progress, and completion status"`
@@ -2669,7 +2669,7 @@ type WatchQueueItemRequest struct {
 	Controller    string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	ID            int64  `json:"id" jsonschema:"Jenkins queue item id to watch"`
 	LastState     string `json:"lastState,omitempty" jsonschema:"Opaque queue watch state token returned by a previous jenkins_watch_queue_item call"`
-	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for queue assignment, cancellation, disappearance, or another queue state change; MCP hosts may cancel the tool call sooner"`
+	WaitTimeoutMs int64  `json:"waitTimeoutMs,omitempty" jsonschema:"Maximum milliseconds to wait for queue assignment, cancellation, disappearance, or another queue state change; omit to use the configured default (120000 ms / 2 minutes), or request longer waits such as 300000 ms when the host supports them. The configured maximum defaults to 900000 ms / 15 minutes. Returns early on relevant changes. Shorten only for known shorter host deadlines or observed host timeouts; do not assume a 30-second limit"`
 }
 type WatchQueueItemResponse struct {
 	Watch model.QueueWatch `json:"watch" jsonschema:"Current queue watch state, terminal status, and resolved build reference when available"`
