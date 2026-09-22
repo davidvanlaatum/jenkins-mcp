@@ -28,7 +28,40 @@ func TestLoadFromEnvironment(t *testing.T) {
 	r.True(cfg.Mutations.Enabled, "mutations should be enabled")
 	r.True(cfg.Updates.Enabled, "update checks should be enabled by default")
 	r.True(cfg.Capabilities.PluginDiscoveryEnabled, "plugin discovery should be enabled by default")
+	r.True(cfg.LogCache.Enabled, "log cache should be enabled by default")
+	r.Equal(int64(1024*1024*1024), cfg.LogCache.MaxBytes, "log cache max bytes")
 	r.Equal("<redacted>", cfg.Redacted().Controllers[0].Token, "token should be redacted")
+}
+
+func TestLoadLogCacheFromFile(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.json")
+	err := os.WriteFile(path, []byte(`{
+		"defaultController": "default",
+		"controllers": [{"id": "default", "url": "https://jenkins.example.com"}],
+		"logCache": {
+			"enabled": false,
+			"maxBytes": 2097152
+		}
+	}`), 0o600)
+	r.NoError(err, "WriteFile()")
+
+	cfg, err := Load([]string{"--config", path}, nil)
+	r.NoError(err, "Load()")
+	r.False(cfg.LogCache.Enabled, "logCache.enabled should be configurable to false")
+	r.Equal(int64(2097152), cfg.LogCache.MaxBytes, "logCache.maxBytes")
+}
+
+func TestLoadLogCacheFromEnvironment(t *testing.T) {
+	r := require.New(t)
+	cfg, err := Load(nil, []string{
+		"JENKINS_URL=https://jenkins.example.com",
+		"JENKINS_LOG_CACHE_ENABLED=false",
+		"JENKINS_LOG_CACHE_MAX_BYTES=4194304",
+	})
+	r.NoError(err, "Load()")
+	r.False(cfg.LogCache.Enabled, "log cache should be disabled by environment")
+	r.Equal(int64(4194304), cfg.LogCache.MaxBytes, "log cache max bytes")
 }
 
 func TestLoadUpdateCheckFromFile(t *testing.T) {

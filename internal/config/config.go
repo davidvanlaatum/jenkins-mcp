@@ -38,6 +38,7 @@ type Config struct {
 	DefaultController string             `json:"defaultController"`
 	Mutations         MutationConfig     `json:"mutations"`
 	Limits            LimitsConfig       `json:"limits"`
+	LogCache          LogCacheConfig     `json:"logCache"`
 	Watch             WatchConfig        `json:"watch"`
 	Artifacts         ArtifactConfig     `json:"artifacts"`
 	Audit             AuditConfig        `json:"audit"`
@@ -61,6 +62,30 @@ type LimitsConfig struct {
 	MaxResponseBytes int64 `json:"maxResponseBytes" jsonschema:"Maximum bytes allowed in a bounded MCP response"`
 	LogChunkBytes    int64 `json:"logChunkBytes" jsonschema:"Maximum console log bytes returned per log chunk"`
 	InlineBytes      int64 `json:"inlineBytes" jsonschema:"Maximum artifact or inline content bytes returned directly in a tool response"`
+}
+
+type LogCacheConfig struct {
+	Enabled  bool  `json:"enabled" jsonschema:"Whether progressive console-log pages are cached in a process-scoped temporary directory"`
+	MaxBytes int64 `json:"maxBytes" jsonschema:"Maximum total bytes retained in the disk-backed progressive console-log cache"`
+
+	enabledSet bool
+}
+
+func (c *LogCacheConfig) UnmarshalJSON(b []byte) error {
+	type logCacheConfig LogCacheConfig
+	var raw struct {
+		logCacheConfig
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*c = LogCacheConfig(raw.logCacheConfig)
+	if raw.Enabled != nil {
+		c.Enabled = *raw.Enabled
+		c.enabledSet = true
+	}
+	return nil
 }
 
 type WatchConfig struct {
@@ -306,6 +331,7 @@ func Defaults() Config {
 	return Config{
 		DefaultController: "default",
 		Limits:            LimitsConfig{MaxResponseBytes: 64 * 1024, LogChunkBytes: 64 * 1024, InlineBytes: 32 * 1024},
+		LogCache:          LogCacheConfig{Enabled: true, MaxBytes: 1024 * 1024 * 1024},
 		Watch:             WatchConfig{PollIntervalMs: 3000, DefaultWaitTimeoutMs: 120000, MaxWaitTimeoutMs: 900000, MaxConsecutiveFailures: 3},
 		Artifacts:         ArtifactConfig{DownloadDir: filepath.Join(os.TempDir(), "jenkins-mcp-artifacts")},
 		Updates:           UpdateCheckConfig{Enabled: true, Repository: "davidvanlaatum/jenkins-mcp", CheckIntervalHours: 24, MaxDownloadBytes: defaultUpdateMaxDownloadBytes},
@@ -340,6 +366,9 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.MaxResponseBytes <= 0 || c.Limits.LogChunkBytes <= 0 || c.Limits.InlineBytes <= 0 {
 		return errors.New("limits must be positive")
+	}
+	if c.LogCache.MaxBytes <= 0 {
+		return errors.New("logCache.maxBytes must be positive")
 	}
 	if c.Watch.PollIntervalMs <= 0 || c.Watch.DefaultWaitTimeoutMs <= 0 || c.Watch.MaxWaitTimeoutMs <= 0 || c.Watch.MaxConsecutiveFailures <= 0 {
 		return errors.New("watch settings must be positive")
@@ -436,6 +465,12 @@ func merge(base, override Config) Config {
 	}
 	if override.Limits.InlineBytes != 0 {
 		base.Limits.InlineBytes = override.Limits.InlineBytes
+	}
+	if override.LogCache.enabledSet {
+		base.LogCache.Enabled = override.LogCache.Enabled
+	}
+	if override.LogCache.MaxBytes != 0 {
+		base.LogCache.MaxBytes = override.LogCache.MaxBytes
 	}
 	if override.Watch.PollIntervalMs != 0 {
 		base.Watch.PollIntervalMs = override.Watch.PollIntervalMs
@@ -548,6 +583,14 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v := env["JENKINS_LOG_CHUNK_BYTES"]; v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.Limits.LogChunkBytes = n
+		}
+	}
+	if v := env["JENKINS_LOG_CACHE_ENABLED"]; v != "" {
+		cfg.LogCache.Enabled = parseBool(v)
+	}
+	if v := env["JENKINS_LOG_CACHE_MAX_BYTES"]; v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.LogCache.MaxBytes = n
 		}
 	}
 	if v := env["JENKINS_WATCH_POLL_INTERVAL_MS"]; v != "" {
