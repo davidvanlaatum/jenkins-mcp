@@ -1017,9 +1017,10 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 
 		nodeLog := callIntegrationTool[struct {
 			Log struct {
-				NodeID    string `json:"nodeId"`
-				Text      string `json:"text"`
-				Truncated bool   `json:"truncated"`
+				NodeID     string               `json:"nodeId"`
+				NodeStatus model.PipelineStatus `json:"nodeStatus"`
+				Text       string               `json:"text"`
+				Truncated  bool                 `json:"truncated"`
 			} `json:"log"`
 		}](t, clientSession, "jenkins_get_pipeline_node_log", map[string]any{
 			"controller": jenkinscontainer.ControllerID,
@@ -1029,8 +1030,28 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"maxBytes":   128,
 		})
 		r.Equal(nodeID, nodeLog.Log.NodeID, "pipeline node log id")
+		r.Equal(model.PipelineStatusSuccess, nodeLog.Log.NodeStatus, "pipeline node log status")
 		r.Contains(nodeLog.Log.Text, "hello from pipeline", "pipeline node log text")
 		r.False(nodeLog.Log.Truncated, "pipeline node log should fit in requested bytes")
+
+		boundedNodeLog := callIntegrationTool[struct {
+			Log struct {
+				Text      string `json:"text"`
+				Length    int64  `json:"length"`
+				HasMore   bool   `json:"hasMore"`
+				Truncated bool   `json:"truncated"`
+			} `json:"log"`
+		}](t, clientSession, "jenkins_get_pipeline_node_log", map[string]any{
+			"controller": jenkinscontainer.ControllerID,
+			"job":        "example-pipeline",
+			"build":      pipelineBuild,
+			"nodeId":     nodeID,
+			"maxBytes":   8,
+		})
+		r.Len(boundedNodeLog.Log.Text, 8, "bounded Pipeline node log text")
+		r.Equal(int64(8), boundedNodeLog.Log.Length, "bounded Pipeline node log length")
+		r.True(boundedNodeLog.Log.HasMore, "bounded Pipeline node log has older output")
+		r.True(boundedNodeLog.Log.Truncated, "bounded Pipeline node log truncation")
 	})
 
 	t.Run("pipeline replay tools", func(t *testing.T) {

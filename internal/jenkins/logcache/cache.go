@@ -21,6 +21,7 @@ type Key struct {
 	Controller string
 	Job        string
 	Build      int
+	Resource   string
 	Start      int64
 	Limit      int64
 }
@@ -31,6 +32,7 @@ type Page struct {
 	TotalSize int64
 	More      bool
 	Truncated bool
+	Complete  bool
 }
 
 type Freshness func(Page, time.Duration) bool
@@ -218,7 +220,7 @@ func wait(ctx context.Context, active *flight) (Page, error) {
 }
 
 func keyDigest(key Key) string {
-	raw := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d", key.Controller, key.Job, key.Build, key.Start, key.Limit)
+	raw := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%d\x00%d", key.Controller, key.Job, key.Build, key.Resource, key.Start, key.Limit)
 	digest := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(digest[:])
 }

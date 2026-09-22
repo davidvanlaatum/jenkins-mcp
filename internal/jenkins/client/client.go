@@ -283,3 +283,9 @@ func classify(status int) error {
 		return apperrors.Wrap(apperrors.CodeJenkins, msg, detail)
 	}
 }
+
+// ResponseError maps a non-success Jenkins HTTP status to the structured error
+// contract used by JSON and bounded text requests.
+func ResponseError(status int) error {
+	return classify(status)
+}
