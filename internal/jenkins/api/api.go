@@ -12,23 +12,29 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/logcache"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/jenkins/urlx"
 	"github.com/david/jenkins-mcp/internal/security"
 )
 
 type API struct {
-	id     string
-	client *jenkinsclient.Client
+	id       string
+	client   *jenkinsclient.Client
+	logCache *logcache.Cache
 }
 
 func New(id string, c *jenkinsclient.Client) *API { return &API{id: id, client: c} }
-func (a *API) BaseURL() string                    { return a.client.BaseURL() }
+func NewWithLogCache(id string, c *jenkinsclient.Client, cache *logcache.Cache) *API {
+	return &API{id: id, client: c, logCache: cache}
+}
+func (a *API) BaseURL() string { return a.client.BaseURL() }
 
 type controllerJSON struct {
 	NodeName    string `json:"nodeName"`
@@ -440,24 +446,79 @@ func (a *API) GetBuild(ctx context.Context, job string, number int) (model.Build
 }
 
 func (a *API) GetLog(ctx context.Context, job string, number int, start, max int64) (model.LogChunk, error) {
-	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/logText/progressiveText"
-	status, body, headers, truncated, err := a.client.GetTextLimited(ctx, path, url.Values{"start": {strconv.FormatInt(start, 10)}}, max)
+	if a.logCache == nil {
+		page, err := a.fetchLogPage(ctx, job, number, start, max)
+		if err != nil {
+			return model.LogChunk{}, err
+		}
+		return logChunk(page, start, start, max), nil
+	}
+	pageStart := start - start%logCachePageBytes
+	page, err := a.getLogPage(ctx, job, number, pageStart, logCachePageBytes, true)
 	if err != nil {
 		return model.LogChunk{}, err
 	}
-	if status < 200 || status > 299 {
-		return model.LogChunk{}, fmt.Errorf("jenkins returned HTTP %d", status)
+	return logChunk(page, pageStart, start, max), nil
+}
+
+const (
+	logCachePageBytes   = 1024 * 1024
+	logFrontierFreshFor = 2 * time.Second
+)
+
+func (a *API) getLogPage(ctx context.Context, job string, number int, start, max int64, immutableWhenFull bool) (logcache.Page, error) {
+	if a.logCache == nil {
+		return a.fetchLogPage(ctx, job, number, start, max)
 	}
-	text := string(body)
-	next, _ := strconv.ParseInt(headers.Get("X-Text-Size"), 10, 64)
+	key := logcache.Key{Controller: a.id, Job: job, Build: number, Start: start, Limit: max}
+	return a.logCache.Get(ctx, key, func(page logcache.Page, age time.Duration) bool {
+		// A full data page contains an immutable historical byte range. Metadata
+		// probes must remain refreshable because TotalSize changes while a build
+		// runs even when their one-byte response was locally truncated.
+		return (immutableWhenFull && page.Truncated) || age <= logFrontierFreshFor
+	}, func(fetchCtx context.Context) (logcache.Page, error) {
+		return a.fetchLogPage(fetchCtx, job, number, start, max)
+	})
+}
+
+func logChunk(page logcache.Page, pageStart, start, max int64) model.LogChunk {
+	offset := start - pageStart
+	if offset < 0 || offset >= int64(len(page.Text)) {
+		return model.LogChunk{Start: start, NextStart: page.NextStart, More: page.More, Truncated: page.Truncated}
+	}
+	available := int64(len(page.Text)) - offset
+	length := min(max, available)
+	next := start + length
+	limited := length < available
+	more := limited || page.More
+	return model.LogChunk{
+		Text:      string(page.Text[offset : offset+length]),
+		Start:     start,
+		NextStart: next,
+		More:      more,
+		Truncated: limited || (offset+length == int64(len(page.Text)) && page.Truncated),
+	}
+}
+
+func (a *API) fetchLogPage(ctx context.Context, job string, number int, start, max int64) (logcache.Page, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/logText/progressiveText"
+	status, body, headers, truncated, err := a.client.GetTextLimited(ctx, path, url.Values{"start": {strconv.FormatInt(start, 10)}}, max)
+	if err != nil {
+		return logcache.Page{}, err
+	}
+	if status < 200 || status > 299 {
+		return logcache.Page{}, fmt.Errorf("jenkins returned HTTP %d", status)
+	}
+	totalSize, _ := strconv.ParseInt(headers.Get("X-Text-Size"), 10, 64)
+	next := totalSize
 	if truncated {
 		next = start + int64(len(body))
 	}
 	more := strings.EqualFold(headers.Get("X-More-Data"), "true")
-	if truncated {
+	if truncated || totalSize > next {
 		more = true
 	}
-	return model.LogChunk{Text: text, Start: start, NextStart: next, More: more, Truncated: truncated}, nil
+	return logcache.Page{Text: body, NextStart: next, TotalSize: totalSize, More: more, Truncated: truncated}, nil
 }
 
 func (a *API) SearchLog(ctx context.Context, job string, number int, start int64, query string, chunkBytes int64, maxScanBytes int64, maxMatches int, contextLines int) (model.LogSearchResult, error) {
@@ -560,15 +621,29 @@ func findLogMatches(text string, query string, maxMatches int, contextLines int)
 }
 
 func (a *API) TailLog(ctx context.Context, job string, number int, tailBytes int64) (model.LogChunk, error) {
-	first, err := a.GetLog(ctx, job, number, 0, 1)
+	first, err := a.getLogPage(ctx, job, number, 0, 1, false)
 	if err != nil {
 		return model.LogChunk{}, err
 	}
-	start := first.NextStart - tailBytes
+	start := first.TotalSize - tailBytes
 	if start < 0 {
 		start = 0
 	}
-	return a.GetLog(ctx, job, number, start, tailBytes)
+	cursor := start
+	var text strings.Builder
+	for cursor < first.TotalSize && int64(text.Len()) < tailBytes {
+		chunk, err := a.GetLog(ctx, job, number, cursor, tailBytes-int64(text.Len()))
+		if err != nil {
+			return model.LogChunk{}, err
+		}
+		text.WriteString(chunk.Text)
+		if chunk.NextStart <= cursor {
+			break
+		}
+		cursor = chunk.NextStart
+	}
+	more := cursor < first.TotalSize
+	return model.LogChunk{Text: text.String(), Start: start, NextStart: cursor, More: more, Truncated: more}, nil
 }
 
 func (a *API) TestReport(ctx context.Context, job string, number int, filter model.TestCaseFilter, limit int) (model.TestReport, error) {

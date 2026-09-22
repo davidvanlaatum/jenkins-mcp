@@ -12,6 +12,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/logcache"
 	"github.com/david/jenkins-mcp/internal/mcpserver"
 	stdiotransport "github.com/david/jenkins-mcp/internal/mcpserver/transport/stdio"
 	"github.com/david/jenkins-mcp/internal/selfupdate"
@@ -24,7 +25,10 @@ type Server struct {
 	mcp           *mcpserver.Server
 	updateChecker *updatecheck.Checker
 	logFile       *os.File
+	logCache      *logcache.Cache
 }
+
+const maxLogCacheEntries = 32 * 1024
 
 func LoadConfigFromProcess(args []string, environ []string) (config.Config, error) {
 	return config.Load(args, environ)
@@ -53,17 +57,27 @@ func New(cfg config.Config) (*Server, error) {
 		return nil, err
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel(cfg.Logging.Level)}))
-	clients := make(map[string]*jenkinsapi.API, len(cfg.Controllers))
-	for _, controller := range cfg.Controllers {
-		httpClient, err := jenkinsclient.New(controller, logger)
+	var sharedLogCache *logcache.Cache
+	if cfg.LogCache.Enabled {
+		sharedLogCache, err = logcache.New("", maxLogCacheEntries, cfg.LogCache.MaxBytes)
 		if err != nil {
 			_ = closeLogFile(logFile)
 			return nil, err
 		}
-		clients[controller.ID] = jenkinsapi.New(controller.ID, httpClient)
+	}
+	clients := make(map[string]*jenkinsapi.API, len(cfg.Controllers))
+	for _, controller := range cfg.Controllers {
+		httpClient, err := jenkinsclient.New(controller, logger)
+		if err != nil {
+			_ = closeLogCache(sharedLogCache)
+			_ = closeLogFile(logFile)
+			return nil, err
+		}
+		clients[controller.ID] = jenkinsapi.NewWithLogCache(controller.ID, httpClient, sharedLogCache)
 	}
 	auditer, err := audit.New(cfg.Audit)
 	if err != nil {
+		_ = closeLogCache(sharedLogCache)
 		_ = closeLogFile(logFile)
 		return nil, err
 	}
@@ -87,6 +101,7 @@ func New(cfg config.Config) (*Server, error) {
 		}),
 		updateChecker: updateChecker,
 		logFile:       logFile,
+		logCache:      sharedLogCache,
 	}, nil
 }
 
@@ -114,6 +129,13 @@ func closeLogFile(f *os.File) error {
 	return f.Close()
 }
 
+func closeLogCache(cache *logcache.Cache) error {
+	if cache == nil {
+		return nil
+	}
+	return cache.Close()
+}
+
 func logLevel(level string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
@@ -128,6 +150,7 @@ func logLevel(level string) slog.Level {
 }
 
 func (s *Server) RunStdio(ctx context.Context) error {
+	defer func() { _ = closeLogCache(s.logCache) }()
 	defer func() { _ = closeLogFile(s.logFile) }()
 	s.updateChecker.Start(ctx)
 	return stdiotransport.Run(ctx, s.mcp.Raw())

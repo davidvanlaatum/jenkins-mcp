@@ -57,6 +57,8 @@ Useful environment variables:
 - `JENKINS_ARTIFACT_DIR`: local artifact download directory.
 - `JENKINS_AUDIT_PATH`: JSONL audit path for mutating actions.
 - `JENKINS_MCP_LOG_LEVEL`: log verbosity; set to `debug` to include redacted Jenkins request URLs.
+- `JENKINS_LOG_CACHE_ENABLED`: set to `false` to disable the process-scoped progressive console-log disk cache. Default `true`.
+- `JENKINS_LOG_CACHE_MAX_BYTES`: global byte bound for cached progressive console-log pages. Default `1073741824` (1 GiB).
 - `JENKINS_WATCH_POLL_INTERVAL_MS`: Jenkins polling interval during build and queue watch long-polls in milliseconds. Default `3000`.
 - `JENKINS_WATCH_DEFAULT_WAIT_TIMEOUT_MS`: default maximum duration for a build or queue watch call in milliseconds when the request omits `waitTimeoutMs`. Default `120000`.
 - `JENKINS_WATCH_MAX_WAIT_TIMEOUT_MS`: maximum allowed `waitTimeoutMs` for build and queue watches in milliseconds. Default `900000`.
@@ -136,3 +138,20 @@ Large responses are bounded to keep MCP payloads useful:
 - `limits.inlineBytes`: inline artifact budget.
 
 Use `jenkins_get_log` and `jenkins_tail_log` with cursors rather than requesting complete logs. Use `jenkins_watch_build` for status-only long-polling on build completion, Pipeline stage-state changes, or pending input-step changes.
+
+### Progressive log cache
+
+The server caches raw progressive console-log data in fixed 1 MiB pages inside a private temporary directory so overlapping `jenkins_get_log`, `jenkins_search_log`, and `jenkins_tail_log` calls do not repeatedly transfer the same large log ranges from Jenkins. Concurrent cache misses for the same controller, job, build, and page are coalesced into one Jenkins request. Full pages are treated as immutable historical bytes; the current partial page is refreshed after a short interval so running builds can continue to grow.
+
+The cache is enabled by default with a global 1 GiB LRU bound:
+
+```json
+{
+  "logCache": {
+    "enabled": true,
+    "maxBytes": 1073741824
+  }
+}
+```
+
+Use `JENKINS_LOG_CACHE_ENABLED=false` to disable it or `JENKINS_LOG_CACHE_MAX_BYTES` to change the byte bound. Evicted files are removed immediately, and the process cache directory is removed during normal server shutdown. The cache is not reused across restarts. Because files contain raw Jenkins console output, protect the host's temporary storage; the server creates the directory with mode `0700` and page files with mode `0600`.

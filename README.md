@@ -10,16 +10,16 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ## Current Tool Surface
 
 ### Read Tools
-- `jenkins_get_capabilities`: Discover configured Jenkins controllers, response limits, update-check status, optional capability warnings, and whether mutating tools are enabled. Agents should notify the user when `updates.updateAvailable` is `true`.
+- `jenkins_get_capabilities`: Discover configured Jenkins controllers, response and log-cache limits, update-check status, optional capability warnings, and whether mutating tools are enabled. Agents should notify the user when `updates.updateAvailable` is `true`.
 - `jenkins_resolve_build_url`: Resolve a Jenkins build URL to controller, job path, and build number.
 - `jenkins_list_jobs`: List Jenkins jobs at the controller root or within a folder, with cursor pagination, optional recursive traversal, and filters for name, type, status, buildable/building state, last-build reference presence, last-build timestamps, last completed build JUnit summaries (`hasTests`, `hasFailedTests`, `hasSkippedTests`), whether the last completed build has Warnings NG issues, and whether the last completed build has coverage data (`hasCoverage`). JUnit, Warnings NG, and coverage filters are evaluated only when requested and use `lastCompletedBuild` summary probes. Each candidate job that survives cheaper filters may require summary probes until the requested page plus one extra match is found or candidates are exhausted; combine these filters with folder, name, type, status, buildable, building, or build metadata filters to reduce Jenkins API traffic. Job items include buildable status. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
 - `jenkins_get_job`: Get Jenkins job metadata, recent build references, and parameter definitions.
 - `jenkins_get_job_config`: Inspect Jenkins job configuration as a structured summary, best-effort redacted `config.xml`, or both. Falls back to safe job metadata when `config.xml` is not readable, such as when the caller lacks Job Configure or Extended Read permissions.
 - `jenkins_list_builds`: List recent builds for a Jenkins job, with cursor pagination and filters for result, running/completed state, start timestamp, duration, estimated duration, keepLog, queueId, build number range, description text, and displayName text. Filters use fields from the build summary query and do not fetch full build details. Extended summaries include result, description, displayName, id, queueId, estimatedDuration, and keepLog. Responses use `items`, `nextCursor`, `hasMore`, `truncated`, and `limit`.
 - `jenkins_get_build`: Get build details including result, causes, parameters, artifacts, changes, typed Warnings NG summary data when available, and optional typed coverage summaries from common coverage plugin endpoints.
-- `jenkins_get_log`: Read a bounded progressive console log chunk. For Pipeline builds, prefer `jenkins_get_pipeline_node_log`.
-- `jenkins_search_log`: Search the progressive console log across bounded server-side pages and return matching lines with optional context. Use `maxScanBytes` to bound total bytes scanned; it defaults to 8 MiB and is capped at 64 MiB.
-- `jenkins_tail_log`: Read the tail of a Jenkins console log using progressive log offsets.
+- `jenkins_get_log`: Read a bounded progressive console log chunk, reusing the process-scoped disk cache when enabled. For Pipeline builds, prefer `jenkins_get_pipeline_node_log`.
+- `jenkins_search_log`: Search the progressive console log across bounded server-side pages and return matching lines with optional context. Different searches reuse cached raw log pages. Use `maxScanBytes` to bound total bytes scanned; it defaults to 8 MiB and is capped at 64 MiB.
+- `jenkins_tail_log`: Read the tail of a Jenkins console log using progressive log offsets and cached raw pages when available.
 - `jenkins_get_test_report`: Fetch JUnit test summary and bounded compact test case metadata when available, with optional filters for status, exact suite/class/case name, substring or regex suite/case/class name, and duration. Filters apply before `limit`; summary counts remain full-report Jenkins counts. Broad requests omit bulky failure text, while exact `className` or `caseName` follow-up requests try to fetch failure details and stack traces for the returned matches and report whether detail enrichment succeeded with `failureDetailsIncluded`. If Jenkins does not expose a usable detail URL for a compact match, the compact match is still returned with `failureDetailsIncluded: false`.
 - `jenkins_get_flaky_test_stats`: Analyze compact JUnit status histories across selected builds of one job, dropping builds with no JUnit data, counting state transitions only across reported observations, and returning sorted flaky-test stats plus failed-build references for targeted follow-up.
 - `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
@@ -146,6 +146,19 @@ Logging can also be configured in JSON:
   }
 }
 ```
+
+Progressive console-log pages are cached in a private, process-scoped temporary directory by default. Concurrent requests for the same page share one Jenkins fetch, and later `jenkins_get_log`, `jenkins_search_log`, and `jenkins_tail_log` calls can reuse the downloaded bytes. The cache is bounded to 1 GiB by default, uses LRU eviction, and is removed during normal server shutdown. Configure or disable it with:
+
+```json
+{
+  "logCache": {
+    "enabled": true,
+    "maxBytes": 1073741824
+  }
+}
+```
+
+The equivalent environment variables are `JENKINS_LOG_CACHE_ENABLED` and `JENKINS_LOG_CACHE_MAX_BYTES`. Cache files can contain Jenkins console output and should be treated as sensitive even though the directory and files use private permissions.
 
 ## Development
 

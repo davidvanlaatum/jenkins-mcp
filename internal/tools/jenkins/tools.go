@@ -163,6 +163,7 @@ type CapabilitiesResponse struct {
 	CapabilityConfig config.CapabilityConfig        `json:"capabilityConfig" jsonschema:"Configuration that controls optional capability discovery behavior"`
 	MutationsEnabled bool                           `json:"mutationsEnabled" jsonschema:"Whether Jenkins-mutating tools are enabled by configuration"`
 	Limits           config.LimitsConfig            `json:"limits" jsonschema:"Configured response and inline content limits"`
+	LogCache         config.LogCacheConfig          `json:"logCache" jsonschema:"Configured disk-backed progressive console-log cache"`
 	Updates          updatecheck.Status             `json:"updates" jsonschema:"Update-check status for this MCP server"`
 }
 
@@ -179,7 +180,7 @@ func Capabilities(ctx context.Context, deps Deps, in BaseRequest) (CapabilitiesR
 	if deps.UpdateStatus != nil {
 		updates = deps.UpdateStatus()
 	}
-	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, CapabilityConfig: deps.Config.Capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, Updates: updates}, nil
+	return CapabilitiesResponse{Controllers: infos, Capabilities: capabilities, CapabilityConfig: deps.Config.Capabilities, MutationsEnabled: deps.Config.Mutations.Enabled, Limits: deps.Config.Limits, LogCache: deps.Config.LogCache, Updates: updates}, nil
 }
 
 type UpdateServerRequest struct {

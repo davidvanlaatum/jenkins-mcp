@@ -9,11 +9,13 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
+	"github.com/david/jenkins-mcp/internal/jenkins/logcache"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/stretchr/testify/require"
 )
@@ -867,6 +869,106 @@ func TestSearchLogPagesProgressiveLogUntilMatch(t *testing.T) {
 	r.False(got.More, "more")
 	r.False(got.ScanLimitReached, "scan limit")
 	r.False(got.Truncated, "truncated")
+}
+
+func TestSearchLogReusesCachedPagesAcrossQueries(t *testing.T) {
+	r := require.New(t)
+	log := strings.Repeat("noise line\n", 20) + "alpha marker\nbeta marker\n"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	}))
+	t.Cleanup(server.Close)
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err)
+	cache, err := logcache.New(t.TempDir(), 100, 1024*1024)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(cache.Close()) })
+	api := NewWithLogCache("work", client, cache)
+
+	alpha, err := api.SearchLog(t.Context(), "app", 7, 0, "alpha", 32, 1024, 20, 0)
+	r.NoError(err)
+	r.Len(alpha.Matches, 1)
+	firstRequestCount := requests.Load()
+	r.Positive(firstRequestCount)
+
+	beta, err := api.SearchLog(t.Context(), "app", 7, 0, "beta", 32, 1024, 20, 0)
+	r.NoError(err)
+	r.Len(beta.Matches, 1)
+	r.Equal(firstRequestCount, requests.Load(), "second query should reuse every raw log page")
+}
+
+func TestGetLogReusesFixedCachePageAcrossOffsets(t *testing.T) {
+	r := require.New(t)
+	log := strings.Repeat("x", logCachePageBytes+128)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	}))
+	t.Cleanup(server.Close)
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err)
+	cache, err := logcache.New(t.TempDir(), 100, 4*logCachePageBytes)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(cache.Close()) })
+	api := NewWithLogCache("work", client, cache)
+
+	first, err := api.GetLog(t.Context(), "app", 7, 0, 64)
+	r.NoError(err)
+	r.Len(first.Text, 64)
+	second, err := api.GetLog(t.Context(), "app", 7, 64, 64)
+	r.NoError(err)
+	r.Len(second.Text, 64)
+	r.Equal(int32(1), requests.Load(), "overlapping ranges should reuse one fixed cache page")
+}
+
+func TestGetLogKeepsRunningFrontierDistinctFromTruncation(t *testing.T) {
+	r := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Text-Size", "7")
+		w.Header().Set("X-More-Data", "true")
+		_, _ = io.WriteString(w, "running")
+	}))
+	t.Cleanup(server.Close)
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err)
+	cache, err := logcache.New(t.TempDir(), 100, 2*logCachePageBytes)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(cache.Close()) })
+	api := NewWithLogCache("work", client, cache)
+
+	got, err := api.GetLog(t.Context(), "app", 7, 0, 64)
+	r.NoError(err)
+	r.Equal("running", got.Text)
+	r.True(got.More, "running log should report that more data may arrive")
+	r.False(got.Truncated, "complete current frontier should not be reported as truncated")
+}
+
+func TestTailLogUsesProgressiveTextSize(t *testing.T) {
+	r := require.New(t)
+	log := strings.Repeat("prefix-", 20) + "last-ten!!"
+	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		w.Header().Set("X-More-Data", "false")
+		_, _ = io.WriteString(w, log[start:])
+	})
+
+	got, err := api.TailLog(t.Context(), "app", 7, 10)
+	r.NoError(err)
+	r.Equal("last-ten!!", got.Text)
+	r.Equal(int64(len(log)-10), got.Start)
 }
 
 func TestSearchLogStopsAtScanBudget(t *testing.T) {
