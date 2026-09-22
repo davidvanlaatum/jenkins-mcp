@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -971,6 +973,109 @@ func TestTailLogUsesProgressiveTextSize(t *testing.T) {
 	r.Equal(int64(len(log)-10), got.Start)
 }
 
+func TestPipelineNodeLogUsesBoundedProgressiveTail(t *testing.T) {
+	r := require.New(t)
+	const totalSize = int64(9 * 1024 * 1024)
+	tail := strings.Repeat("t", 64)
+	page := strings.Repeat("x", logCachePageBytes-len(tail)) + tail
+	var requests atomic.Int32
+	api := newTestAPIWithLogCache(t, func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		if strings.HasSuffix(req.URL.Path, "/wfapi/describe") {
+			writeAPIJSON(w, `{"id":"23","status":"SUCCESS"}`)
+			return
+		}
+		r.Equal("/job/app/7/execution/node/23/log/logText/progressiveText", req.URL.Path, "path")
+		start, err := strconv.ParseInt(req.URL.Query().Get("start"), 10, 64)
+		r.NoError(err, "parse start")
+		w.Header().Set("X-Text-Size", strconv.FormatInt(totalSize, 10))
+		switch start {
+		case 0:
+			_, _ = io.WriteString(w, "xx")
+		case totalSize - logCachePageBytes:
+			_, _ = io.WriteString(w, page)
+		default:
+			r.Fail("unexpected progressive start", "start=%d", start)
+		}
+	})
+
+	got, err := api.PipelineNodeLog(t.Context(), "app", 7, "23", 64)
+	r.NoError(err)
+	r.Equal("23", got.NodeID)
+	r.Equal(model.PipelineStatusSuccess, got.NodeStatus)
+	r.Equal(tail, got.Text)
+	r.Equal(int64(len(tail)), got.Length)
+	r.True(got.HasMore, "older node log output should remain")
+	r.True(got.Truncated, "bounded tail should report omitted older output")
+	r.Equal(int32(3), requests.Load(), "metadata, size probe, and one bounded data page")
+}
+
+func TestPipelineNodeLogCoalescesConcurrentEquivalentRequests(t *testing.T) {
+	r := require.New(t)
+	log := strings.Repeat("node log\n", 128)
+	var requests atomic.Int32
+	api := newTestAPIWithLogCache(t, func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
+		if strings.HasSuffix(req.URL.Path, "/wfapi/describe") {
+			writeAPIJSON(w, `{"id":"41","status":"SUCCESS"}`)
+			return
+		}
+		start, err := strconv.Atoi(req.URL.Query().Get("start"))
+		r.NoError(err, "parse start")
+		w.Header().Set("X-Text-Size", strconv.Itoa(len(log)))
+		_, _ = io.WriteString(w, log[start:])
+	})
+
+	const callers = 8
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			got, err := api.PipelineNodeLog(t.Context(), "app", 9, "41", 64)
+			if err == nil && got.Text != log[len(log)-64:] {
+				err = fmt.Errorf("unexpected tail %q", got.Text)
+			}
+			errs <- err
+		}()
+	}
+	for range callers {
+		r.NoError(<-errs)
+	}
+	r.Equal(int32(3), requests.Load(), "concurrent callers should share metadata, the size probe, and the data page")
+	_, err := api.PipelineNodeLog(t.Context(), "app", 9, "41", 64)
+	r.NoError(err)
+	r.Equal(int32(3), requests.Load(), "completed node log should remain cached")
+}
+
+func TestPipelineNodeLogClassifiesProgressiveHTTPFailure(t *testing.T) {
+	r := require.New(t)
+	api := newTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	})
+
+	_, err := api.PipelineNodeLog(t.Context(), "app", 7, "missing", 64)
+	r.Error(err)
+	var appErr *apperrors.Error
+	r.ErrorAs(err, &appErr)
+	r.Equal(apperrors.CodeNotFound, appErr.Code)
+}
+
+func TestPipelineNodeLogPageFreshness(t *testing.T) {
+	r := require.New(t)
+	stale := logFrontierFreshFor + time.Second
+	r.True(pipelineNodeLogPageFresh(logcache.Page{Complete: true}, stale, false), "completed log")
+	r.True(pipelineNodeLogPageFresh(logcache.Page{Truncated: true}, stale, true), "immutable historical page")
+	r.False(pipelineNodeLogPageFresh(logcache.Page{More: true}, stale, false), "stale active frontier")
+	r.True(pipelineNodeLogPageFresh(logcache.Page{More: true}, time.Second, false), "fresh active frontier")
+}
+
+func TestPipelineNodeStatusTerminality(t *testing.T) {
+	r := require.New(t)
+	r.True(isTerminalPipelineStatus(model.PipelineStatusSuccess))
+	r.False(isTerminalPipelineStatus(model.PipelineStatusInProgress))
+	r.False(isTerminalPipelineStatus(model.PipelineStatusPausedPendingInput))
+	r.False(isTerminalPipelineStatus(""))
+}
+
 func TestSearchLogStopsAtScanBudget(t *testing.T) {
 	r := require.New(t)
 	log := strings.Repeat("noise\n", 20)
@@ -1035,6 +1140,20 @@ func newTestAPI(t *testing.T, handler http.HandlerFunc) *API {
 	client, err := jenkinsclient.New(config.ControllerConfig{ID: "test", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	r.NoError(err, "client New()")
 	return New("test", client)
+}
+
+func newTestAPIWithLogCache(t *testing.T, handler http.HandlerFunc) *API {
+	t.Helper()
+	r := require.New(t)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	client, err := jenkinsclient.New(config.ControllerConfig{ID: "test", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.NoError(err, "client New()")
+	cache, err := logcache.New(t.TempDir(), 100, 4*logCachePageBytes)
+	r.NoError(err, "logcache New()")
+	t.Cleanup(func() { r.NoError(cache.Close()) })
+	return NewWithLogCache("test", client, cache)
 }
 
 func writeAPIJSON(w http.ResponseWriter, body string) {

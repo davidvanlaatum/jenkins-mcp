@@ -144,6 +144,33 @@ func TestCacheRefreshesExpiredPage(t *testing.T) {
 	r.Equal(int32(2), calls.Load(), "fetch count")
 }
 
+func TestCacheSeparatesLogResources(t *testing.T) {
+	r := require.New(t)
+	cache, err := New(t.TempDir(), 10, 1024)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(cache.Close()) })
+
+	var calls atomic.Int32
+	fetch := func(text string) func(context.Context) (Page, error) {
+		return func(context.Context) (Page, error) {
+			calls.Add(1)
+			return Page{Text: []byte(text)}, nil
+		}
+	}
+	base := Key{Controller: "work", Job: "app", Build: 7, Start: 0, Limit: 1024}
+	buildKey := base
+	buildKey.Resource = "build-console"
+	nodeKey := base
+	nodeKey.Resource = "pipeline-node:23"
+	build, err := cache.Get(t.Context(), buildKey, alwaysFresh, fetch("build"))
+	r.NoError(err)
+	node, err := cache.Get(t.Context(), nodeKey, alwaysFresh, fetch("node"))
+	r.NoError(err)
+	r.Equal("build", string(build.Text))
+	r.Equal("node", string(node.Text))
+	r.Equal(int32(2), calls.Load(), "different log resources must not share cache entries")
+}
+
 func TestCacheUsesPrivateFilesAndRemovesDirectoryOnClose(t *testing.T) {
 	r := require.New(t)
 	cache, err := New(t.TempDir(), 10, 1024)

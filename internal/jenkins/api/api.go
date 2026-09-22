@@ -464,13 +464,14 @@ func (a *API) GetLog(ctx context.Context, job string, number int, start, max int
 const (
 	logCachePageBytes   = 1024 * 1024
 	logFrontierFreshFor = 2 * time.Second
+	buildLogResource    = "build-console"
 )
 
 func (a *API) getLogPage(ctx context.Context, job string, number int, start, max int64, immutableWhenFull bool) (logcache.Page, error) {
 	if a.logCache == nil {
 		return a.fetchLogPage(ctx, job, number, start, max)
 	}
-	key := logcache.Key{Controller: a.id, Job: job, Build: number, Start: start, Limit: max}
+	key := logcache.Key{Controller: a.id, Job: job, Build: number, Resource: buildLogResource, Start: start, Limit: max}
 	return a.logCache.Get(ctx, key, func(page logcache.Page, age time.Duration) bool {
 		// A full data page contains an immutable historical byte range. Metadata
 		// probes must remain refreshable because TotalSize changes while a build
@@ -518,7 +519,7 @@ func (a *API) fetchLogPage(ctx context.Context, job string, number int, start, m
 	if truncated || totalSize > next {
 		more = true
 	}
-	return logcache.Page{Text: body, NextStart: next, TotalSize: totalSize, More: more, Truncated: truncated}, nil
+	return logcache.Page{Text: body, NextStart: next, TotalSize: totalSize, More: more, Truncated: truncated, Complete: !strings.EqualFold(headers.Get("X-More-Data"), "true")}, nil
 }
 
 func (a *API) SearchLog(ctx context.Context, job string, number int, start int64, query string, chunkBytes int64, maxScanBytes int64, maxMatches int, contextLines int) (model.LogSearchResult, error) {
@@ -1336,30 +1337,136 @@ func (a *API) PipelineNodeLog(ctx context.Context, job string, number int, nodeI
 	if nodeID == "" {
 		return model.PipelineNodeLog{}, fmt.Errorf("node id is required")
 	}
-	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/execution/node/" + url.PathEscape(nodeID) + "/wfapi/log"
-	var raw struct {
-		NodeID     string `json:"nodeId"`
-		NodeStatus string `json:"nodeStatus"`
-		Text       string `json:"text"`
-		Length     int64  `json:"length"`
-		HasMore    bool   `json:"hasMore"`
+	if maxBytes <= 0 {
+		return model.PipelineNodeLog{}, fmt.Errorf("max bytes must be positive")
 	}
-	if err := a.client.GetJSON(ctx, path, nil, &raw); err != nil {
+	metadata, err := a.getPipelineNodeMetadata(ctx, job, number, nodeID)
+	if err != nil {
 		return model.PipelineNodeLog{}, err
 	}
-	truncated := false
-	if maxBytes > 0 && int64(len(raw.Text)) > maxBytes {
-		raw.Text = raw.Text[:maxBytes]
-		truncated = true
+	probe, err := a.getPipelineNodeLogPage(ctx, job, number, nodeID, 0, 1, false)
+	if err != nil {
+		return model.PipelineNodeLog{}, err
 	}
+	start := probe.TotalSize - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	cursor := start
+	var text strings.Builder
+	for cursor < probe.TotalSize && int64(text.Len()) < maxBytes {
+		pageStart := cursor - cursor%logCachePageBytes
+		page, pageErr := a.getPipelineNodeLogPage(ctx, job, number, nodeID, pageStart, logCachePageBytes, true)
+		if pageErr != nil {
+			return model.PipelineNodeLog{}, pageErr
+		}
+		chunk := logChunk(page, pageStart, cursor, maxBytes-int64(text.Len()))
+		text.WriteString(chunk.Text)
+		if chunk.NextStart <= cursor {
+			break
+		}
+		cursor = chunk.NextStart
+	}
+	truncated := start > 0
 	return model.PipelineNodeLog{
-		NodeID:     raw.NodeID,
-		NodeStatus: model.PipelineStatus(raw.NodeStatus),
-		Text:       raw.Text,
-		Length:     raw.Length,
-		HasMore:    raw.HasMore,
+		NodeID:     metadata.ID,
+		NodeStatus: metadata.Status,
+		Text:       text.String(),
+		Length:     int64(text.Len()),
+		HasMore:    truncated,
 		Truncated:  truncated,
 	}, nil
+}
+
+type pipelineNodeMetadata struct {
+	ID     string               `json:"id"`
+	Status model.PipelineStatus `json:"status"`
+}
+
+func (a *API) getPipelineNodeMetadata(ctx context.Context, job string, number int, nodeID string) (pipelineNodeMetadata, error) {
+	if a.logCache == nil {
+		return a.fetchPipelineNodeMetadata(ctx, job, number, nodeID)
+	}
+	key := logcache.Key{Controller: a.id, Job: job, Build: number, Resource: "pipeline-node-metadata:" + nodeID, Limit: 64 * 1024}
+	page, err := a.logCache.Get(ctx, key, func(page logcache.Page, age time.Duration) bool {
+		return page.Complete || age <= logFrontierFreshFor
+	}, func(fetchCtx context.Context) (logcache.Page, error) {
+		metadata, fetchErr := a.fetchPipelineNodeMetadata(fetchCtx, job, number, nodeID)
+		if fetchErr != nil {
+			return logcache.Page{}, fetchErr
+		}
+		body, marshalErr := json.Marshal(metadata)
+		if marshalErr != nil {
+			return logcache.Page{}, marshalErr
+		}
+		return logcache.Page{Text: body, Complete: isTerminalPipelineStatus(metadata.Status)}, nil
+	})
+	if err != nil {
+		return pipelineNodeMetadata{}, err
+	}
+	var metadata pipelineNodeMetadata
+	if err := json.Unmarshal(page.Text, &metadata); err != nil {
+		return pipelineNodeMetadata{}, apperrors.Wrap(apperrors.CodeJenkins, "invalid cached Pipeline node metadata", err.Error())
+	}
+	return metadata, nil
+}
+
+func (a *API) fetchPipelineNodeMetadata(ctx context.Context, job string, number int, nodeID string) (pipelineNodeMetadata, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/execution/node/" + url.PathEscape(nodeID) + "/wfapi/describe"
+	var metadata pipelineNodeMetadata
+	if err := a.client.GetJSON(ctx, path, nil, &metadata); err != nil {
+		return pipelineNodeMetadata{}, err
+	}
+	return metadata, nil
+}
+
+func isTerminalPipelineStatus(status model.PipelineStatus) bool {
+	return status != "" && status != model.PipelineStatusInProgress && status != model.PipelineStatusPausedPendingInput
+}
+
+func (a *API) getPipelineNodeLogPage(ctx context.Context, job string, number int, nodeID string, start, max int64, immutableWhenFull bool) (logcache.Page, error) {
+	if a.logCache == nil {
+		return a.fetchPipelineNodeLogPage(ctx, job, number, nodeID, start, max)
+	}
+	key := logcache.Key{
+		Controller: a.id,
+		Job:        job,
+		Build:      number,
+		Resource:   "pipeline-node:" + nodeID,
+		Start:      start,
+		Limit:      max,
+	}
+	return a.logCache.Get(ctx, key, func(page logcache.Page, age time.Duration) bool {
+		return pipelineNodeLogPageFresh(page, age, immutableWhenFull)
+	}, func(fetchCtx context.Context) (logcache.Page, error) {
+		return a.fetchPipelineNodeLogPage(fetchCtx, job, number, nodeID, start, max)
+	})
+}
+
+func pipelineNodeLogPageFresh(page logcache.Page, age time.Duration, immutableWhenFull bool) bool {
+	return page.Complete || (immutableWhenFull && page.Truncated) || age <= logFrontierFreshFor
+}
+
+func (a *API) fetchPipelineNodeLogPage(ctx context.Context, job string, number int, nodeID string, start, max int64) (logcache.Page, error) {
+	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/execution/node/" + url.PathEscape(nodeID) + "/log/logText/progressiveText"
+	status, body, headers, truncated, err := a.client.GetTextLimited(ctx, path, url.Values{"start": {strconv.FormatInt(start, 10)}}, max)
+	if err != nil {
+		return logcache.Page{}, err
+	}
+	if status < 200 || status > 299 {
+		return logcache.Page{}, jenkinsclient.ResponseError(status)
+	}
+	totalSize, parseErr := strconv.ParseInt(headers.Get("X-Text-Size"), 10, 64)
+	if parseErr != nil {
+		return logcache.Page{}, apperrors.Wrap(apperrors.CodeJenkins, "invalid Jenkins progressive log size", map[string]any{"header": headers.Get("X-Text-Size")})
+	}
+	next := totalSize
+	if truncated {
+		next = start + int64(len(body))
+	}
+	active := strings.EqualFold(headers.Get("X-More-Data"), "true")
+	more := active || truncated || totalSize > next
+	return logcache.Page{Text: body, NextStart: next, TotalSize: totalSize, More: more, Truncated: truncated, Complete: !active}, nil
 }
 
 func (a *API) DownloadArtifact(ctx context.Context, job string, number int, rel string) ([]byte, error) {

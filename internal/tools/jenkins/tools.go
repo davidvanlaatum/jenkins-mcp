@@ -1721,7 +1721,7 @@ type PipelineNodeLogRequest struct {
 	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders"`
 	Build      int    `json:"build" jsonschema:"Jenkins build number"`
 	NodeID     string `json:"nodeId" jsonschema:"Pipeline node id from stage or run details"`
-	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum node log bytes to return; defaults to the configured log chunk limit"`
+	MaxBytes   int64  `json:"maxBytes,omitempty" jsonschema:"Maximum trailing node log bytes to return; defaults to the configured log chunk limit"`
 }
 type PipelineNodeLogResponse struct {
 	Log model.PipelineNodeLog `json:"log" jsonschema:"Bounded Pipeline node log output"`

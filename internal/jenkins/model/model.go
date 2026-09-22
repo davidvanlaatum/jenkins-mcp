@@ -431,8 +431,8 @@ type PipelineNodeLog struct {
 	NodeStatus PipelineStatus `json:"nodeStatus,omitempty" jsonschema:"Pipeline flow node status"`
 	Text       string         `json:"text,omitempty" jsonschema:"Pipeline node log text"`
 	Length     int64          `json:"length" jsonschema:"Number of log bytes returned"`
-	HasMore    bool           `json:"hasMore" jsonschema:"Whether more node log output may be available"`
-	Truncated  bool           `json:"truncated" jsonschema:"Whether node log output was truncated by limits"`
+	HasMore    bool           `json:"hasMore" jsonschema:"Whether older Pipeline node log output was omitted by the byte bound"`
+	Truncated  bool           `json:"truncated" jsonschema:"Whether older Pipeline node log output was omitted by the byte bound"`
 }
 
 type ArtifactContent struct {
