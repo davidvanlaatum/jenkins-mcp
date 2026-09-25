@@ -29,7 +29,7 @@ docker pull ghcr.io/davidvanlaatum/jenkins-mcp:latest
 Run with Jenkins credentials inherited from the host environment:
 
 ```bash
-docker run --rm -i \
+docker run --pull always --rm -i \
   -e JENKINS_URL \
   -e JENKINS_USER \
   -e JENKINS_TOKEN \
@@ -38,6 +38,9 @@ docker run --rm -i \
 
 The `-i` flag is required because the MCP server communicates over stdin and
 stdout. Do not use `-t`, because terminal framing can corrupt stdio MCP messages.
+When using the mutable `latest` tag, `--pull always` checks for a newer image
+each time Docker starts the server. Omit it when using a pinned release tag if
+you do not want Docker to check the registry on every launch.
 
 To build the image locally instead:
 
@@ -67,6 +70,8 @@ process, and each `-e` argument forwards that variable into the container:
       "command": "docker",
       "args": [
         "run",
+        "--pull",
+        "always",
         "--rm",
         "-i",
         "-e",
@@ -102,6 +107,8 @@ container path:
       "command": "docker",
       "args": [
         "run",
+        "--pull",
+        "always",
         "--rm",
         "-i",
         "-v",

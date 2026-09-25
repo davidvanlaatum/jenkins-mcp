@@ -63,7 +63,7 @@ go run ./cmd/jenkins-mcp-server
 Or run the published container image:
 
 ```bash
-docker run --rm -i \
+docker run --pull always --rm -i \
   -e JENKINS_URL \
   -e JENKINS_USER \
   -e JENKINS_TOKEN \
