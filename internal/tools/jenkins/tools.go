@@ -1778,7 +1778,7 @@ func DownloadArtifact(ctx context.Context, deps Deps, in DownloadArtifactRequest
 	if err != nil {
 		return DownloadArtifactResponse{}, err
 	}
-	d, err := artifacts.Download(ctx, deps.Config.Artifacts.DownloadDir, api, in.Job, in.Build, in.RelativePath)
+	d, err := artifacts.Download(ctx, deps.Config.Artifacts.DownloadDir, deps.Config.Artifacts.ClientDownloadDir, api, in.Job, in.Build, in.RelativePath)
 	return DownloadArtifactResponse{Download: d}, err
 }
 

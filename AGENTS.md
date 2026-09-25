@@ -62,6 +62,7 @@
 - **Logging:** Use `log/slog`.
 - **Validation:** Use the `internal/validation` package for common Jenkins inputs like job paths and build numbers.
 - **Schemas:** Treat MCP input and output schemas as part of the public contract. Tool request/response structs and shared models exposed through tool responses should include useful `jsonschema` descriptions for all JSON fields. Schema contract tests should assert schemas exist, are objects with properties, and describe their fields rather than only accepting whatever schema shape is present. Preserve the documented structured JSON error contract when changing tool schema or registration code.
+- **Container Paths:** For files written by a containerized server but consumed by an MCP client on the host, distinguish the server/container path from the client-visible host path. Support and test both Unix and Windows path forms; do not rely on identical bind-mount paths as a cross-platform solution.
 - **Agent Instruction Feedback:** When a user correction, bug, regression, or review comment reveals a reusable project-specific expectation that was missing or unclear in `AGENTS.md`, update `AGENTS.md` as part of the same change when the instruction is stable and broadly useful for future agents. Keep the new instruction scoped and actionable; do not add one-off preferences, transient task details, or overly broad rules.
 - **Efficiency:**
     - For Pipeline builds, ALWAYS prefer stage-specific logs via `jenkins_get_pipeline_node_log`.

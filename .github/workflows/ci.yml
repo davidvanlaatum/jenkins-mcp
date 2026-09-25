@@ -213,9 +213,12 @@ jobs:
           version: '~> v2'
           args: check
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Build release snapshot
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --snapshot --clean --skip=publish
+          args: release --snapshot --clean

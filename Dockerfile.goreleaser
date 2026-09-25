@@ -1,0 +1,9 @@
+# The static server still needs CA roots for HTTPS and a writable /tmp for its
+# runtime caches, both of which the shell-less nonroot distroless image provides.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/jenkins-mcp-server /jenkins-mcp-server
+
+USER nonroot:nonroot
+ENTRYPOINT ["/jenkins-mcp-server"]

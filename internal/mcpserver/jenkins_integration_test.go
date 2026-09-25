@@ -557,7 +557,9 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		missing := callIntegrationTool[struct {
 			Build struct {
 				Coverage *struct {
-					Available bool `json:"available"`
+					Available bool                          `json:"available"`
+					Summaries []model.CoverageSummary       `json:"summaries"`
+					Errors    []model.CoverageEndpointError `json:"errors"`
 				} `json:"coverage"`
 			} `json:"build"`
 		}](t, clientSession, "jenkins_get_build", map[string]any{
@@ -565,7 +567,16 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			"job":        "example-freestyle",
 			"build":      freestyleBuild,
 		})
-		r.Nil(missing.Build.Coverage, "metricless missing coverage should be omitted")
+		if missing.Build.Coverage != nil {
+			r.False(missing.Build.Coverage.Available, "missing coverage should not be available")
+			r.Empty(missing.Build.Coverage.Summaries, "missing coverage should not include summaries")
+			r.NotEmpty(missing.Build.Coverage.Errors, "a reported missing coverage object should contain endpoint errors")
+			for _, endpointErr := range missing.Build.Coverage.Errors {
+				r.NotEmpty(endpointErr.Endpoint, "coverage error endpoint")
+				r.NotEmpty(endpointErr.Code, "coverage error code")
+				r.NotEmpty(endpointErr.Message, "coverage error message")
+			}
+		}
 	})
 
 	t.Run("artifact tools", func(t *testing.T) {

@@ -33,6 +33,27 @@ archives:
         formats:
           - zip
 
+dockers_v2:
+  - id: jenkins-mcp-server
+    ids:
+      - jenkins-mcp-server
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/davidvanlaatum/jenkins-mcp
+    tags:
+      - '{{ .Tag }}'
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: '{{ .Date }}'
+      org.opencontainers.image.description: Jenkins MCP server
+      org.opencontainers.image.revision: '{{ .FullCommit }}'
+      org.opencontainers.image.source: https://github.com/davidvanlaatum/jenkins-mcp
+      org.opencontainers.image.title: jenkins-mcp
+      org.opencontainers.image.version: '{{ .Version }}'
+
 checksum:
   name_template: checksums.txt
 

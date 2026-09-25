@@ -36,7 +36,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_queue_item`: Inspect a Jenkins queue item by id.
 
 ### Local File Tools
-- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory. Does not require `mutations.enabled`.
+- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory, with an optional translated `clientPath` for container deployments. Does not require `mutations.enabled`.
 - `jenkins_update_server`: Download, verify, and install or stage the latest released server binary. Requires `updates.selfUpdateEnabled`.
 
 ### Jenkins-Mutating Tools
@@ -59,6 +59,20 @@ export JENKINS_USER="your-user"
 export JENKINS_TOKEN="your-api-token"
 go run ./cmd/jenkins-mcp-server
 ```
+
+Or run the published container image:
+
+```bash
+docker run --rm -i \
+  -e JENKINS_URL \
+  -e JENKINS_USER \
+  -e JENKINS_TOKEN \
+  ghcr.io/davidvanlaatum/jenkins-mcp:latest
+```
+
+See [Docker MCP client configuration](docs/operations.md#docker-mcp-client-configuration)
+for a copy-paste stdio client definition, version pinning, config-file mounts,
+and persistent artifact downloads.
 
 To explicitly update an installed binary from the latest GitHub release:
 
@@ -173,7 +187,7 @@ available. Those tests build a dedicated Jenkins LTS image with JCasC, Job DSL,
 and the plugins needed by the MCP tool surface. Exclude them with
 `go test -tags=no_integration ./...`.
 
-GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, GoReleaser snapshot validation, and an informational Gremlins mutation-testing baseline over selected non-integration utility packages. Canonical `vMAJOR.MINOR.PATCH` tags are built and published with GoReleaser; other `v*` tags are rejected before publication.
+GitHub Actions runs file hygiene, tidy/import checks, lint, tests with coverage, package-boundary checks, builds, GoReleaser snapshot validation, and an informational Gremlins mutation-testing baseline over selected non-integration utility packages. Canonical `vMAJOR.MINOR.PATCH` tags are built and published with GoReleaser; other `v*` tags are rejected before publication. Releases also publish `ghcr.io/davidvanlaatum/jenkins-mcp` for Linux amd64 and arm64 with the release version and `latest` tags.
 
 Release versions follow the [release number policy](docs/release.md#release-number-policy): patches are backward-compatible maintenance, minors add compatible capabilities (and carry pre-`1.0.0` breaking changes), and majors represent breaking stable-contract changes after `1.0.0`. Selecting or publishing an exact release version and commit requires explicit operator confirmation.
 

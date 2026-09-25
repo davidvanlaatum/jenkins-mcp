@@ -305,7 +305,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_replay_scripts", "Get Replay Scripts", "Fetch the native Jenkins Pipeline Replay script set for a build, including primary and loaded-script identifiers, content, size, truncation state, and digest metadata."), func(ctx context.Context, in jenkinstools.ReplayScriptsRequest) (jenkinstools.ReplayScriptsResponse, error) {
 		return jenkinstools.ReplayScripts(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe local artifact directory. This does not change Jenkins state and is not gated by mutations.enabled."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
+	addConfiguredTool(s, additiveMutationTool("jenkins_download_artifact", "Download Artifact", "Download a Jenkins artifact to the configured safe server-local artifact directory. When a client artifact directory is configured, the response also includes a translated clientPath for the MCP client host. This does not change Jenkins state and is not gated by mutations.enabled."), func(ctx context.Context, in jenkinstools.DownloadArtifactRequest) (jenkinstools.DownloadArtifactResponse, error) {
 		return jenkinstools.DownloadArtifact(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_artifacts", "List Artifacts", "List artifacts for a Jenkins build without fetching artifact content."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.ListArtifactsResponse, error) {
