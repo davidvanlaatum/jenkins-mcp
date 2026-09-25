@@ -90,11 +90,23 @@ GoReleaser publishes GitHub release artifacts for:
 - amd64 and arm64
 - checksums.txt
 
+It also publishes a multi-platform Linux container image to GitHub Container
+Registry for amd64 and arm64. Each release updates both the immutable release
+tag and `latest`:
+
+```text
+ghcr.io/davidvanlaatum/jenkins-mcp:vMAJOR.MINOR.PATCH
+ghcr.io/davidvanlaatum/jenkins-mcp:latest
+```
+
 Run a local snapshot build before tagging if you want to inspect generated archives:
 
 ```bash
-goreleaser release --snapshot --clean --skip=publish
+goreleaser release --snapshot --clean
 ```
+
+Snapshot builds do not publish. They build platform-suffixed container images
+locally so the release Dockerfile is exercised before a tag is pushed.
 
 ## Self-Update
 

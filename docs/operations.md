@@ -19,7 +19,27 @@ jenkins-mcp-server
 
 ## Docker
 
-Build:
+Pull the latest published image, or replace `latest` with an exact published
+release tag for reproducible client configuration:
+
+```bash
+docker pull ghcr.io/davidvanlaatum/jenkins-mcp:latest
+```
+
+Run with Jenkins credentials inherited from the host environment:
+
+```bash
+docker run --rm -i \
+  -e JENKINS_URL \
+  -e JENKINS_USER \
+  -e JENKINS_TOKEN \
+  ghcr.io/davidvanlaatum/jenkins-mcp:latest
+```
+
+The `-i` flag is required because the MCP server communicates over stdin and
+stdout. Do not use `-t`, because terminal framing can corrupt stdio MCP messages.
+
+To build the image locally instead:
 
 ```bash
 docker build -t jenkins-mcp-server .
@@ -33,6 +53,83 @@ docker run --rm -i \
   -e JENKINS_MCP_CONFIG=/config.json \
   jenkins-mcp-server
 ```
+
+### Docker MCP Client Configuration
+
+For MCP clients that use the common `mcpServers` JSON format, configure Docker
+as the stdio command. The client-provided environment is passed to the Docker
+process, and each `-e` argument forwards that variable into the container:
+
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "JENKINS_URL",
+        "-e",
+        "JENKINS_USER",
+        "-e",
+        "JENKINS_TOKEN",
+        "ghcr.io/davidvanlaatum/jenkins-mcp:latest"
+      ],
+      "env": {
+        "JENKINS_URL": "https://jenkins.example.com",
+        "JENKINS_USER": "developer",
+        "JENKINS_TOKEN": "replace-with-an-api-token"
+      }
+    }
+  }
+}
+```
+
+Use a client secret facility or environment interpolation instead of storing a
+real Jenkins token in a shared configuration file when the client supports it.
+Client configuration shapes differ, but the launched command and arguments are
+the same. Restart the MCP client after changing its server configuration.
+
+For file-based server configuration, mount the file read-only and pass its
+container path:
+
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "/absolute/host/path/config.json:/config.json:ro",
+        "-e",
+        "JENKINS_MCP_CONFIG=/config.json",
+        "ghcr.io/davidvanlaatum/jenkins-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+Files written only inside an ephemeral `--rm` container disappear when the MCP
+client stops it. To use `jenkins_download_artifact`, mount a host directory and
+set the artifact directory to the matching container path by adding these
+arguments before the image name:
+
+```text
+-v
+/absolute/host/path/artifacts:/artifacts
+-e
+JENKINS_ARTIFACT_DIR=/artifacts
+```
+
+Use the same pattern for an audit log or file-based server log. Container users
+should update the configured image tag and recreate the container rather than
+enable the binary self-update tool inside the image.
 
 ## Configuration
 
