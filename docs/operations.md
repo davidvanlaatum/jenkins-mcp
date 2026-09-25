@@ -117,19 +117,28 @@ container path:
 
 Files written only inside an ephemeral `--rm` container disappear when the MCP
 client stops it. To use `jenkins_download_artifact`, mount a host directory and
-set the artifact directory to the matching container path by adding these
-arguments before the image name:
+set the artifact directory to the same absolute path inside the container by
+adding these arguments before the image name:
 
 ```text
 -v
-/absolute/host/path/artifacts:/artifacts
+/absolute/host/path/artifacts:/absolute/host/path/artifacts
 -e
-JENKINS_ARTIFACT_DIR=/artifacts
+JENKINS_ARTIFACT_DIR=/absolute/host/path/artifacts
 ```
 
-Use the same pattern for an audit log or file-based server log. Container users
-should update the configured image tag and recreate the container rather than
-enable the binary self-update tool inside the image.
+`jenkins_download_artifact` reports the configured container path in
+`download.path`. Using the same absolute path on both sides of the bind mount
+makes that path directly usable by the host MCP client without translation. If
+the host directory is mounted at a different container path, the response will
+contain only the container path; the server does not currently translate it to
+the host path. On Linux, ensure the mounted directory is writable by the image
+user (UID 65532). On Docker Desktop, ensure the parent directory is shared with
+Docker.
+
+Use the same mount pattern for an audit log or file-based server log. Container
+users should update the configured image tag and recreate the container rather
+than enable the binary self-update tool inside the image.
 
 ## Configuration
 
