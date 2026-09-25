@@ -36,7 +36,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_queue_item`: Inspect a Jenkins queue item by id.
 
 ### Local File Tools
-- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory. Does not require `mutations.enabled`.
+- `jenkins_download_artifact`: Download a Jenkins artifact to the configured safe local directory, with an optional translated `clientPath` for container deployments. Does not require `mutations.enabled`.
 - `jenkins_update_server`: Download, verify, and install or stage the latest released server binary. Requires `updates.selfUpdateEnabled`.
 
 ### Jenkins-Mutating Tools

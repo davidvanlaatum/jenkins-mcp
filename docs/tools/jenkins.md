@@ -29,7 +29,7 @@
 
 ## Local File Tools
 
-- `jenkins_download_artifact`: writes an artifact into the configured safe local directory. This does not change Jenkins state and does not require `mutations.enabled`; it is annotated as a non-destructive side-effect tool because it writes to local disk.
+- `jenkins_download_artifact`: writes an artifact into the configured safe local directory. The response always includes the server-local `path`; when `artifacts.clientDownloadDir` or `JENKINS_ARTIFACT_CLIENT_DIR` is configured, it also includes a host/client-local `clientPath` with Unix or Windows path semantics. This does not change Jenkins state and does not require `mutations.enabled`; it is annotated as a non-destructive side-effect tool because it writes to local disk.
 - `jenkins_update_server`: downloads the latest released `jenkins-mcp-server` binary, verifies its checksum, and installs it on macOS/Linux or stages it on Windows for manual replacement after restart. This does not change Jenkins state and does not require `mutations.enabled`, but it is disabled unless `updates.selfUpdateEnabled` is true because it writes to the local server installation.
 
 ## Jenkins-Mutating Tools

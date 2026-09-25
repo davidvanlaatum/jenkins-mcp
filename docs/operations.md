@@ -117,24 +117,40 @@ container path:
 
 Files written only inside an ephemeral `--rm` container disappear when the MCP
 client stops it. To use `jenkins_download_artifact`, mount a host directory and
-set the artifact directory to the same absolute path inside the container by
-adding these arguments before the image name:
+configure both the container write directory and the corresponding directory
+visible to the MCP client. For a Unix-like host, add these arguments before the
+image name:
 
 ```text
 -v
-/absolute/host/path/artifacts:/absolute/host/path/artifacts
+/absolute/host/path/artifacts:/artifacts
 -e
-JENKINS_ARTIFACT_DIR=/absolute/host/path/artifacts
+JENKINS_ARTIFACT_DIR=/artifacts
+-e
+JENKINS_ARTIFACT_CLIENT_DIR=/absolute/host/path/artifacts
 ```
 
-`jenkins_download_artifact` reports the configured container path in
-`download.path`. Using the same absolute path on both sides of the bind mount
-makes that path directly usable by the host MCP client without translation. If
-the host directory is mounted at a different container path, the response will
-contain only the container path; the server does not currently translate it to
-the host path. On Linux, ensure the mounted directory is writable by the image
-user (UID 65532). On Docker Desktop, ensure the parent directory is shared with
-Docker.
+The equivalent entries in a Windows MCP client JSON configuration are:
+
+```json
+[
+  "-v",
+  "C:\\Users\\developer\\jenkins-artifacts:/artifacts",
+  "-e",
+  "JENKINS_ARTIFACT_DIR=/artifacts",
+  "-e",
+  "JENKINS_ARTIFACT_CLIENT_DIR=C:\\Users\\developer\\jenkins-artifacts"
+]
+```
+
+`jenkins_download_artifact` always reports the server/container path in
+`download.path`. When `JENKINS_ARTIFACT_CLIENT_DIR` (or
+`artifacts.clientDownloadDir`) is configured, it also reports the translated
+host path in `download.clientPath`, using Windows path separators for Windows
+drive or UNC paths. MCP clients should use `clientPath` when it is present.
+
+On Linux, ensure the mounted directory is writable by the image user (UID
+65532). On Docker Desktop, ensure the parent directory is shared with Docker.
 
 Use the same mount pattern for an audit log or file-based server log. Container
 users should update the configured image tag and recreate the container rather
@@ -160,7 +176,8 @@ Useful environment variables:
 - `JENKINS_USER`: Jenkins username.
 - `JENKINS_TOKEN`: Jenkins API token.
 - `JENKINS_MUTATIONS`: set to `true` to enable mutating tools.
-- `JENKINS_ARTIFACT_DIR`: local artifact download directory.
+- `JENKINS_ARTIFACT_DIR`: server-local artifact download directory.
+- `JENKINS_ARTIFACT_CLIENT_DIR`: optional corresponding artifact directory as seen by the MCP client; adds `download.clientPath` to download responses.
 - `JENKINS_AUDIT_PATH`: JSONL audit path for mutating actions.
 - `JENKINS_MCP_LOG_LEVEL`: log verbosity; set to `debug` to include redacted Jenkins request URLs.
 - `JENKINS_LOG_CACHE_ENABLED`: set to `false` to disable the process-scoped progressive console-log disk cache. Default `true`.

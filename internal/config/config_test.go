@@ -17,6 +17,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 		"JENKINS_USER=alice",
 		"JENKINS_TOKEN=secret",
 		"JENKINS_MUTATIONS=true",
+		`JENKINS_ARTIFACT_CLIENT_DIR=C:\Users\alice\jenkins-artifacts`,
 	})
 	r.NoError(err, "Load()")
 	r.Equal("default", cfg.DefaultController, "DefaultController")
@@ -26,6 +27,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	r.Equal("alice", controller.Username, "controller username")
 	r.Equal("secret", controller.Token, "controller token")
 	r.True(cfg.Mutations.Enabled, "mutations should be enabled")
+	r.Equal(`C:\Users\alice\jenkins-artifacts`, cfg.Artifacts.ClientDownloadDir, "artifact client download directory")
 	r.True(cfg.Updates.Enabled, "update checks should be enabled by default")
 	r.True(cfg.Capabilities.PluginDiscoveryEnabled, "plugin discovery should be enabled by default")
 	r.True(cfg.LogCache.Enabled, "log cache should be enabled by default")

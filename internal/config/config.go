@@ -96,7 +96,8 @@ type WatchConfig struct {
 }
 
 type ArtifactConfig struct {
-	DownloadDir string `json:"downloadDir"`
+	DownloadDir       string `json:"downloadDir" jsonschema:"Server-local directory where downloaded artifacts are written"`
+	ClientDownloadDir string `json:"clientDownloadDir,omitempty" jsonschema:"Optional corresponding directory as seen by the MCP client host"`
 }
 
 type AuditConfig struct {
@@ -487,6 +488,9 @@ func merge(base, override Config) Config {
 	if override.Artifacts.DownloadDir != "" {
 		base.Artifacts.DownloadDir = override.Artifacts.DownloadDir
 	}
+	if override.Artifacts.ClientDownloadDir != "" {
+		base.Artifacts.ClientDownloadDir = override.Artifacts.ClientDownloadDir
+	}
 	if override.Audit.Path != "" {
 		base.Audit.Path = override.Audit.Path
 	}
@@ -537,6 +541,9 @@ func applyEnv(cfg *Config, env map[string]string) {
 	}
 	if v := env["JENKINS_ARTIFACT_DIR"]; v != "" {
 		cfg.Artifacts.DownloadDir = v
+	}
+	if v := env["JENKINS_ARTIFACT_CLIENT_DIR"]; v != "" {
+		cfg.Artifacts.ClientDownloadDir = v
 	}
 	if v := env["JENKINS_AUDIT_PATH"]; v != "" {
 		cfg.Audit.Path = v
