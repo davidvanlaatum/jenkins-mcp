@@ -331,7 +331,7 @@ func (s *Server) register() {
 	addConfiguredTool(s, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {
 		return jenkinstools.TriggerBuild(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, additiveMutationTool("jenkins_replay_build", "Replay Build", "Replay a Jenkins Pipeline build through the native Pipeline Replay action, optionally replacing the primary script and loaded scripts. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.ReplayBuildRequest) (jenkinstools.ReplayBuildResponse, error) {
+	addConfiguredTool(s, additiveMutationTool("jenkins_replay_build", "Replay Build", "Replay a Jenkins Pipeline build, preferring the Jenkins MCP plugin for an authoritative queueId to resolve with queue tools. Native fallback reports a predicted scheduledBuild. Supports full primary and loaded-script overrides. Scheduling errors never fall back or retry; inspect Jenkins before retrying an uncertain outcome. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.ReplayBuildRequest) (jenkinstools.ReplayBuildResponse, error) {
 		return jenkinstools.ReplayBuild(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_queue_item", "Get Queue Item", "Inspect a Jenkins queue item by id."), func(ctx context.Context, in jenkinstools.QueueItemRequest) (jenkinstools.QueueItemResponse, error) {

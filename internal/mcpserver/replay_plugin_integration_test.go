@@ -7,6 +7,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
@@ -54,11 +57,15 @@ func TestIntegrationReplayPlugin(t *testing.T) {
 	})
 	r.True(replay.Replay.Replayed)
 	r.False(replay.Replay.MainScriptOverridden)
-	r.NotNil(replay.Replay.ScheduledBuild)
-	jenkinscontainer.WaitForBuildNumberResult(t, api, "example-replay-loaded", replay.Replay.ScheduledBuild.Build, model.BuildResultSuccess)
+	r.Nil(replay.Replay.ScheduledBuild)
+	r.Equal("mcp_plugin", replay.Replay.Backend)
+	r.True(replay.Replay.QueueAuthoritative)
+	r.Greater(replay.Replay.QueueID, int64(0))
+	replayBuild := resolveReplayQueue(t, session, replay.Replay.QueueID)
+	jenkinscontainer.WaitForBuildNumberResult(t, api, "example-replay-loaded", replayBuild.Build, model.BuildResultSuccess)
 	originalMain, originals, _, _, err := api.ReplayScripts(loggerCtx, "example-replay-loaded", build)
 	r.NoError(err)
-	replayedMain, replayedLoaded, _, _, err := api.ReplayScripts(loggerCtx, "example-replay-loaded", replay.Replay.ScheduledBuild.Build)
+	replayedMain, replayedLoaded, _, _, err := api.ReplayScripts(loggerCtx, "example-replay-loaded", replayBuild.Build)
 	r.NoError(err)
 	r.Equal(originalMain, replayedMain, "omitted main override uses original source")
 	originals[overrideKey] = "echo 'loaded one replacement'"
@@ -97,6 +104,8 @@ func TestIntegrationReplayPlugin(t *testing.T) {
 	})
 	r.True(htmlReplay.Replay.Replayed)
 	r.NotNil(htmlReplay.Replay.ScheduledBuild)
+	r.Equal("native", htmlReplay.Replay.Backend)
+	r.True(htmlReplay.Replay.ScheduledBuildPredicted)
 	jenkinscontainer.WaitForBuildNumberResult(t, api, "example-replay-loaded", htmlReplay.Replay.ScheduledBuild.Build, model.BuildResultSuccess)
 	htmlMain, htmlLoaded, _, _, err := api.ReplayScripts(loggerCtx, "example-replay-loaded", htmlReplay.Replay.ScheduledBuild.Build)
 	r.NoError(err)
@@ -104,4 +113,18 @@ func TestIntegrationReplayPlugin(t *testing.T) {
 	originals[overrideKey] = "echo 'loaded one HTML replacement'"
 	r.Equal(originals, htmlLoaded, "HTML-backed replay preserves omitted originals and applies the loaded override")
 	t.Log("Both real Jenkins backends return identical script metadata and successfully replay loaded-script-only overrides")
+}
+
+func resolveReplayQueue(t *testing.T, session *mcp.ClientSession, id int64) model.BuildReference {
+	t.Helper()
+	r := require.New(t)
+	var resolved *model.BuildReference
+	state := ""
+	r.Eventually(func() bool {
+		watch := callIntegrationTool[jenkinstools.WatchQueueItemResponse](t, session, "jenkins_watch_queue_item", map[string]any{"id": id, "lastState": state, "waitTimeoutMs": 1000})
+		state = watch.Watch.State
+		resolved = watch.Watch.Build
+		return resolved != nil
+	}, 60*time.Second, time.Millisecond, "authoritative queue must resolve to a build")
+	return *resolved
 }

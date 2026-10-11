@@ -2361,13 +2361,13 @@ func ReplayScripts(ctx context.Context, deps Deps, in ReplayScriptsRequest) (Rep
 type ReplayBuildRequest struct {
 	Controller            string            `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job                   string            `json:"job" jsonschema:"Jenkins job path, using / for folders"`
-	Build                 int               `json:"build" jsonschema:"Jenkins build number to replay using the native Pipeline Replay action"`
+	Build                 int               `json:"build" jsonschema:"Jenkins Pipeline build number to replay through the plugin or native Replay action"`
 	MainScriptOverride    *string           `json:"mainScriptOverride,omitempty" jsonschema:"Full replacement primary Pipeline script content; omit to reuse the original primary script"`
 	LoadedScriptOverrides map[string]string `json:"loadedScriptOverrides,omitempty" jsonschema:"Full replacement loaded-script bodies keyed by Jenkins Replay script identifier from jenkins_get_replay_scripts"`
 }
 
 type ReplayBuildResponse struct {
-	Replay model.ReplayBuild `json:"replay" jsonschema:"Native Jenkins Pipeline Replay scheduling result"`
+	Replay model.ReplayBuild `json:"replay" jsonschema:"Jenkins Pipeline Replay scheduling result with backend and queue provenance"`
 }
 
 func ReplayBuild(ctx context.Context, deps Deps, in ReplayBuildRequest) (ReplayBuildResponse, error) {
@@ -2383,6 +2383,25 @@ func ReplayBuild(ctx context.Context, deps Deps, in ReplayBuildRequest) (ReplayB
 	api, err := apiFor(deps, in.Controller)
 	if err != nil {
 		return ReplayBuildResponse{}, err
+	}
+	queueID, included, available, err := api.PluginReplayBuild(ctx, in.Job, in.Build, in.MainScriptOverride, in.LoadedScriptOverrides)
+	if available || err != nil {
+		emit(deps, in.Controller, "replay_build", fmt.Sprintf("%s#%d", in.Job, in.Build), err)
+		if err != nil {
+			return ReplayBuildResponse{}, err
+		}
+		return ReplayBuildResponse{Replay: model.ReplayBuild{
+			SourceBuild:             replayBuildReference(deps, api, in.Controller, in.Job, in.Build),
+			QueueID:                 queueID,
+			QueueURL:                strings.TrimRight(api.BaseURL(), "/") + "/queue/item/" + strconv.FormatInt(queueID, 10) + "/",
+			Backend:                 "mcp_plugin",
+			QueueAuthoritative:      true,
+			Replayed:                true,
+			UsedOriginalScripts:     in.MainScriptOverride == nil && len(in.LoadedScriptOverrides) == 0,
+			MainScriptOverridden:    in.MainScriptOverride != nil,
+			LoadedScriptOverrideIDs: replayScriptIDs(in.LoadedScriptOverrides),
+			IncludedScriptIDs:       included,
+		}}, nil
 	}
 	job, err := api.GetJob(ctx, in.Job)
 	if err != nil {
@@ -2431,6 +2450,8 @@ func ReplayBuild(ctx context.Context, deps Deps, in ReplayBuildRequest) (ReplayB
 	}
 	overrideIDs := replayScriptIDs(in.LoadedScriptOverrides)
 	replay := model.ReplayBuild{
+		Backend:                 "native",
+		ScheduledBuildPredicted: scheduledBuild != nil,
 		SourceBuild:             sourceBuild,
 		ScheduledBuild:          scheduledBuild,
 		RedirectURL:             redirect,
@@ -2442,6 +2463,16 @@ func ReplayBuild(ctx context.Context, deps Deps, in ReplayBuildRequest) (ReplayB
 	}
 	if strings.Contains(redirect, "/queue/item/") {
 		replay.QueueURL = redirect
+		if u, err := url.Parse(redirect); err == nil {
+			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+			if len(parts) >= 3 && parts[len(parts)-3] == "queue" && parts[len(parts)-2] == "item" {
+				id, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+				if err == nil && id > 0 {
+					replay.QueueID = id
+					replay.QueueAuthoritative = true
+				}
+			}
+		}
 	}
 	return ReplayBuildResponse{Replay: replay}, nil
 }

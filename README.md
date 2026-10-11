@@ -45,7 +45,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ### Jenkins-Mutating Tools
 - `jenkins_poll_scm`: Request SCM polling for a job; Jenkins decides whether changes warrant a build. Requires mutations to be enabled and a configured Poll SCM trigger on an enabled job. `accepted` confirms request acceptance only, not polling completion or a queued build.
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
-- `jenkins_replay_build`: Replay a Jenkins Pipeline build through native Pipeline Replay, optionally with full primary and loaded-script overrides. Omitted overrides use originals from the same plugin-first retrieval path; Jenkins enforces replay permission and sandbox checks.
+- `jenkins_replay_build`: Replay a Jenkins Pipeline build, preferring the Jenkins MCP plugin’s authoritative queue item and retaining native Replay for unsupported controllers. Supports full primary and loaded-script overrides; omitted scripts use originals. Jenkins enforces replay permission and sandbox checks.
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
 - `jenkins_cancel_build`: Cancel a running Jenkins build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
 
