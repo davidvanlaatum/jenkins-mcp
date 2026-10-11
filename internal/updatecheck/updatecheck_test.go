@@ -1,8 +1,6 @@
 package updatecheck
 
 import (
-	"bytes"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +8,7 @@ import (
 
 	"github.com/david/jenkins-mcp/internal/testutil"
 	"github.com/davidvanlaatum/dvgoutils/logging"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/config"
 
@@ -93,8 +92,8 @@ func TestCheckIgnoresOlderRelease(t *testing.T) {
 
 func TestUpdateCheckLogsWithContextLogger(t *testing.T) {
 	r := require.New(t)
-	var logs bytes.Buffer
-	ctx := logging.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "updates"))
+	ctx, handler, logger := testhandler.SetupTestHandler(t)
+	ctx = logging.WithLogger(ctx, logger.With("component", "updates"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v1.2.4","html_url":"https://example.com/release"}`))
 	}))
@@ -102,11 +101,12 @@ func TestUpdateCheckLogsWithContextLogger(t *testing.T) {
 	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project"}, "1.2.3")
 	checker.releaseURL = server.URL
 	checker.checkAndLog(ctx)
-	r.Contains(logs.String(), "new jenkins-mcp release available")
-	r.Contains(logs.String(), "component=updates")
-	logs.Reset()
+	record := handler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == "new jenkins-mcp release available" })
+	r.NotNil(record)
+	r.Equal("updates", record["component"])
 	checker.releaseURL = ":invalid"
 	checker.checkAndLog(ctx)
-	r.Contains(logs.String(), "update check failed")
-	r.Contains(logs.String(), "component=updates")
+	record = handler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == "update check failed" })
+	r.NotNil(record)
+	r.Equal("updates", record["component"])
 }

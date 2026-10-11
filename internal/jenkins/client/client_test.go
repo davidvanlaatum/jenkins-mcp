@@ -1,11 +1,9 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/david/jenkins-mcp/internal/testutil"
 	"github.com/davidvanlaatum/dvgoutils/logging"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -278,17 +277,18 @@ func TestRequestsUseOperationContextLogger(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
-	var startupLogs, requestLogs bytes.Buffer
-	startupLogger := slog.New(slog.NewTextHandler(&startupLogs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	requestLogger := slog.New(slog.NewTextHandler(&requestLogs, &slog.HandlerOptions{Level: slog.LevelDebug})).With("request_id", "test-request")
-	c, err := New(logging.WithLogger(t.Context(), startupLogger), config.ControllerConfig{ID: "test", URL: server.URL})
+	startupCtx, startupHandler, _ := testhandler.SetupTestHandler(t)
+	requestCtx, requestHandler, requestLogger := testhandler.SetupTestHandler(t)
+	c, err := New(startupCtx, config.ControllerConfig{ID: "test", URL: server.URL})
 	r.NoError(err)
-	ctx := logging.WithLogger(t.Context(), requestLogger)
+	ctx := logging.WithLogger(requestCtx, requestLogger.With("request_id", "test-request"))
 	_, _, _, err = c.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
 	r.NoError(err)
-	r.Contains(startupLogs.String(), "configured Jenkins controller")
-	r.NotContains(startupLogs.String(), "sending Jenkins request")
-	r.Contains(requestLogs.String(), "sending Jenkins request")
-	r.Contains(requestLogs.String(), "completed Jenkins request")
-	r.Contains(requestLogs.String(), "request_id=test-request")
+	r.NotNil(startupHandler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == "configured Jenkins controller" }))
+	r.Nil(startupHandler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == "sending Jenkins request" }))
+	for _, message := range []string{"sending Jenkins request", "completed Jenkins request"} {
+		record := requestHandler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == message })
+		r.NotNil(record)
+		r.Equal("test-request", record["request_id"])
+	}
 }

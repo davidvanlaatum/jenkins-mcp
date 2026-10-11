@@ -2,15 +2,14 @@ package testutil
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"testing"
 
-	"github.com/davidvanlaatum/dvgoutils/logging"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 )
 
-// Context supplies a quiet logger while preserving the test lifetime.
+// Context supplies the standard dvgoutils test logger and test lifetime.
 func Context(t *testing.T) context.Context {
 	t.Helper()
-	return logging.WithLogger(t.Context(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, _, _ := testhandler.SetupTestHandler(t)
+	return ctx
 }
