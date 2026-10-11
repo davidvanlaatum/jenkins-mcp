@@ -5,12 +5,13 @@ package jenkinscontainer
 import (
 	"embed"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/david/jenkins-mcp/internal/testutil"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -63,7 +64,7 @@ func Start(t *testing.T) Fixture {
 	r.NoError(err, "read Jenkins integration image testdata")
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 
-	ctx := t.Context()
+	ctx := testutil.Context(t)
 	container, err := testcontainers.Run(
 		ctx,
 		"",
@@ -107,7 +108,7 @@ func (f Fixture) Controller(t *testing.T, user string) (config.Config, *jenkinsa
 		Username: user,
 		Token:    token,
 	}}
-	client, err := jenkinsclient.New(cfg.Controllers[0], slog.Default())
+	client, err := jenkinsclient.New(testutil.Context(t), cfg.Controllers[0])
 	r.NoError(err, "Jenkins client")
 	return cfg, jenkinsapi.New(ControllerID, client)
 }
@@ -120,7 +121,7 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	var lastErr error
 	var missing []string
 	for time.Now().Before(deadline) {
-		jobs, err := api.ListJobs(t.Context(), "")
+		jobs, err := api.ListJobs(testutil.Context(t), "")
 		if err == nil {
 			seen := map[string]bool{}
 			for _, job := range jobs {
@@ -146,7 +147,7 @@ func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result mo
 	deadline := time.Now().Add(90 * time.Second)
 	var lastSeen string
 	for time.Now().Before(deadline) {
-		builds, err := api.ListBuilds(t.Context(), job, 0, 1)
+		builds, err := api.ListBuilds(testutil.Context(t), job, 0, 1)
 		if err != nil {
 			lastSeen = err.Error()
 			time.Sleep(500 * time.Millisecond)
@@ -176,7 +177,7 @@ func WaitForBuildNumberResult(t *testing.T, api *jenkinsapi.API, job string, num
 	deadline := time.Now().Add(90 * time.Second)
 	var lastSeen string
 	for time.Now().Before(deadline) {
-		build, err := api.GetBuild(t.Context(), job, number)
+		build, err := api.GetBuild(testutil.Context(t), job, number)
 		if err != nil {
 			lastSeen = err.Error()
 			time.Sleep(500 * time.Millisecond)

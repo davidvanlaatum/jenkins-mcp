@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/david/jenkins-mcp/internal/testutil"
+
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
@@ -43,9 +45,9 @@ func TestReplayScriptsPrefersPlugin(t *testing.T) {
 		endpoint.ServeHTTP(w, req)
 	}))
 	t.Cleanup(server.Close)
-	c, err := jenkinsclient.New(config.ControllerConfig{URL: server.URL + "/jenkins", Username: "user", Token: "token"}, nil)
+	c, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{URL: server.URL + "/jenkins", Username: "user", Token: "token"})
 	r.NoError(err)
-	main, loaded, _, _, err := jenkinsapi.New("test", c).ReplayScripts(t.Context(), "folder/app", 7)
+	main, loaded, _, _, err := jenkinsapi.New("test", c).ReplayScripts(testutil.Context(t), "folder/app", 7)
 	r.NoError(err)
 	r.Equal("echo '你好'", main)
 	r.Equal(map[string]string{"pkg_Helper": "echo 'héllo'", "Script1": "echo 'one'"}, loaded)
@@ -111,7 +113,7 @@ func TestReplayPluginFallbackAndFailures(t *testing.T) {
 				}
 				endpoint.ServeHTTP(w, req)
 			})
-			main, _, _, _, err := api.ReplayScripts(t.Context(), "app", 7)
+			main, _, _, _, err := api.ReplayScripts(testutil.Context(t), "app", 7)
 			if tc.fallback {
 				r.NoError(err)
 				r.Equal("original", main)
@@ -131,7 +133,7 @@ func newReplayTestAPI(t *testing.T, handler http.HandlerFunc) *jenkinsapi.API {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	c, err := jenkinsclient.New(config.ControllerConfig{URL: server.URL}, nil)
+	c, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{URL: server.URL})
 	require.New(t).NoError(err)
 	return jenkinsapi.New("test", c)
 }

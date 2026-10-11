@@ -64,11 +64,11 @@ func run() error {
 		return err
 	}
 
-	server, err := app.New(cfg)
+	server, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if err := server.RunStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := server.RunStdio(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

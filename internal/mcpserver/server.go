@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/davidvanlaatum/dvgoutils/logging"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,22 +37,17 @@ type Dependencies struct {
 	Config       config.Config
 	Jenkins      map[string]*jenkinsapi.API
 	Audit        *audit.Logger
-	Logger       *slog.Logger
 	Version      string
 	UpdateStatus func() updatecheck.Status
 	SelfUpdate   func(context.Context, bool) (selfupdate.Result, error)
 }
 type Server struct {
-	raw    *mcp.Server
-	deps   jenkinstools.Deps
-	logger *slog.Logger
+	raw  *mcp.Server
+	deps jenkinstools.Deps
 }
 
-func New(deps Dependencies) *Server {
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
+func New(ctx context.Context, deps Dependencies) *Server {
+	logger := logging.FromContext(ctx)
 	s := &Server{
 		raw: mcp.NewServer(
 			&mcp.Implementation{
@@ -67,8 +63,7 @@ func New(deps Dependencies) *Server {
 				Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 			},
 		),
-		deps:   jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate},
-		logger: logger,
+		deps: jenkinstools.Deps{Config: deps.Config, Jenkins: deps.Jenkins, Audit: deps.Audit, UpdateStatus: deps.UpdateStatus, SelfUpdate: deps.SelfUpdate},
 	}
 	s.raw.AddReceivingMiddleware(cacheStaticToolList)
 	s.register()
@@ -124,10 +119,10 @@ func cacheStaticToolList(next mcp.MethodHandler) mcp.MethodHandler {
 }
 
 func addConfiguredTool[In, Out any](s *Server, tool *mcp.Tool, handler func(context.Context, In) (Out, error)) {
-	addTool(s.raw, tool, s.deps.Config.Logging, s.logger, handler)
+	addTool(s.raw, tool, s.deps.Config.Logging, handler)
 }
 
-func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logging config.LoggingConfig, logger *slog.Logger, handler func(context.Context, In) (Out, error)) {
+func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logConfig config.LoggingConfig, handler func(context.Context, In) (Out, error)) {
 	toolWithOutputSchema := *tool
 	if toolWithOutputSchema.OutputSchema == nil {
 		// The SDK only infers output schemas when the handler returns typed Out.
@@ -136,15 +131,16 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logging config.Log
 		toolWithOutputSchema.OutputSchema = inferOutputSchema[Out](tool.Name)
 	}
 	mcp.AddTool(server, &toolWithOutputSchema, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		logger := logging.FromContext(ctx)
 		started := time.Now()
-		logPayloads := logging.ToolPayloads
-		logCalls := logging.ToolCalls || logPayloads || logger.Enabled(ctx, slog.LevelDebug)
+		logPayloads := logConfig.ToolPayloads
+		logCalls := logConfig.ToolCalls || logPayloads || logger.Enabled(ctx, slog.LevelDebug)
 		if logCalls {
 			attrs := []any{"tool", tool.Name}
 			if logPayloads {
 				attrs = append(attrs, "arguments", requestPayload(req, in))
 			}
-			logToolCall(ctx, logger, logging, "tool_call_started", attrs...)
+			logToolCall(ctx, logConfig, "tool_call_started", attrs...)
 		}
 		out, err := handler(ctx, in)
 		if err != nil {
@@ -161,7 +157,7 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logging config.Log
 				if logPayloads {
 					attrs = append(attrs, "error_payload", string(content))
 				}
-				logToolCall(ctx, logger, logging, "tool_call_finished", attrs...)
+				logToolCall(ctx, logConfig, "tool_call_finished", attrs...)
 			}
 			return errorResult(err), nil, nil
 		}
@@ -176,14 +172,15 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logging config.Log
 			if logPayloads {
 				attrs = append(attrs, "response_payload", string(responsePayload))
 			}
-			logToolCall(ctx, logger, logging, "tool_call_finished", attrs...)
+			logToolCall(ctx, logConfig, "tool_call_finished", attrs...)
 		}
 		return nil, out, nil
 	})
 }
 
-func logToolCall(ctx context.Context, logger *slog.Logger, logging config.LoggingConfig, message string, attrs ...any) {
-	if logging.ToolCalls || logging.ToolPayloads {
+func logToolCall(ctx context.Context, logConfig config.LoggingConfig, message string, attrs ...any) {
+	logger := logging.FromContext(ctx)
+	if logConfig.ToolCalls || logConfig.ToolPayloads {
 		logger.InfoContext(ctx, message, attrs...)
 		return
 	}

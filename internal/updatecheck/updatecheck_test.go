@@ -1,12 +1,15 @@
 package updatecheck
 
 import (
-	"io"
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/david/jenkins-mcp/internal/config"
 
@@ -22,10 +25,10 @@ func TestCheckReportsNewerRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(t.Context())
+	result, err := checker.Check(testutil.Context(t))
 	r.NoError(err, "Check()")
 	select {
 	case userAgent := <-userAgentCh:
@@ -44,10 +47,10 @@ func TestStatusCachesCheckResult(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	checker.checkAndLog(t.Context())
+	checker.checkAndLog(testutil.Context(t))
 	status := checker.Status()
 	r.True(status.UpdateAvailable, "status.UpdateAvailable")
 	r.True(status.SelfUpdateEnabled, "status.SelfUpdateEnabled")
@@ -64,10 +67,10 @@ func TestCheckSkipsDevVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "0.1.0-dev", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "0.1.0-dev")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(t.Context())
+	result, err := checker.Check(testutil.Context(t))
 	r.NoError(err, "Check()")
 	r.False(called, "dev versions should not call the release API")
 	r.False(result.UpdateAvailable, "dev versions should not report updates")
@@ -80,10 +83,30 @@ func TestCheckIgnoresOlderRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(t.Context())
+	result, err := checker.Check(testutil.Context(t))
 	r.NoError(err, "Check()")
 	r.False(result.UpdateAvailable, "UpdateAvailable for older releases")
+}
+
+func TestUpdateCheckLogsWithContextLogger(t *testing.T) {
+	r := require.New(t)
+	var logs bytes.Buffer
+	ctx := logging.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "updates"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.4","html_url":"https://example.com/release"}`))
+	}))
+	defer server.Close()
+	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project"}, "1.2.3")
+	checker.releaseURL = server.URL
+	checker.checkAndLog(ctx)
+	r.Contains(logs.String(), "new jenkins-mcp release available")
+	r.Contains(logs.String(), "component=updates")
+	logs.Reset()
+	checker.releaseURL = ":invalid"
+	checker.checkAndLog(ctx)
+	r.Contains(logs.String(), "update check failed")
+	r.Contains(logs.String(), "component=updates")
 }

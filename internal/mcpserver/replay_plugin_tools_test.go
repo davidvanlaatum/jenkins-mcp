@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/david/jenkins-mcp/internal/testutil"
+
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
@@ -45,7 +47,7 @@ func TestPluginReplayMetadataAndOmittedOverrides(t *testing.T) {
 			http.NotFound(w, req)
 		}
 	})
-	scripts, err := jenkinstools.ReplayScripts(t.Context(), deps, jenkinstools.ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 4})
+	scripts, err := jenkinstools.ReplayScripts(testutil.Context(t), deps, jenkinstools.ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 4})
 	r.NoError(err)
 	r.Len(scripts.Scripts.Scripts, 3)
 	r.True(scripts.Scripts.Truncated)
@@ -62,7 +64,7 @@ func TestPluginReplayMetadataAndOmittedOverrides(t *testing.T) {
 	r.Equal(fmt.Sprintf("%x", sha256.Sum256([]byte(loaded["pkg.Helper"]))), helper.SHA256)
 
 	deps.Config.Mutations.Enabled = true
-	got, err := jenkinstools.ReplayBuild(t.Context(), deps, jenkinstools.ReplayBuildRequest{Job: "app", Build: 7, LoadedScriptOverrides: map[string]string{"pkg_Helper": "replacement"}})
+	got, err := jenkinstools.ReplayBuild(testutil.Context(t), deps, jenkinstools.ReplayBuildRequest{Job: "app", Build: 7, LoadedScriptOverrides: map[string]string{"pkg_Helper": "replacement"}})
 	r.NoError(err)
 	r.True(got.Replay.Replayed)
 	r.False(got.Replay.MainScriptOverridden)
@@ -75,7 +77,7 @@ func newReplayTestDeps(t *testing.T, handler http.HandlerFunc) jenkinstools.Deps
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	c, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, nil)
+	c, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "default", URL: server.URL})
 	require.New(t).NoError(err)
 	cfg := config.Defaults()
 	cfg.Controllers = []config.ControllerConfig{{ID: "default", URL: server.URL}}

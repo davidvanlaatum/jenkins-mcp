@@ -383,7 +383,7 @@ Structured errors must distinguish at least:
 
 **Logging:**
 
-- Use Go standard library structured logging (`log/slog`) initially to avoid unnecessary logging dependencies.
+- Use Go standard library structured logging (`log/slog`), carried through operation contexts with `github.com/davidvanlaatum/dvgoutils/logging`. Initialize the configured root logger once at app startup; retrieve it from request and background contexts rather than storing logger dependencies.
 - Logs must redact configured secrets and avoid emitting raw credentials.
 
 **Docker:**

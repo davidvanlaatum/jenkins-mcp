@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/david/jenkins-mcp/internal/testutil"
+
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +48,7 @@ func TestPollSCM(t *testing.T) {
 					http.NotFound(w, req)
 				}
 			})
-			got, err := api.PollSCM(t.Context(), "folder/app")
+			got, err := api.PollSCM(testutil.Context(t), "folder/app")
 			if tc.code == "" {
 				r.NoError(err)
 				r.True(got.Accepted)

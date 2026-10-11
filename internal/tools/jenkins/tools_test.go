@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/david/jenkins-mcp/internal/testutil"
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
@@ -31,7 +32,7 @@ import (
 func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
 	r := require.New(t)
 
-	got, err := Capabilities(t.Context(), Deps{
+	got, err := Capabilities(testutil.Context(t), Deps{
 		Config: config.Config{},
 		UpdateStatus: func() updatecheck.Status {
 			return updatecheck.Status{
@@ -53,7 +54,7 @@ func TestCapabilitiesIncludesUpdateStatus(t *testing.T) {
 func TestUpdateServerRequiresSelfUpdatePolicy(t *testing.T) {
 	r := require.New(t)
 
-	_, err := UpdateServer(t.Context(), Deps{Config: config.Defaults()}, UpdateServerRequest{})
+	_, err := UpdateServer(testutil.Context(t), Deps{Config: config.Defaults()}, UpdateServerRequest{})
 	r.Error(err, "UpdateServer() should fail when disabled")
 	var appErr *apperrors.Error
 	r.ErrorAs(err, &appErr, "error type")
@@ -63,7 +64,7 @@ func TestUpdateServerRequiresSelfUpdatePolicy(t *testing.T) {
 func TestUpdateServerCallsUpdaterWhenEnabled(t *testing.T) {
 	r := require.New(t)
 
-	got, err := UpdateServer(t.Context(), Deps{
+	got, err := UpdateServer(testutil.Context(t), Deps{
 		Config: config.Config{Updates: config.UpdateCheckConfig{SelfUpdateEnabled: true}},
 		SelfUpdate: func(_ context.Context, force bool) (selfupdate.Result, error) {
 			r.True(force, "force")
@@ -78,7 +79,7 @@ func TestUpdateServerCallsUpdaterWhenEnabled(t *testing.T) {
 func TestUpdateServerAllowsNilAuditLogger(t *testing.T) {
 	r := require.New(t)
 
-	got, err := UpdateServer(t.Context(), Deps{
+	got, err := UpdateServer(testutil.Context(t), Deps{
 		Config: config.Config{Updates: config.UpdateCheckConfig{SelfUpdateEnabled: true}},
 		SelfUpdate: func(_ context.Context, _ bool) (selfupdate.Result, error) {
 			return selfupdate.Result{LatestVersion: "v1.2.4"}, nil
@@ -95,7 +96,7 @@ func TestUpdateServerEmitsAuditEvent(t *testing.T) {
 	auditer, err := audit.New(config.AuditConfig{Path: auditPath})
 	r.NoError(err, "audit.New()")
 
-	_, err = UpdateServer(t.Context(), Deps{
+	_, err = UpdateServer(testutil.Context(t), Deps{
 		Config: config.Config{
 			DefaultController: "default",
 			Updates:           config.UpdateCheckConfig{SelfUpdateEnabled: true},
@@ -128,7 +129,7 @@ func TestCapabilitiesLabelsPluginDiscoveryFailureAsOptionalWarning(t *testing.T)
 		}
 	})
 
-	got, err := Capabilities(t.Context(), deps, BaseRequest{})
+	got, err := Capabilities(testutil.Context(t), deps, BaseRequest{})
 	r.NoError(err, "Capabilities() error")
 	r.Len(got.Capabilities, 1, "capabilities")
 	caps := got.Capabilities[0]
@@ -159,7 +160,7 @@ func TestCapabilitiesCanSkipPluginDiscovery(t *testing.T) {
 	})
 	deps.Config.Capabilities.PluginDiscoveryEnabled = false
 
-	got, err := Capabilities(t.Context(), deps, BaseRequest{})
+	got, err := Capabilities(testutil.Context(t), deps, BaseRequest{})
 	r.NoError(err, "Capabilities() error")
 	r.Equal(int32(0), atomic.LoadInt32(&pluginRequests), "plugin discovery endpoint should not be queried when disabled")
 	r.False(got.CapabilityConfig.PluginDiscoveryEnabled, "response should report plugin discovery disabled")
@@ -185,7 +186,7 @@ func TestGetBuildIncludesWarningsNGSummary(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.WarningsNGSummary, "warnings summary")
 	r.True(got.Build.WarningsNGSummary.Available, "warnings summary available")
@@ -209,7 +210,7 @@ func TestListIssuesDiscoversToolsWhenToolOmitted(t *testing.T) {
 		}
 	})
 
-	got, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42})
+	got, err := ListIssues(testutil.Context(t), deps, ListIssuesRequest{Job: "app", Build: 42})
 	r.NoError(err, "ListIssues() error")
 	r.True(got.Page.Available, "page available")
 	r.Len(got.Page.Tools, 2, "tools")
@@ -236,7 +237,7 @@ func TestListIssuesReturnsTypedPagedIssues(t *testing.T) {
 		}
 	})
 
-	first, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1})
+	first, err := ListIssues(testutil.Context(t), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1})
 	r.NoError(err, "first ListIssues() error")
 	r.True(first.HasMore, "first page has more")
 	r.True(first.Truncated, "first page truncated")
@@ -265,7 +266,7 @@ func TestListIssuesReturnsTypedPagedIssues(t *testing.T) {
 	r.Equal("abc123", issue.Commit, "commit")
 	r.Equal(42, issue.AddedAt, "added at")
 
-	second, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1, Cursor: first.NextCursor})
+	second, err := ListIssues(testutil.Context(t), deps, ListIssuesRequest{Job: "app", Build: 42, Tool: "golint", Limit: 1, Cursor: first.NextCursor})
 	r.NoError(err, "second ListIssues() error")
 	r.False(second.HasMore, "second page has more")
 	r.Len(second.Page.Items, 1, "second page items")
@@ -279,7 +280,7 @@ func TestListIssuesMissingWarningsNGIsGraceful(t *testing.T) {
 		http.NotFound(w, r)
 	})
 
-	got, err := ListIssues(t.Context(), deps, ListIssuesRequest{Job: "app", Build: 42})
+	got, err := ListIssues(testutil.Context(t), deps, ListIssuesRequest{Job: "app", Build: 42})
 	r.NoError(err, "ListIssues() error")
 	r.False(got.Page.Available, "page available")
 	r.Empty(got.Page.Items, "items")
@@ -289,7 +290,7 @@ func TestListIssuesMissingWarningsNGIsGraceful(t *testing.T) {
 func TestTriggerBuildRequiresMutationEnablement(t *testing.T) {
 	r := require.New(t)
 
-	_, err := TriggerBuild(t.Context(), Deps{
+	_, err := TriggerBuild(testutil.Context(t), Deps{
 		Config: config.Config{
 			DefaultController: "default",
 			Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -318,7 +319,7 @@ func TestReplayScriptsReturnsScriptMetadataAndTruncation(t *testing.T) {
 		}
 	})
 
-	got, err := ReplayScripts(t.Context(), deps, ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 8})
+	got, err := ReplayScripts(testutil.Context(t), deps, ReplayScriptsRequest{Job: "app", Build: 7, MaxBytes: 8})
 	r.NoError(err, "ReplayScripts() error")
 	r.Equal("app", got.Scripts.SourceBuild.Job, "source job")
 	r.Equal(7, got.Scripts.SourceBuild.Build, "source build")
@@ -340,7 +341,7 @@ func TestReplayScriptsReturnsScriptMetadataAndTruncation(t *testing.T) {
 func TestReplayBuildRequiresMutationEnablement(t *testing.T) {
 	r := require.New(t)
 
-	_, err := ReplayBuild(t.Context(), Deps{
+	_, err := ReplayBuild(testutil.Context(t), Deps{
 		Config: config.Config{
 			DefaultController: "default",
 			Controllers:       []config.ControllerConfig{{ID: "default", URL: "https://jenkins.example.com"}},
@@ -389,7 +390,7 @@ func TestReplayBuildLoadedScriptOnlyOverrideReusesOriginalPrimaryAndEmitsAudit(t
 	r.NoError(err, "audit.New()")
 	deps.Audit = auditer
 
-	got, err := ReplayBuild(t.Context(), deps, ReplayBuildRequest{
+	got, err := ReplayBuild(testutil.Context(t), deps, ReplayBuildRequest{
 		Job:   "app",
 		Build: 7,
 		LoadedScriptOverrides: map[string]string{
@@ -520,7 +521,7 @@ func TestListJobsDerivesStatusAndAppliesFilters(t *testing.T) {
 	})
 
 	building := true
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{
 		NameContains: "DEPLOY",
 		Type:         "pipeline",
 		Status:       "failure",
@@ -563,7 +564,7 @@ func TestListJobsDoesNotProbeJUnitWithoutTestFilters(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{NameContains: "test"})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{NameContains: "test"})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal([]string{"/api/json"}, requested, "requested paths")
@@ -605,7 +606,7 @@ func TestListJobsAppliesTestResultFilters(t *testing.T) {
 	})
 
 	hasTests := true
-	withTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasTests: &hasTests})
+	withTests, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasTests: &hasTests})
 	r.NoError(err, "ListJobs() hasTests error")
 	r.Len(withTests.Items, 3, "hasTests items")
 	r.Equal("passing-tests", withTests.Items[0].Name, "first hasTests item")
@@ -613,13 +614,13 @@ func TestListJobsAppliesTestResultFilters(t *testing.T) {
 	r.Equal("skipped-tests", withTests.Items[2].Name, "third hasTests item")
 
 	hasFailedTests := true
-	withFailedTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasFailedTests: &hasFailedTests})
+	withFailedTests, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasFailedTests: &hasFailedTests})
 	r.NoError(err, "ListJobs() hasFailedTests error")
 	r.Len(withFailedTests.Items, 1, "hasFailedTests items")
 	r.Equal("failed-tests", withFailedTests.Items[0].Name, "failed test item")
 
 	hasSkippedTests := true
-	withSkippedTests, err := ListJobs(t.Context(), deps, ListJobsRequest{HasSkippedTests: &hasSkippedTests})
+	withSkippedTests, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasSkippedTests: &hasSkippedTests})
 	r.NoError(err, "ListJobs() hasSkippedTests error")
 	r.Len(withSkippedTests.Items, 1, "hasSkippedTests items")
 	r.Equal("skipped-tests", withSkippedTests.Items[0].Name, "skipped test item")
@@ -655,7 +656,7 @@ func TestListJobsStopsJUnitProbesAfterPageSentinel(t *testing.T) {
 	})
 
 	hasTests := true
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2, HasTests: &hasTests})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 2, HasTests: &hasTests})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 2, "items")
 	r.Equal("one", got.Items[0].Name, "first item")
@@ -698,7 +699,7 @@ func TestFlakyTestStatsDropsNoJUnitAndIgnoresMissingTestObservations(t *testing.
 		}
 	})
 	minTransitions := 0
-	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, MinTransitions: &minTransitions})
+	got, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, MinTransitions: &minTransitions})
 	r.NoError(err, "FlakyTestStats() error")
 	r.Equal(5, got.Stats.BuildsRequested, "builds requested")
 	r.Equal(5, got.Stats.BuildsScanned, "builds scanned")
@@ -749,7 +750,7 @@ func TestFlakyTestStatsDefaultsMinTransitionsToThreeAndSortsBeforeLimit(t *testi
 			http.NotFound(w, r)
 		}
 	})
-	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, Limit: 1})
+	got, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 5, Limit: 1})
 	r.NoError(err, "FlakyTestStats() error")
 	r.Equal(3, got.Stats.MinTransitions, "default minTransitions")
 	r.Equal(2, got.Stats.TotalMatchingCount, "matching count before cap")
@@ -784,7 +785,7 @@ func TestFlakyTestStatsCollapsesDuplicateTestIdentityWithinBuild(t *testing.T) {
 		}
 	})
 	minTransitions := 0
-	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 2, MinTransitions: &minTransitions})
+	got, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 2, MinTransitions: &minTransitions})
 	r.NoError(err, "FlakyTestStats() error")
 	r.Len(got.Stats.Tests, 1, "test stats")
 	stat := got.Stats.Tests[0]
@@ -815,7 +816,7 @@ func TestFlakyTestStatsClassifiesSingleObservedFailureAsFailedOnce(t *testing.T)
 		}
 	})
 	minTransitions := 0
-	got, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 1, MinTransitions: &minTransitions})
+	got, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 1, MinTransitions: &minTransitions})
 	r.NoError(err, "FlakyTestStats() error")
 	r.Len(got.Stats.Tests, 1, "test stats")
 	r.Equal("failed_once", got.Stats.Tests[0].Classification, "classification")
@@ -847,7 +848,7 @@ func TestFlakyTestStatsLastBuildsIsBoundedSelectionWindow(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	_, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 3, Result: "SUCCESS"})
+	_, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", LastBuilds: 3, Result: "SUCCESS"})
 	r.NoError(err, "FlakyTestStats() error")
 	r.Len(listLimits, 1, "build list requests")
 	r.Contains(listLimits[0], "{0,3}", "lastBuilds should bound the build-summary selection window before filtering")
@@ -873,7 +874,7 @@ func TestFlakyTestStatsRejectsTooManyUniqueExplicitBuildsBeforeFetching(t *testi
 	for i := 1; i <= 101; i++ {
 		builds = append(builds, i)
 	}
-	_, err := FlakyTestStats(t.Context(), deps, FlakyTestStatsRequest{Job: "app", Builds: builds})
+	_, err := FlakyTestStats(testutil.Context(t), deps, FlakyTestStatsRequest{Job: "app", Builds: builds})
 	r.Error(err, "FlakyTestStats() should reject too many explicit builds")
 	appErr, ok := err.(*apperrors.Error)
 	r.True(ok, "error type")
@@ -909,7 +910,7 @@ func TestListJobsAppliesMetadataFiltersWithoutChangingResponseShape(t *testing.T
 	buildable := true
 	hasLastSuccessfulBuild := true
 	hasLastFailedBuild := false
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{
 		Buildable:                &buildable,
 		HasLastSuccessfulBuild:   &hasLastSuccessfulBuild,
 		HasLastFailedBuild:       &hasLastFailedBuild,
@@ -960,7 +961,7 @@ func TestListJobsFiltersByWarningsNGIssues(t *testing.T) {
 	})
 
 	hasWarnings := true
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "jobs with Warnings NG issues")
 	r.Equal("positive", got.Items[0].Name, "job name")
@@ -969,7 +970,7 @@ func TestListJobsFiltersByWarningsNGIssues(t *testing.T) {
 	}
 
 	hasWarnings = false
-	got, err = ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	got, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
 	r.NoError(err, "ListJobs() error")
 	names := jobNames(got.Items)
 	r.ElementsMatch([]string{"no-tools", "zero", "missing", "no-completed"}, names, "jobs without Warnings NG issues")
@@ -993,7 +994,7 @@ func TestListJobsDoesNotProbeWarningsNGWhenFilterOmitted(t *testing.T) {
 		}
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal(0, warningCalls, "Warnings NG endpoint calls")
@@ -1033,7 +1034,7 @@ func TestListJobsFiltersByCoverage(t *testing.T) {
 	})
 
 	hasCoverage := true
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasCoverage: &hasCoverage})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasCoverage: &hasCoverage})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "jobs with coverage")
 	r.Equal("covered", got.Items[0].Name, "job name")
@@ -1042,7 +1043,7 @@ func TestListJobsFiltersByCoverage(t *testing.T) {
 	}
 
 	hasCoverage = false
-	got, err = ListJobs(t.Context(), deps, ListJobsRequest{HasCoverage: &hasCoverage})
+	got, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{HasCoverage: &hasCoverage})
 	r.NoError(err, "ListJobs() error")
 	r.ElementsMatch([]string{"missing", "error-only", "no-completed"}, jobNames(got.Items), "jobs without coverage")
 }
@@ -1067,7 +1068,7 @@ func TestListJobsDoesNotProbeCoverageWhenFilterOmitted(t *testing.T) {
 		}
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal(0, coverageCalls, "coverage endpoint calls")
@@ -1090,7 +1091,7 @@ func TestListJobsWarningsNGFilterPropagatesFetchErrors(t *testing.T) {
 	})
 
 	hasWarnings := false
-	_, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
+	_, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings})
 	r.Error(err, "ListJobs() should propagate Warnings NG fetch errors")
 	assertAppErrorCode(t, err, apperrors.CodeJenkins)
 }
@@ -1122,7 +1123,7 @@ func TestListJobsWarningsNGFilterStopsAfterPagePlusOneMatch(t *testing.T) {
 	})
 
 	hasWarnings := true
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings, Limit: 1})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{HasWarningsNGIssues: &hasWarnings, Limit: 1})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal("first", got.Items[0].Name, "first page item")
@@ -1147,7 +1148,7 @@ func TestListJobsTimestampFilterRequiresReferencedBuild(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{LastFailedBuildAfter: "1"})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{LastFailedBuildAfter: "1"})
 	r.NoError(err, "ListJobs() error")
 	r.Empty(got.Items, "jobs missing the referenced build should not match timestamp filters")
 }
@@ -1155,7 +1156,7 @@ func TestListJobsTimestampFilterRequiresReferencedBuild(t *testing.T) {
 func TestListJobsRejectsInvalidTimestampFilter(t *testing.T) {
 	r := require.New(t)
 
-	_, err := ListJobs(t.Context(), Deps{}, ListJobsRequest{LastBuildAfter: "yesterday"})
+	_, err := ListJobs(testutil.Context(t), Deps{}, ListJobsRequest{LastBuildAfter: "yesterday"})
 	r.Error(err, "ListJobs() accepted invalid timestamp")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1174,7 +1175,7 @@ func TestListJobsRegexMatchesFullName(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Folder: "team", NameRegex: "^team/api"})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Folder: "team", NameRegex: "^team/api"})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal("team/api-main", got.Items[0].FullName, "job full name")
@@ -1194,7 +1195,7 @@ func TestListJobsDisabledStatusWinsOverCompletedBuildResult(t *testing.T) {
 		]}`)
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Status: "disabled"})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Status: "disabled"})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "ListJobs() items")
 	r.Equal("disabled-job", got.Items[0].Name, "job name")
@@ -1218,7 +1219,7 @@ func TestListJobsPagesNonRecursiveResults(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2})
+	first, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 2})
 	r.NoError(err, "ListJobs() first page error")
 	r.Len(first.Items, 2, "first page items")
 	r.Equal("one", first.Items[0].Name, "first item name")
@@ -1228,7 +1229,7 @@ func TestListJobsPagesNonRecursiveResults(t *testing.T) {
 	r.NotEmpty(first.NextCursor, "first page next cursor")
 	r.Equal(2, first.Limit, "first page limit")
 
-	second, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 2, Cursor: first.NextCursor})
+	second, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 2, Cursor: first.NextCursor})
 	r.NoError(err, "ListJobs() second page error")
 	r.Len(second.Items, 1, "second page items")
 	r.Equal("three", second.Items[0].Name, "second page item name")
@@ -1252,25 +1253,25 @@ func TestListJobsRejectsCursorForDifferentRequest(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1})
+	first, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1})
 	r.NoError(err, "ListJobs() first page error")
-	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
+	_, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1, NameContains: "two", Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed request")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 
 	hasTests := true
-	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasTests: &hasTests, Cursor: first.NextCursor})
+	_, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1, HasTests: &hasTests, Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed test filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 
 	hasCoverage := true
-	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, HasCoverage: &hasCoverage, Cursor: first.NextCursor})
+	_, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1, HasCoverage: &hasCoverage, Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed coverage filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 
-	first, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "1"})
+	first, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "1"})
 	r.NoError(err, "ListJobs() first metadata-filtered page error")
-	_, err = ListJobs(t.Context(), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "2", Cursor: first.NextCursor})
+	_, err = ListJobs(testutil.Context(t), deps, ListJobsRequest{Limit: 1, LastBuildAfter: "2", Cursor: first.NextCursor})
 	r.Error(err, "ListJobs() accepted cursor for a changed metadata filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1300,7 +1301,7 @@ func TestListJobsRecursiveDetectsTruncationAcrossFolderBoundary(t *testing.T) {
 		}
 	})
 
-	got, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	got, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
 	r.NoError(err, "ListJobs() error")
 	r.Len(got.Items, 1, "items")
 	r.Equal("folder-a/job-1", got.Items[0].FullName, "item full name")
@@ -1333,9 +1334,9 @@ func TestListJobsRecursiveUsesCursorForNextPage(t *testing.T) {
 		}
 	})
 
-	first, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
+	first, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle"})
 	r.NoError(err, "ListJobs() first page error")
-	second, err := ListJobs(t.Context(), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle", Cursor: first.NextCursor})
+	second, err := ListJobs(testutil.Context(t), deps, ListJobsRequest{Recursive: true, Limit: 1, Type: "freestyle", Cursor: first.NextCursor})
 	r.NoError(err, "ListJobs() second page error")
 	r.Len(second.Items, 1, "second page items")
 	r.Equal("folder-b/job-2", second.Items[0].FullName, "second page item full name")
@@ -1370,7 +1371,7 @@ func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
 		}
 	})
 
-	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	first, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 1})
 	r.NoError(err, "ListBuilds() first page error")
 	r.Len(first.Items, 1, "first page items")
 	build := first.Items[0]
@@ -1387,7 +1388,7 @@ func TestListBuildsPagesRecentBuildsWithSummaryFields(t *testing.T) {
 	r.NotEmpty(first.NextCursor, "first page next cursor")
 	r.Equal(1, first.Limit, "first page limit")
 
-	second, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Cursor: first.NextCursor})
+	second, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 1, Cursor: first.NextCursor})
 	r.NoError(err, "ListBuilds() second page error")
 	r.Len(second.Items, 1, "second page items")
 	r.Equal(42, second.Items[0].Number, "second page build number")
@@ -1448,7 +1449,7 @@ func TestListBuildsFiltersSummaryFields(t *testing.T) {
 			r := require.New(t)
 			tt.request.Job = "app"
 
-			got, err := ListBuilds(t.Context(), deps, tt.request)
+			got, err := ListBuilds(testutil.Context(t), deps, tt.request)
 			r.NoError(err, "ListBuilds() error")
 			r.Equal(tt.wantNumbers, buildNumbers(got.Items), "filtered build numbers")
 			r.False(got.HasMore, "hasMore")
@@ -1489,13 +1490,13 @@ func TestListBuildsFilteredPaginationUsesMatchingLookahead(t *testing.T) {
 	})
 
 	completed := true
-	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed})
+	first, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed})
 	r.NoError(err, "ListBuilds() first page error")
 	r.Equal([]int{45, 44}, buildNumbers(first.Items), "first page build numbers")
 	r.True(first.HasMore, "first page hasMore")
 	r.NotEmpty(first.NextCursor, "first page next cursor")
 
-	second, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed, Cursor: first.NextCursor})
+	second, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 2, Completed: &completed, Cursor: first.NextCursor})
 	r.NoError(err, "ListBuilds() second page error")
 	r.Equal([]int{42, 41}, buildNumbers(second.Items), "second page build numbers")
 	r.False(second.HasMore, "second page hasMore")
@@ -1520,9 +1521,9 @@ func TestListBuildsRejectsCursorForDifferentRequest(t *testing.T) {
 		]}`)
 	})
 
-	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1})
+	first, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 1})
 	r.NoError(err, "ListBuilds() first page error")
-	_, err = ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
+	_, err = ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "other", Limit: 1, Cursor: first.NextCursor})
 	r.Error(err, "ListBuilds() accepted cursor for a changed request")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1543,11 +1544,11 @@ func TestListBuildsRejectsCursorForDifferentFilter(t *testing.T) {
 
 	completed := true
 	building := true
-	first, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Completed: &completed})
+	first, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 1, Completed: &completed})
 	r.NoError(err, "ListBuilds() first page error")
 	r.NotEmpty(first.NextCursor, "first page cursor")
 
-	_, err = ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Limit: 1, Building: &building, Cursor: first.NextCursor})
+	_, err = ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Limit: 1, Building: &building, Cursor: first.NextCursor})
 	r.Error(err, "ListBuilds() accepted cursor for a changed filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1561,7 +1562,7 @@ func TestListBuildsRejectsConflictingCompletionFilters(t *testing.T) {
 	building := true
 	completed := true
 
-	_, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Building: &building, Completed: &completed})
+	_, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Building: &building, Completed: &completed})
 	r.Error(err, "ListBuilds() accepted conflicting completion filters")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1573,7 +1574,7 @@ func TestListBuildsRejectsUnsupportedResultFilter(t *testing.T) {
 		r.Fail("ListBuilds should reject before calling Jenkins")
 	})
 
-	_, err := ListBuilds(t.Context(), deps, ListBuildsRequest{Job: "app", Result: "SUCESS"})
+	_, err := ListBuilds(testutil.Context(t), deps, ListBuildsRequest{Job: "app", Result: "SUCESS"})
 	r.Error(err, "ListBuilds() accepted unsupported result filter")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -1617,7 +1618,7 @@ func TestGetBuildIncludesExtendedSummaryFields(t *testing.T) {
 		}`)
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	tree := <-treeCh
 	for _, want := range []string{"id", "queueId", "estimatedDuration", "keepLog"} {
@@ -1654,7 +1655,7 @@ func TestGetBuildOmitsCoverageWhenNoCoverageEndpointsExist(t *testing.T) {
 		}`)
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.Nil(got.Build.Coverage, "coverage should be omitted when all coverage endpoints are missing")
 }
@@ -1690,7 +1691,7 @@ func TestGetBuildIncludesOneCoverageSummary(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.True(got.Build.Coverage.Available, "coverage available")
@@ -1736,7 +1737,7 @@ func TestGetBuildNamesRootCoverageMetricFromSource(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.True(got.Build.Coverage.Available, "coverage available")
@@ -1798,7 +1799,7 @@ func TestGetBuildNormalizesCoveragePluginApiShape(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
@@ -1852,7 +1853,7 @@ func TestGetBuildNormalizesNumericCoveragePluginPercentages(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.Len(got.Build.Coverage.Summaries, 1, "coverage summaries")
@@ -1898,7 +1899,7 @@ func TestGetBuildOmitsMetriclessCoverageResponse(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.Nil(got.Build.Coverage, "coverage should be omitted when projected coverage is metricless")
 }
@@ -1930,7 +1931,7 @@ func TestGetBuildIncludesMultipleCoverageSummaries(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.True(got.Build.Coverage.Available, "coverage available")
@@ -1968,7 +1969,7 @@ func TestGetBuildDoesNotFailOnCoverageEndpointFailure(t *testing.T) {
 		}
 	})
 
-	got, err := GetBuild(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := GetBuild(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "GetBuild() error")
 	r.NotNil(got.Build.Coverage, "coverage")
 	r.False(got.Build.Coverage.Available, "coverage available")
@@ -1981,7 +1982,7 @@ func TestGetBuildDoesNotFailOnCoverageEndpointFailure(t *testing.T) {
 func TestGetBuildHonorsCancellationDuringCoverageProbe(t *testing.T) {
 	r := require.New(t)
 
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(testutil.Context(t))
 	defer cancel()
 	releaseCoverageHandler := make(chan struct{})
 	defer close(releaseCoverageHandler)
@@ -2036,7 +2037,7 @@ func TestListArtifactsDoesNotProbeCoverage(t *testing.T) {
 		}
 	})
 
-	got, err := ListArtifacts(t.Context(), deps, BuildRequest{Job: "app", Build: 43})
+	got, err := ListArtifacts(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 43})
 	r.NoError(err, "ListArtifacts() error")
 	r.Len(got.Artifacts, 1, "artifacts")
 	r.Equal(int64(0), coverageRequests.Load(), "coverage probes")
@@ -2045,7 +2046,7 @@ func TestListArtifactsDoesNotProbeCoverage(t *testing.T) {
 func TestListJobsRejectsInvalidNameRegex(t *testing.T) {
 	r := require.New(t)
 
-	_, err := ListJobs(t.Context(), Deps{}, ListJobsRequest{NameRegex: "["})
+	_, err := ListJobs(testutil.Context(t), Deps{}, ListJobsRequest{NameRegex: "["})
 	r.Error(err, "ListJobs() accepted invalid regex")
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -2078,7 +2079,7 @@ func TestGetJobReturnsDerivedStatusAndDisabledState(t *testing.T) {
 		}`)
 	})
 
-	got, err := GetJob(t.Context(), deps, JobRequest{Job: "app"})
+	got, err := GetJob(testutil.Context(t), deps, JobRequest{Job: "app"})
 	r.NoError(err, "GetJob() error")
 	tree := <-treeCh
 	r.Contains(tree, "disabled", "tree query should include disabled field")
@@ -2151,7 +2152,7 @@ func TestGetJobConfigReturnsRedactedXMLAndSummary(t *testing.T) {
 		}
 	})
 
-	got, err := GetJobConfig(t.Context(), deps, JobConfigRequest{Job: "github-org", Mode: "both", MaxBytes: 4096})
+	got, err := GetJobConfig(testutil.Context(t), deps, JobConfigRequest{Job: "github-org", Mode: "both", MaxBytes: 4096})
 	r.NoError(err, "GetJobConfig() error")
 	config := got.Config
 	r.True(config.ConfigAccessible, "config accessible")
@@ -2234,7 +2235,7 @@ func TestGetJobConfigFallsBackWhenConfigXMLForbidden(t *testing.T) {
 		}
 	})
 
-	got, err := GetJobConfig(t.Context(), deps, JobConfigRequest{Job: "app/main"})
+	got, err := GetJobConfig(testutil.Context(t), deps, JobConfigRequest{Job: "app/main"})
 	r.NoError(err, "GetJobConfig() error")
 	config := got.Config
 	r.False(config.ConfigAccessible, "config accessible")
@@ -2282,11 +2283,11 @@ func TestWatchBuildTimesOutWithoutSemanticChange(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 	r.NotEmpty(first.Watch.State, "first WatchBuild() state")
 
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2313,10 +2314,10 @@ func TestWatchBuildCallerDeadlineReturnsStructuredError(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testutil.Context(t), 10*time.Millisecond)
 	defer cancel()
 	_, err = WatchBuild(ctx, deps, WatchBuildRequest{
 		Job:           "app",
@@ -2352,10 +2353,10 @@ func TestWatchBuildCallerDeadlineDuringPendingInputFetchReturnsStructuredError(t
 		}
 	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testutil.Context(t), 10*time.Millisecond)
 	defer cancel()
 	_, err = WatchBuild(ctx, deps, WatchBuildRequest{
 		Job:           "app",
@@ -2389,9 +2390,9 @@ func TestWatchBuildKeepsStateStableWhenOnlyDurationChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2422,9 +2423,9 @@ func TestWatchBuildReturnsWhenStageStatusChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{WaitFor: "change", Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{WaitFor: "change", Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{WaitFor: "change",
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{WaitFor: "change",
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2458,9 +2459,9 @@ func TestWatchBuildReturnsWhenPipelineRunStatusChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2487,7 +2488,7 @@ func TestPipelineRunReportsPendingInputActions(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	got, err := PipelineRun(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "PipelineRun() error")
 	r.True(got.Run.WaitingForInput, "PipelineRun() did not report waitingForInput")
 	r.Len(got.Run.PendingInputActions, 1, "pendingInputActions")
@@ -2512,7 +2513,7 @@ func TestPipelineRunTreatsMissingPendingInputEndpointAsOptional(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	got, err := PipelineRun(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "PipelineRun() error")
 	r.False(got.Run.WaitingForInput, "PipelineRun() unexpectedly reported waitingForInput")
 }
@@ -2531,7 +2532,7 @@ func TestPipelineRunDerivesWaitingForInputFromStageStatus(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	got, err := PipelineRun(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "PipelineRun() error")
 	r.True(got.Run.WaitingForInput, "PipelineRun() did not derive waitingForInput from stage status")
 }
@@ -2550,7 +2551,7 @@ func TestPipelineRunReturnsStagesWithPendingInputEnrichmentError(t *testing.T) {
 		}
 	})
 
-	got, err := PipelineRun(t.Context(), deps, BuildRequest{Job: "app", Build: 42})
+	got, err := PipelineRun(testutil.Context(t), deps, BuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "PipelineRun() error")
 	r.Len(got.Run.Stages, 1, "stages")
 	r.NotEmpty(got.Run.PendingInputError, "PipelineRun() did not report pending input enrichment error")
@@ -2582,12 +2583,12 @@ func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 	r.NotNil(first.Watch.Pipeline, "first WatchBuild() pipeline")
 	r.False(first.Watch.Pipeline.WaitingForInput, "first WatchBuild() pipeline waitingForInput")
 
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2599,7 +2600,7 @@ func TestWatchBuildReturnsWhenPendingInputAppears(t *testing.T) {
 	r.True(second.Watch.Pipeline.WaitingForInput, "second WatchBuild() pipeline waitingForInput")
 	r.Len(second.Watch.Pipeline.PendingInputActions, 1, "second WatchBuild() pending inputs")
 	r.Equal("approve-prod", second.Watch.Pipeline.PendingInputActions[0].ID, "second WatchBuild() pending input ID")
-	third, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: second.Watch.State})
+	third, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: second.Watch.State})
 	r.NoError(err)
 	r.False(third.Watch.TimedOut, "unchanged pending input must still wake the default wait")
 	r.Equal(second.Watch.State, third.Watch.State)
@@ -2646,11 +2647,11 @@ func TestWatchBuildLargeStageListStateRoundTrips(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 	r.NotEmpty(first.Watch.State, "first WatchBuild() returned empty state")
 
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2680,7 +2681,7 @@ func TestWatchBuildToleratesTransientPollingFailures(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	got, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	got, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "WatchBuild() error")
 	r.NotEmpty(got.Watch.State, "WatchBuild() returned empty state after transient failures")
 }
@@ -2699,10 +2700,10 @@ func TestWatchBuildReturnsImmediatelyWhenBuildAlreadyComplete(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2733,9 +2734,9 @@ func TestWatchBuildDegradesWhenPipelineEndpointIsFlaky(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2776,9 +2777,9 @@ func TestWatchBuildPreservesPipelineSnapshotWhenBuildCompletesDuringWfapiOutage(
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2806,7 +2807,7 @@ func TestWatchBuildDoesNotMaskBrokenPipelineMetadata(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	_, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.Error(err, "WatchBuild() masked broken pipeline metadata")
 	assertAppErrorCode(t, err, apperrors.CodeJenkins)
 }
@@ -2829,10 +2830,10 @@ func TestWatchBuildRejectsStateFromDifferentBuild(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
 
-	_, err = WatchBuild(t.Context(), deps, WatchBuildRequest{
+	_, err = WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "other",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2861,9 +2862,9 @@ func TestWatchBuildTimesOutAfterDeadlineWhenPollingKeepsFailing(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+	first, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{Job: "app", Build: 42})
 	r.NoError(err, "first WatchBuild() error")
-	second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	second, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     first.Watch.State,
@@ -2892,7 +2893,7 @@ func TestWatchBuildBootstrapHonorsTimeoutOnRepeatedFailures(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	_, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		WaitTimeoutMs: 15,
@@ -2926,7 +2927,7 @@ func TestWatchBuildRejectsForgedUnsignedStateToken(t *testing.T) {
 	r.NoError(err, "rawUnsignedWatchStateToken() error")
 	forged := forgedPayload + ".invalid-signature"
 
-	_, err = WatchBuild(t.Context(), deps, WatchBuildRequest{
+	_, err = WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:           "app",
 		Build:         42,
 		LastState:     forged,
@@ -2944,7 +2945,7 @@ func TestWatchBuildRejectsMalformedStateToken(t *testing.T) {
 		http.NotFound(w, r)
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	_, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:       "app",
 		Build:     42,
 		LastState: "not-a-valid-watch-token",
@@ -2961,7 +2962,7 @@ func TestWatchBuildRejectsOversizedStateToken(t *testing.T) {
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
 	oversized := strings.Repeat("a", maxWatchStateTokenBytes+1)
-	_, err := WatchBuild(t.Context(), deps, WatchBuildRequest{
+	_, err := WatchBuild(testutil.Context(t), deps, WatchBuildRequest{
 		Job:       "app",
 		Build:     42,
 		LastState: oversized,
@@ -2992,13 +2993,13 @@ func TestWatchQueueItemReturnsWhenExecutableAssigned(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
 	r.Equal("queued", first.Watch.Status, "first WatchQueueItem() status")
 	r.False(first.Watch.Terminal, "first WatchQueueItem() terminal")
 	r.NotEmpty(first.Watch.State, "first WatchQueueItem() state")
 
-	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	second, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:            99,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 50,
@@ -3024,9 +3025,9 @@ func TestWatchQueueItemTimesOutWithoutStateChange(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
-	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	second, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:            99,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
@@ -3056,10 +3057,10 @@ func TestWatchQueueItemCallerDeadlineReturnsStructuredError(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 50, DefaultWaitTimeoutMs: 250, MaxWaitTimeoutMs: 250, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testutil.Context(t), 10*time.Millisecond)
 	defer cancel()
 	_, err = WatchQueueItem(ctx, deps, WatchQueueItemRequest{
 		ID:            99,
@@ -3086,9 +3087,9 @@ func TestWatchQueueItemIgnoresVolatileQueueWhyChanges(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
-	second, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	second, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:            99,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
@@ -3120,9 +3121,9 @@ func TestWatchQueueItemReportsCancelledAndDisappearedStates(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
-	cancelled, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	cancelled, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:            99,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 50,
@@ -3132,7 +3133,7 @@ func TestWatchQueueItemReportsCancelledAndDisappearedStates(t *testing.T) {
 	r.True(cancelled.Watch.Cancelled, "cancelled WatchQueueItem() cancelled")
 	r.True(cancelled.Watch.Terminal, "cancelled WatchQueueItem() terminal")
 
-	disappeared, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 100})
+	disappeared, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 100})
 	r.NoError(err, "disappeared WatchQueueItem() error")
 	r.Equal("disappeared", disappeared.Watch.Status, "disappeared WatchQueueItem() status")
 	r.True(disappeared.Watch.Disappeared, "disappeared WatchQueueItem() disappeared")
@@ -3151,10 +3152,10 @@ func TestWatchQueueItemRejectsStateFromDifferentItem(t *testing.T) {
 		}
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 25, MaxWaitTimeoutMs: 25, MaxConsecutiveFailures: 3})
 
-	first, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{ID: 99})
+	first, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{ID: 99})
 	r.NoError(err, "first WatchQueueItem() error")
 
-	_, err = WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	_, err = WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:            100,
 		LastState:     first.Watch.State,
 		WaitTimeoutMs: 25,
@@ -3170,7 +3171,7 @@ func TestWatchQueueItemRejectsMalformedStateToken(t *testing.T) {
 		http.NotFound(w, r)
 	}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 15, MaxWaitTimeoutMs: 15, MaxConsecutiveFailures: 100})
 
-	_, err := WatchQueueItem(t.Context(), deps, WatchQueueItemRequest{
+	_, err := WatchQueueItem(testutil.Context(t), deps, WatchQueueItemRequest{
 		ID:        99,
 		LastState: "not-a-valid-watch-token",
 	})
@@ -3184,7 +3185,7 @@ func newWatchTestDeps(t *testing.T, handler http.HandlerFunc, watchCfg config.Wa
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "default", URL: server.URL})
 	r.NoError(err, "client.New() error")
 
 	cfg := config.Defaults()
@@ -3209,7 +3210,7 @@ func newWatchTestDepsWithURL(t *testing.T, handlerFactory func(string) http.Hand
 	t.Cleanup(server.Close)
 
 	r := require.New(t)
-	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "default", URL: server.URL})
 	r.NoError(err, "client.New() error")
 
 	cfg := config.Defaults()
@@ -3229,7 +3230,7 @@ func newJenkinsTestDeps(t *testing.T, handler http.HandlerFunc) Deps {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	client, err := jenkinsclient.New(config.ControllerConfig{ID: "default", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "default", URL: server.URL})
 	r.NoError(err, "client.New() error")
 
 	cfg := config.Defaults()

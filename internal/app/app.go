@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/davidvanlaatum/dvgoutils/logging"
+
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
@@ -22,6 +24,7 @@ import (
 var Version = "0.1.0-dev"
 
 type Server struct {
+	ctx           context.Context
 	mcp           *mcpserver.Server
 	updateChecker *updatecheck.Checker
 	logFile       *os.File
@@ -51,12 +54,13 @@ func SelfUpdate(ctx context.Context, cfg config.UpdateCheckConfig, force bool) (
 	})
 }
 
-func New(cfg config.Config) (*Server, error) {
+func New(ctx context.Context, cfg config.Config) (*Server, error) {
 	logWriter, logFile, err := newLogWriter(cfg.Logging)
 	if err != nil {
 		return nil, err
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel(cfg.Logging.Level)}))
+	ctx = logging.WithLogger(ctx, logger)
 	var sharedLogCache *logcache.Cache
 	if cfg.LogCache.Enabled {
 		sharedLogCache, err = logcache.New("", maxLogCacheEntries, cfg.LogCache.MaxBytes)
@@ -67,7 +71,7 @@ func New(cfg config.Config) (*Server, error) {
 	}
 	clients := make(map[string]*jenkinsapi.API, len(cfg.Controllers))
 	for _, controller := range cfg.Controllers {
-		httpClient, err := jenkinsclient.New(controller, logger)
+		httpClient, err := jenkinsclient.New(ctx, controller)
 		if err != nil {
 			_ = closeLogCache(sharedLogCache)
 			_ = closeLogFile(logFile)
@@ -81,13 +85,13 @@ func New(cfg config.Config) (*Server, error) {
 		_ = closeLogFile(logFile)
 		return nil, err
 	}
-	updateChecker := updatecheck.New(cfg.Updates, Version, logger)
+	updateChecker := updatecheck.New(cfg.Updates, Version)
 	return &Server{
-		mcp: mcpserver.New(mcpserver.Dependencies{
+		ctx: ctx,
+		mcp: mcpserver.New(ctx, mcpserver.Dependencies{
 			Config:       cfg,
 			Jenkins:      clients,
 			Audit:        auditer,
-			Logger:       logger,
 			Version:      Version,
 			UpdateStatus: updateChecker.Status,
 			SelfUpdate: func(ctx context.Context, force bool) (selfupdate.Result, error) {
@@ -149,9 +153,9 @@ func logLevel(level string) slog.Level {
 	}
 }
 
-func (s *Server) RunStdio(ctx context.Context) error {
+func (s *Server) RunStdio() error {
 	defer func() { _ = closeLogCache(s.logCache) }()
 	defer func() { _ = closeLogFile(s.logFile) }()
-	s.updateChecker.Start(ctx)
-	return stdiotransport.Run(ctx, s.mcp.Raw())
+	s.updateChecker.Start(s.ctx)
+	return stdiotransport.Run(s.ctx, s.mcp.Raw())
 }

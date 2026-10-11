@@ -2,11 +2,11 @@ package jenkins
 
 import (
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/david/jenkins-mcp/internal/testutil"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -25,7 +25,7 @@ func lockDeps(t *testing.T) Deps {
 	cfg := config.Defaults()
 	cfg.DefaultController = "test"
 	cfg.Controllers = []config.ControllerConfig{{ID: "test", URL: server.URL}}
-	client, err := jenkinsclient.New(cfg.Controllers[0], slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client, err := jenkinsclient.New(testutil.Context(t), cfg.Controllers[0])
 	require.New(t).NoError(err)
 	return Deps{Config: cfg, Jenkins: map[string]*jenkinsapi.API{"test": jenkinsapi.New("test", client)}}
 }
@@ -52,13 +52,13 @@ func TestLockableFiltersAndLabels(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
-			got, err := ListLockableResources(t.Context(), deps, tc.request)
+			got, err := ListLockableResources(testutil.Context(t), deps, tc.request)
 			r.NoError(err)
 			r.Len(got.Resources, tc.count)
 		})
 	}
 	r := require.New(t)
-	got, err := ListLockableResources(t.Context(), deps, ListLockableResourcesRequest{Limit: 1})
+	got, err := ListLockableResources(testutil.Context(t), deps, ListLockableResourcesRequest{Limit: 1})
 	r.NoError(err)
 	r.Len(got.Resources, 1)
 	r.Len(got.Labels, 2)
@@ -68,7 +68,7 @@ func TestLockableFiltersAndLabels(t *testing.T) {
 	r.Equal(1, got.Labels[0].ReservedCount)
 	r.Equal(3, got.Labels[0].UnavailableCount)
 	disabled := false
-	got, err = ListLockableResources(t.Context(), deps, ListLockableResourcesRequest{IncludeLabelSummary: &disabled})
+	got, err = ListLockableResources(testutil.Context(t), deps, ListLockableResourcesRequest{IncludeLabelSummary: &disabled})
 	r.NoError(err)
 	r.Empty(got.Labels)
 }
@@ -76,12 +76,12 @@ func TestLockableFiltersAndLabels(t *testing.T) {
 func TestLockablePaginationAndCursorBinding(t *testing.T) {
 	r := require.New(t)
 	deps := lockDeps(t)
-	first, err := ListLockableResources(t.Context(), deps, ListLockableResourcesRequest{Limit: 1})
+	first, err := ListLockableResources(testutil.Context(t), deps, ListLockableResourcesRequest{Limit: 1})
 	r.NoError(err)
 	r.True(first.HasMore)
 	r.True(first.Truncated)
 	r.NotEmpty(first.NextCursor)
-	second, err := ListLockableResources(t.Context(), deps, ListLockableResourcesRequest{Limit: 500, Cursor: first.NextCursor})
+	second, err := ListLockableResources(testutil.Context(t), deps, ListLockableResourcesRequest{Limit: 500, Cursor: first.NextCursor})
 	r.NoError(err)
 	r.Len(second.Resources, 4)
 	r.Equal("b-phone", second.Resources[0].Name)
@@ -90,11 +90,11 @@ func TestLockablePaginationAndCursorBinding(t *testing.T) {
 		if request.Cursor == "" {
 			request.Cursor = first.NextCursor
 		}
-		_, err := ListLockableResources(t.Context(), deps, request)
+		_, err := ListLockableResources(testutil.Context(t), deps, request)
 		var domain *apperrors.Error
 		r.ErrorAs(err, &domain)
 		r.Equal(apperrors.CodeInvalidRequest, domain.Code)
 	}
-	_, err = ListLockableResources(t.Context(), deps, ListLockableResourcesRequest{State: "invalid"})
+	_, err = ListLockableResources(testutil.Context(t), deps, ListLockableResourcesRequest{State: "invalid"})
 	r.Error(err)
 }

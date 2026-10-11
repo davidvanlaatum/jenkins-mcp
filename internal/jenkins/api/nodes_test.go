@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/david/jenkins-mcp/internal/testutil"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +22,7 @@ func TestListNodes(t *testing.T) {
 		"monitorData":{"hudson.node_monitors.ArchitectureMonitor":"Linux (aarch64)","hudson.node_monitors.DiskSpaceMonitor":{"size":0,"path":"private"},"hudson.node_monitors.TemporarySpaceMonitor":{"size":100},"hudson.node_monitors.ResponseTimeMonitor":{"average":3},"hudson.node_monitors.SwapSpaceMonitor":{"totalPhysicalMemory":800,"availablePhysicalMemory":400,"totalSwapSpace":20,"availableSwapSpace":10},"unknown.monitor":{"secret":"omit"}}
 		},{"displayName":"offline","offline":true,"temporarilyOffline":true,"offlineCauseReason":"maintenance","numExecutors":1,"monitorData":{}}]}`))
 	})
-	nodes, err := api.ListNodes(t.Context())
+	nodes, err := api.ListNodes(testutil.Context(t))
 	r.NoError(err)
 	r.Len(nodes, 2)
 	node := nodes[0]
@@ -72,7 +74,7 @@ func TestListNodesOptionalMonitors(t *testing.T) {
 			api := newTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(`{"computer":[{"displayName":"worker","monitorData":` + data + `}]}`))
 			})
-			nodes, err := api.ListNodes(t.Context())
+			nodes, err := api.ListNodes(testutil.Context(t))
 			r.NoError(err)
 			r.Len(nodes, 1)
 			r.Nil(nodes[0].Monitor)
@@ -96,7 +98,7 @@ func TestListNodesEmptyAndErrors(t *testing.T) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			})
-			nodes, err := api.ListNodes(t.Context())
+			nodes, err := api.ListNodes(testutil.Context(t))
 			if tc.wantError {
 				r.Error(err)
 				r.Nil(nodes)

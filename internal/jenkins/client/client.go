@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -26,7 +27,6 @@ type Client struct {
 	token         string
 	http          *http.Client
 	jar           *resettableCookieJar
-	logger        *slog.Logger
 	crumb         *Crumb
 	crumbLock     sync.Mutex
 }
@@ -35,19 +35,17 @@ type Crumb struct {
 	Crumb        string `json:"crumb"`
 }
 
-func New(cfg config.ControllerConfig, logger *slog.Logger) (*Client, error) {
+func New(ctx context.Context, cfg config.ControllerConfig) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(cfg.URL, "/"))
 	if err != nil {
 		return nil, err
 	}
-	if logger != nil {
-		logger.Debug("configured Jenkins controller", "controller", cfg.ID, "base_url", parsed.Redacted(), "base_path", parsed.EscapedPath())
-	}
+	logging.FromContext(ctx).DebugContext(ctx, "configured Jenkins controller", "controller", cfg.ID, "base_url", parsed.Redacted(), "base_path", parsed.EscapedPath())
 	jar, err := newResettableCookieJar()
 	if err != nil {
 		return nil, err
 	}
-	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, mcpPluginMode: cfg.MCPPluginMode, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, jar: jar, logger: logger}, nil
+	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, mcpPluginMode: cfg.MCPPluginMode, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, jar: jar}, nil
 }
 func (c *Client) BaseURL() string { return c.base.String() }
 
@@ -87,7 +85,7 @@ func (c *Client) Post(ctx context.Context, path string, query url.Values, form u
 	if err != nil || status != http.StatusForbidden {
 		return status, body, headers, err
 	}
-	c.clearCrumbSession()
+	c.clearCrumbSession(ctx)
 	return c.postOnce(ctx, path, query, form != nil, encodedForm)
 }
 
@@ -131,17 +129,13 @@ func (c *Client) DoLimited(ctx context.Context, method, path string, query url.V
 		}
 	}
 	started := time.Now()
-	if c.logger != nil {
-		c.logger.Debug("sending Jenkins request", "method", method, "url", req.URL.Redacted(), "base_url", c.base.Redacted(), "request_path", path, "has_body", body != nil)
-	}
+	logging.FromContext(ctx).DebugContext(ctx, "sending Jenkins request", "method", method, "url", req.URL.Redacted(), "base_url", c.base.Redacted(), "request_path", path, "has_body", body != nil)
 	res, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return 0, nil, nil, false, err
 		}
-		if c.logger != nil {
-			c.logger.Warn("Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
-		}
+		logging.FromContext(ctx).WarnContext(ctx, "Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		return 0, nil, nil, false, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
 	}
 	defer func() { _ = res.Body.Close() }()
@@ -149,9 +143,7 @@ func (c *Client) DoLimited(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return 0, nil, nil, false, err
 	}
-	if c.logger != nil {
-		c.logger.Debug("completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "truncated", truncated, "jenkins_version", res.Header.Get("X-Jenkins"))
-	}
+	logging.FromContext(ctx).DebugContext(ctx, "completed Jenkins request", "method", method, "url", req.URL.Redacted(), "status", res.StatusCode, "duration_ms", time.Since(started).Milliseconds(), "bytes", len(b), "truncated", truncated, "jenkins_version", res.Header.Get("X-Jenkins"))
 	return res.StatusCode, b, res.Header, truncated, nil
 }
 
@@ -196,15 +188,13 @@ func (c *Client) addCrumb(ctx context.Context, headers http.Header) error {
 	return nil
 }
 
-func (c *Client) clearCrumbSession() {
+func (c *Client) clearCrumbSession(ctx context.Context) {
 	c.crumbLock.Lock()
 	defer c.crumbLock.Unlock()
 
 	c.crumb = nil
 	if err := c.jar.Reset(); err != nil {
-		if c.logger != nil {
-			c.logger.Warn("failed to reset Jenkins cookie jar", "error", err)
-		}
+		logging.FromContext(ctx).WarnContext(ctx, "failed to reset Jenkins cookie jar", "error", err)
 	}
 }
 

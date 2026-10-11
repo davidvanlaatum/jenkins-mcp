@@ -1,10 +1,10 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -33,9 +36,9 @@ func TestMCPPluginOffSkipsAllUpstreamRequests(t *testing.T) {
 		t.Errorf("forced-off mode issued an upstream request: %s", req.URL.Path)
 	}))
 	t.Cleanup(server.Close)
-	c, err := New(config.ControllerConfig{URL: server.URL, MCPPluginMode: "off"}, nil)
+	c, err := New(testutil.Context(t), config.ControllerConfig{URL: server.URL, MCPPluginMode: "off"})
 	r.NoError(err)
-	result, available, err := c.CallMCPTool(t.Context(), "getReplayScripts", nil)
+	result, available, err := c.CallMCPTool(testutil.Context(t), "getReplayScripts", nil)
 	r.NoError(err)
 	r.False(available)
 	r.Nil(result)
@@ -60,9 +63,9 @@ func TestDoPreservesControllerBasePath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL + "/team-jenkins/"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL + "/team-jenkins/"})
 	r.NoError(err, "New()")
-	status, _, _, err := c.Do(t.Context(), http.MethodGet, "job/Folder/job/App/api/json", url.Values{"tree": {"name"}}, nil, nil)
+	status, _, _, err := c.Do(testutil.Context(t), http.MethodGet, "job/Folder/job/App/api/json", url.Values{"tree": {"name"}}, nil, nil)
 	r.NoError(err, "Do()")
 	r.Equal(http.StatusOK, status, "status")
 	r.Equal("/team-jenkins/job/Folder/job/App/api/json", gotPath, "path")
@@ -80,9 +83,9 @@ func TestDoPreservesEscapedPathSegments(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err, "New()")
-	status, _, _, err := c.Do(t.Context(), http.MethodGet, "job/Download%20Debs/api/json", url.Values{"tree": {"name"}}, nil, nil)
+	status, _, _, err := c.Do(testutil.Context(t), http.MethodGet, "job/Download%20Debs/api/json", url.Values{"tree": {"name"}}, nil, nil)
 	r.NoError(err, "Do()")
 	r.Equal(http.StatusOK, status, "status")
 	r.Equal("/job/Download Debs/api/json", gotPath, "path")
@@ -101,10 +104,10 @@ func TestDoAllowsConcurrentRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err, "New()")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(testutil.Context(t), 2*time.Second)
 	defer cancel()
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -152,11 +155,11 @@ func TestGetJSONClassifiesHTMLHTTPFailuresWithoutLeakingBody(t *testing.T) {
 			}))
 			defer server.Close()
 
-			c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
 			r.NoError(err, "New()")
 
 			var out struct{}
-			err = c.GetJSON(t.Context(), "job/app/api/json", nil, &out)
+			err = c.GetJSON(testutil.Context(t), "job/app/api/json", nil, &out)
 			r.Error(err, "GetJSON() should fail for non-2xx HTML response")
 
 			var appErr *apperrors.Error
@@ -190,9 +193,9 @@ func TestPostPreservesCrumbSessionCookie(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err, "New()")
-	status, _, _, err := c.Post(t.Context(), "job/app/build", nil, nil)
+	status, _, _, err := c.Post(testutil.Context(t), "job/app/build", nil, nil)
 	r.NoError(err, "Post()")
 	r.Equal(http.StatusCreated, status, "status")
 	r.Equal("crumb-session", gotCookie, "crumb session cookie")
@@ -235,9 +238,9 @@ func TestPostRefreshesCrumbSessionAfterForbidden(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: server.URL + "/jenkins"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL + "/jenkins"})
 	r.NoError(err, "New()")
-	status, _, _, err := c.Post(t.Context(), "job/app/build", nil, nil)
+	status, _, _, err := c.Post(testutil.Context(t), "job/app/build", nil, nil)
 	r.NoError(err, "Post()")
 	r.Equal(http.StatusCreated, status, "status")
 	r.Equal(2, crumbRequests, "crumb requests")
@@ -249,7 +252,7 @@ func TestPostRefreshesCrumbSessionAfterForbidden(t *testing.T) {
 func TestEndpointURLBuildsFromEscapedPaths(t *testing.T) {
 	r := require.New(t)
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com/team%20jenkins/"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com/team%20jenkins/"})
 	r.NoError(err, "New()")
 
 	got, err := c.endpointURL("job/Folder%20A/job/Download%20Debs/api/json", url.Values{"tree": {"name"}})
@@ -262,9 +265,30 @@ func TestEndpointURLBuildsFromEscapedPaths(t *testing.T) {
 func TestEndpointURLRejectsInvalidEscapedPath(t *testing.T) {
 	r := require.New(t)
 
-	c, err := New(config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, err := New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: "https://jenkins.example.com"})
 	r.NoError(err, "New()")
 
 	_, err = c.endpointURL("job/bad%zz/api/json", nil)
 	r.Error(err, "endpointURL() should reject an invalid escaped path")
+}
+
+func TestRequestsUseOperationContextLogger(t *testing.T) {
+	r := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	var startupLogs, requestLogs bytes.Buffer
+	startupLogger := slog.New(slog.NewTextHandler(&startupLogs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	requestLogger := slog.New(slog.NewTextHandler(&requestLogs, &slog.HandlerOptions{Level: slog.LevelDebug})).With("request_id", "test-request")
+	c, err := New(logging.WithLogger(t.Context(), startupLogger), config.ControllerConfig{ID: "test", URL: server.URL})
+	r.NoError(err)
+	ctx := logging.WithLogger(t.Context(), requestLogger)
+	_, _, _, err = c.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
+	r.NoError(err)
+	r.Contains(startupLogs.String(), "configured Jenkins controller")
+	r.NotContains(startupLogs.String(), "sending Jenkins request")
+	r.Contains(requestLogs.String(), "sending Jenkins request")
+	r.Contains(requestLogs.String(), "completed Jenkins request")
+	r.Contains(requestLogs.String(), "request_id=test-request")
 }
