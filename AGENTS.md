@@ -55,6 +55,7 @@
 - When fixing a regression and adding a new test, prefer writing the regression test first when practical.
 - Run the new regression test first to confirm it reproduces the bug before applying the fix.
 - After the fix, rerun the relevant tests to confirm the regression is resolved.
+- Pipeline wfapi stage listings may omit block steps such as locks. For build-scoped block-step inspection, discover node IDs through the exported `FlowGraphAction.nodes` build JSON tree, then request targeted wfapi node details; cap graph size and detail requests and report truncation. Do not infer node IDs or scrape HTML.
 - When Jenkins API, URL, or UI behavior is uncertain, verify it against a real Jenkins instance whenever practical instead of guessing from assumed endpoint shapes. Prefer the existing Testcontainers integration fixture; when UI navigation matters, it is acceptable to start a temporary Jenkins test instance and use a browser to inspect the Jenkins UI and compare it with API responses.
 - In sandboxed Codex environments, Go and golangci-lint may not be able to write their default caches under the user home directory. When validation fails with cache permission or missing cache-entry errors, rerun with writable caches such as `GOCACHE=/private/tmp/jenkins-mcp-gocache` and `GOLANGCI_LINT_CACHE=/private/tmp/jenkins-mcp-golangci-lint`.
 

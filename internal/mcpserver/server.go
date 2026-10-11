@@ -293,6 +293,12 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_get_flaky_test_stats", "Get Flaky Test Stats", "Analyze compact JUnit test status histories across selected builds for one job. Supports a recent build-summary window, explicit build numbers, build number ranges, result filtering, minTransitions, bounded parallelism, and a returned-test limit applied after sorting by transition count. Running builds and builds with no JUnit report are ignored, missing per-test observations do not count as transitions, and failedBuilds are references only for targeted jenkins_get_test_report follow-up."), func(ctx context.Context, in jenkinstools.FlakyTestStatsRequest) (jenkinstools.FlakyTestStatsResponse, error) {
 		return jenkinstools.FlakyTestStats(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, readOnlyTool("jenkins_list_lockable_resources", "List Lockable Resources", "List Lockable Resources plugin state with name, label, and state filters, pagination, and label counts. Use for controller-wide availability and holder inspection."), func(ctx context.Context, in jenkinstools.ListLockableResourcesRequest) (jenkinstools.ListLockableResourcesResponse, error) {
+		return jenkinstools.ListLockableResources(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, readOnlyTool("jenkins_get_build_lockable_resources", "Get Build Lockable Resources", "Inspect lock step requests from the exported Pipeline flow graph and wfapi details for one build without listing controller resources. Returns raw arguments and visibility warnings; current ownership is unavailable."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.BuildLockableResourcesResponse, error) {
+		return jenkinstools.BuildLockableResources(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_run", "Get Pipeline Run", "Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint when available."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineRunResponse, error) {
 		return jenkinstools.PipelineRun(ctx, s.deps, in)
 	})

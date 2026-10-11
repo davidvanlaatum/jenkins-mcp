@@ -206,3 +206,32 @@ pipeline {
         }
     }
 }
+
+pipelineJob('example-locks') {
+    description('Pipeline with exact and label lock requests for read-only inspection.')
+    definition {
+        cps {
+            script("""
+lock('lab-phone-1') { echo 'lock outside a stage' }
+stage('locks') {
+    lock('lab-phone-1') { echo 'exact resource lock' }
+    lock(label: 'mobile', quantity: 1) { echo 'label lock' }
+}
+""")
+            sandbox()
+        }
+    }
+}
+pipelineJob('example-lock-holder') {
+    description('Pipeline holding a resource until input is approved for lock inspection.')
+    definition {
+        cps {
+            script("""
+stage('holding') {
+    lock('lab-phone-1') { input message: 'Release fixture lock' }
+}
+""")
+            sandbox()
+        }
+    }
+}
