@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/david/jenkins-mcp/internal/testutil"
@@ -951,9 +952,16 @@ func TestToolContextLoggerFlowsToHandler(t *testing.T) {
 			type response struct {
 				Value string `json:"value" jsonschema:"Test response value"`
 			}
+			jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer jenkins.Close()
+			controller, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "test", URL: jenkins.URL})
+			r.NoError(err)
 			addTool(server, readOnlyTool("context_test", "Context test", "Verify logger propagation"), tc.config, func(ctx context.Context, in struct{}) (response, error) {
 				logging.FromContext(ctx).DebugContext(ctx, "handler reached")
-				return response{Value: "ok"}, nil
+				_, _, _, err := controller.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
+				return response{Value: "ok"}, err
 			})
 			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 			serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -976,6 +984,12 @@ func TestToolContextLoggerFlowsToHandler(t *testing.T) {
 			}
 			if tc.level == slog.LevelDebug {
 				r.Contains(got, "handler reached")
+				r.Contains(got, "sending Jenkins request")
+				for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+					r.Contains(line, "request_id=session-test")
+					r.Contains(line, "tool=context_test")
+					r.Equal(1, strings.Count(line, "tool=context_test"), "tool attribute should appear once per event")
+				}
 			}
 			if tc.payloads {
 				r.Contains(got, "arguments=")

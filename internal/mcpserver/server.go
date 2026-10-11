@@ -131,12 +131,13 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logConfig config.L
 		toolWithOutputSchema.OutputSchema = inferOutputSchema[Out](tool.Name)
 	}
 	mcp.AddTool(server, &toolWithOutputSchema, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		logger := logging.FromContext(ctx)
+		logger := logging.FromContext(ctx).With("tool", tool.Name)
+		ctx = logging.WithLogger(ctx, logger)
 		started := time.Now()
 		logPayloads := logConfig.ToolPayloads
 		logCalls := logConfig.ToolCalls || logPayloads || logger.Enabled(ctx, slog.LevelDebug)
 		if logCalls {
-			attrs := []any{"tool", tool.Name}
+			var attrs []any
 			if logPayloads {
 				attrs = append(attrs, "arguments", requestPayload(req, in))
 			}
@@ -147,7 +148,6 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logConfig config.L
 			content, appErr := errorPayload(err)
 			if logCalls {
 				attrs := []any{
-					"tool", tool.Name,
 					"duration_ms", time.Since(started).Milliseconds(),
 					"is_error", true,
 					"error_code", appErr.Code,
@@ -164,7 +164,6 @@ func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, logConfig config.L
 		if logCalls {
 			responsePayload := payloadBytes(out)
 			attrs := []any{
-				"tool", tool.Name,
 				"duration_ms", time.Since(started).Milliseconds(),
 				"is_error", false,
 				"response_bytes", len(responsePayload),
