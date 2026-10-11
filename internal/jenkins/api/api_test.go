@@ -119,6 +119,14 @@ func TestReplayBuildSubmitsNativeReplayJSONForm(t *testing.T) {
 	r.Equal("echo 'loaded'", form["Script1_groovy"], "loaded script form field should use Jenkins sanitized identifier")
 }
 
+func TestReplayScriptsHTMLIgnoresInitialTextareaNewline(t *testing.T) {
+	r := require.New(t)
+	main, loaded, err := parseReplayScriptsPage("<textarea name=\"_.mainScript\">\n\noriginal</textarea><textarea name=\"_.Script1\">\necho 'loaded'</textarea>")
+	r.NoError(err)
+	r.Equal("\noriginal", main, "ignore only the HTML textarea's initial line feed, preserving source newlines")
+	r.Equal("echo 'loaded'", loaded["Script1"])
+}
+
 func TestReplayBuildUsesNativeRebuildEndpointForUnchangedReplay(t *testing.T) {
 	r := require.New(t)
 	var gotPath string

@@ -27,7 +27,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch the bounded tail of a Pipeline flow node log through Jenkins' progressive-text endpoint, coalescing concurrent requests and reusing disk-cached raw pages when log caching is enabled.
-- `jenkins_get_replay_scripts`: Fetch Jenkins Pipeline Replay scripts through the optional Jenkins MCP plugin (`getReplayScripts`), with native Replay HTML fallback when the plugin/tool is unavailable. Includes primary and loaded-script identifiers, script content, truncation metadata, and digests. The plugin requires `Item.EXTENDED_READ`; script access does not establish replay permission.
+- `jenkins_get_replay_scripts`: Fetch Jenkins Pipeline Replay scripts through the optional Jenkins MCP plugin (`getReplayScripts`), with native Replay HTML fallback when the plugin/tool is unavailable, or forced HTML via the controller’s `mcpPluginMode: "off"`. Includes primary and loaded-script identifiers, script content, truncation metadata, and digests. The plugin requires `Item.EXTENDED_READ`; script access does not establish replay permission.
 - `jenkins_watch_build`: Long-poll with short server-held state IDs (30-minute idle expiry) for completion or required input by default; use `waitFor: "change"` for stage-status changes; timeout responses omit build and Pipeline snapshots; prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
 - `jenkins_watch_queue_item`: Uses short server-held state IDs (30-minute idle expiry) and omits item/build snapshots on timeout. Long-poll a Jenkins queue item watcher until stable queue fields change, it receives an executable build, is cancelled, disappears, or times out; Jenkins `why` text changes such as quiet-period countdowns do not wake the long poll by themselves, and prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
 - `jenkins_list_issues`: List paged, typed Warnings NG issues for a build. The response includes discovered tools so callers can select a tool when a build has multiple Warnings NG results.
@@ -127,6 +127,21 @@ Configuration precedence is:
 Use `--config examples/config/config.json` for file-based configuration, or run `jenkins-mcp-server --init` to create a starter config file at the default location.
 
 If `--config` and `JENKINS_MCP_CONFIG` are not set, the server tries default config paths in order and loads the first one that exists. Unix-like systems use `$XDG_CONFIG_HOME/jenkins-mcp/config.json`, then `~/.config/jenkins-mcp/config.json`; Windows uses `%APPDATA%\jenkins-mcp\config.json`, then `%USERPROFILE%\AppData\Roaming\jenkins-mcp\config.json`. Missing optional default files are ignored; normal validation still requires a configured Jenkins controller from a file or environment variables.
+
+Each controller supports `mcpPluginMode`: `"discover"` (the default when omitted) discovers the upstream Jenkins MCP plugin and prefers its Replay script tool; `"off"` skips upstream MCP requests and forces native Replay HTML retrieval. Set it in the controller entry in your JSON config, or override every configured controller with `JENKINS_MCP_PLUGIN_MODE=off`. This selection is independent of `capabilities.pluginDiscoveryEnabled`, which controls plugin metadata inspection only.
+
+```json
+{
+  "controllers": [
+    {
+      "id": "default",
+      "url": "https://jenkins.example.com",
+      "mcpPluginMode": "off"
+    }
+  ],
+  "defaultController": "default"
+}
+```
 
 The server checks GitHub releases once at startup and then every 24 hours by default. Disable or retarget the check with:
 

@@ -20,14 +20,15 @@ import (
 )
 
 type Client struct {
-	base      *url.URL
-	username  string
-	token     string
-	http      *http.Client
-	jar       *resettableCookieJar
-	logger    *slog.Logger
-	crumb     *Crumb
-	crumbLock sync.Mutex
+	mcpPluginMode string
+	base          *url.URL
+	username      string
+	token         string
+	http          *http.Client
+	jar           *resettableCookieJar
+	logger        *slog.Logger
+	crumb         *Crumb
+	crumbLock     sync.Mutex
 }
 type Crumb struct {
 	RequestField string `json:"crumbRequestField"`
@@ -46,7 +47,7 @@ func New(cfg config.ControllerConfig, logger *slog.Logger) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, jar: jar, logger: logger}, nil
+	return &Client{base: parsed, username: cfg.Username, token: cfg.Token, mcpPluginMode: cfg.MCPPluginMode, http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, jar: jar, logger: logger}, nil
 }
 func (c *Client) BaseURL() string { return c.base.String() }
 

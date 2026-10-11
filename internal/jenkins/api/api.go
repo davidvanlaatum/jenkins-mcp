@@ -2184,7 +2184,10 @@ func parseReplayScriptsPage(page string) (string, map[string]string, error) {
 			continue
 		}
 		field := strings.TrimPrefix(name, "_.")
-		content := html.UnescapeString(match[2])
+		// HTML textarea parsing ignores exactly one initial line feed. Jenkins
+		// adds that line feed when rendering source which itself starts with one.
+		// Preserve the original source's remaining whitespace for sizes/digests.
+		content := strings.TrimPrefix(html.UnescapeString(match[2]), "\n")
 		if field == "mainScript" {
 			mainScript = content
 			continue

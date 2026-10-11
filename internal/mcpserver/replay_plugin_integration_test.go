@@ -3,6 +3,8 @@
 package mcpserver
 
 import (
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -63,4 +65,39 @@ func TestIntegrationReplayPlugin(t *testing.T) {
 	var appErr *apperrors.Error
 	r.ErrorAs(err, &appErr)
 	r.Equal(apperrors.CodePermissionDenied, appErr.Code)
+
+	forcedSession, forcedCleanup := connectIntegrationMCPWithConfig(t, fixture, "admin", func(cfg *config.Config) {
+		cfg.Mutations.Enabled = true
+		cfg.Controllers[0].MCPPluginMode = "off"
+	})
+	defer forcedCleanup()
+	forcedScripts := callIntegrationTool[jenkinstools.ReplayScriptsResponse](t, forcedSession, "jenkins_get_replay_scripts", map[string]any{"job": "example-replay-loaded", "build": build})
+	r.Equal(scripts, forcedScripts, "forced-off mode uses real HTML even while the MCP plugin is available")
+	_, available, err = client.CallMCPTool(t.Context(), "getReplayScripts", map[string]any{"jobFullName": "example-replay-loaded", "buildNumber": build})
+	r.NoError(err)
+	r.True(available, "forced-off selection must not change the real plugin")
+
+	// Disable the real plugin transport on this disposable controller. Jenkins
+	// itself now returns 404; all Replay HTML and scheduling requests remain real.
+	status, _, _, err := client.Post(t.Context(), "scriptText", nil, url.Values{"script": {"io.jenkins.plugins.mcp.server.Endpoint.DISABLE_MCP_STREAMABLE = true; println('disabled')"}})
+	r.NoError(err)
+	r.Equal(http.StatusOK, status)
+	_, available, err = client.CallMCPTool(t.Context(), "getReplayScripts", map[string]any{"jobFullName": "example-replay-loaded", "buildNumber": build})
+	r.NoError(err)
+	r.False(available, "the real controller returns a missing MCP endpoint")
+	htmlScripts := callIntegrationTool[jenkinstools.ReplayScriptsResponse](t, session, "jenkins_get_replay_scripts", map[string]any{"job": "example-replay-loaded", "build": build})
+	r.Equal(scripts, htmlScripts, "HTML fallback returns exactly the plugin script identifiers, contents, digests and sizes")
+	htmlReplay := callIntegrationTool[jenkinstools.ReplayBuildResponse](t, session, "jenkins_replay_build", map[string]any{
+		"job": "example-replay-loaded", "build": build,
+		"loadedScriptOverrides": map[string]string{overrideKey: "echo 'loaded one HTML replacement'"},
+	})
+	r.True(htmlReplay.Replay.Replayed)
+	r.NotNil(htmlReplay.Replay.ScheduledBuild)
+	jenkinscontainer.WaitForBuildNumberResult(t, api, "example-replay-loaded", htmlReplay.Replay.ScheduledBuild.Build, model.BuildResultSuccess)
+	htmlMain, htmlLoaded, _, _, err := api.ReplayScripts(t.Context(), "example-replay-loaded", htmlReplay.Replay.ScheduledBuild.Build)
+	r.NoError(err)
+	r.Equal(originalMain, htmlMain)
+	originals[overrideKey] = "echo 'loaded one HTML replacement'"
+	r.Equal(originals, htmlLoaded, "HTML-backed replay preserves omitted originals and applies the loaded override")
+	t.Log("Both real Jenkins backends return identical script metadata and successfully replay loaded-script-only overrides")
 }
