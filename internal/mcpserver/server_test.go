@@ -222,6 +222,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_list_issues",
 		"jenkins_list_jobs",
 		"jenkins_list_lockable_resources",
+		"jenkins_list_nodes",
 		"jenkins_list_queue",
 		"jenkins_poll_scm",
 		"jenkins_read_artifact",
@@ -288,6 +289,7 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_watch_build":                  {readOnly: true},
 		"jenkins_get_queue_item":               {readOnly: true},
 		"jenkins_watch_queue_item":             {readOnly: true},
+		"jenkins_list_nodes":                   {readOnly: true},
 		"jenkins_list_queue":                   {readOnly: true},
 		"jenkins_download_artifact":            {destructive: ptrBool(false)},
 		"jenkins_poll_scm":                     {destructive: ptrBool(false)},
@@ -352,7 +354,7 @@ func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
 	r.NotContains(string(capabilitiesJSON), `"logging"`, "deprecated logging capability")
 	r.Equal("jenkins-mcp-server", result.ServerInfo.Name, "server name")
 	r.Equal("Jenkins MCP Server", result.ServerInfo.Title, "server title")
-	r.Equal("Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, and queue state with guarded build actions.", result.ServerInfo.Description, "server description")
+	r.Equal("Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, computers, executors, and queue state with guarded build actions.", result.ServerInfo.Description, "server description")
 	r.Equal("test-version", result.ServerInfo.Version, "server version")
 	r.Equal("https://github.com/davidvanlaatum/jenkins-mcp", result.ServerInfo.WebsiteURL, "server website")
 	r.Contains(result.Instructions, "jenkins_get_capabilities", "server instructions capability discovery")
@@ -416,6 +418,7 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_replay_build":                 "Replay Build",
 		"jenkins_get_queue_item":               "Get Queue Item",
 		"jenkins_watch_queue_item":             "Watch Queue Item",
+		"jenkins_list_nodes":                   "List Nodes",
 		"jenkins_list_queue":                   "List Queue",
 		"jenkins_cancel_queue_item":            "Cancel Queue Item",
 		"jenkins_cancel_build":                 "Cancel Build",

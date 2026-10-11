@@ -26,6 +26,7 @@
 - `jenkins_get_changes`: returns SCM change sets exposed on the build.
 - `jenkins_list_artifacts`: lists build artifacts without fetching content.
 - `jenkins_read_artifact`: returns small UTF-8 text artifacts inline within configured size limits.
+- `jenkins_list_nodes`: Inspect Jenkins computer/executor state grouped by computer, including offline reason, assigned labels, configured/busy/idle regular executor counts, one-off executors, and current executable metadata. Executable URLs matching configured controllers include a `{ controller, job, build, url }` build reference for follow-up build/log/watch tools. Accepts optional `controller`; returns `nodes`. Known architecture, disk/temp free space, response time, memory and swap measurements are optional and permission-dependent. Idle offline executors do not imply available capacity. This is computer state, not a complete node-configuration inventory: configured zero-executor nodes may have no corresponding Computer and be absent. Responses use bounded tree queries; results exceeding `limits.maxResponseBytes` return a structured `jenkins_error` rather than a partial inventory.
 - `jenkins_list_queue`: lists current Jenkins queue items.
 - `jenkins_get_queue_item`: inspects a queue item by id.
 

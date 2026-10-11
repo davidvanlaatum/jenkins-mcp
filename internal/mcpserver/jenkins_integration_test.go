@@ -33,6 +33,51 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	pipelineBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-pipeline", model.BuildResultSuccess)
 	warningsBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-warnings", model.BuildResultSuccess)
 
+	t.Run("list nodes", func(t *testing.T) {
+		r := require.New(t)
+		readSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
+		defer cleanup()
+		job, err := api.GetJob(t.Context(), "example-executor-placement")
+		r.NoError(err)
+		_, err = api.TriggerBuild(t.Context(), "example-executor-placement", nil)
+		r.NoError(err)
+		var placed bool
+		r.Eventually(func() bool {
+			got := callIntegrationTool[struct {
+				Nodes []model.Node `json:"nodes"`
+			}](t, readSession, "jenkins_list_nodes", map[string]any{})
+			for _, node := range got.Nodes {
+				for _, executor := range node.Executors {
+					if executable := executor.CurrentExecutable; executable != nil && executable.Build != nil && executable.Build.Job == "example-executor-placement" {
+						r.Equal(jenkinscontainer.ControllerID, executable.Build.Controller)
+						r.Equal(job.NextBuildNumber, executable.Build.Build)
+						r.True(executable.Building)
+						r.False(executor.Idle)
+						r.Greater(node.BusyExecutors, 0)
+						r.NotEmpty(node.DisplayName)
+						r.NotEmpty(node.Labels)
+						placed = true
+					}
+				}
+			}
+			return placed
+		}, 30*time.Second, 200*time.Millisecond, "read-only user should see running build placement")
+		adminSession, adminCleanup := connectIntegrationMCP(t, jenkins, "admin")
+		defer adminCleanup()
+		r.Eventually(func() bool {
+			admin := callIntegrationTool[struct {
+				Nodes []model.Node `json:"nodes"`
+			}](t, adminSession, "jenkins_list_nodes", map[string]any{})
+			for _, node := range admin.Nodes {
+				if node.Monitor != nil && node.Monitor.Architecture != "" && node.Monitor.DiskFreeBytes != nil {
+					return true
+				}
+			}
+			return false
+		}, 30*time.Second, 200*time.Millisecond, "admin should see known monitor data after collection")
+		jenkinscontainer.WaitForBuildNumberResult(t, api, "example-executor-placement", job.NextBuildNumber, model.BuildResultSuccess)
+	})
+
 	t.Run("list jobs", func(t *testing.T) {
 		r := require.New(t)
 		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
