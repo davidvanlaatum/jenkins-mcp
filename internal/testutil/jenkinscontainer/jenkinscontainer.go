@@ -46,6 +46,8 @@ var expectedJobs = []string{
 	"example-config-inspection",
 	"example-pipeline",
 	"example-watch-lifecycle",
+	"example-locks",
+	"example-lock-holder",
 }
 
 type Fixture struct {

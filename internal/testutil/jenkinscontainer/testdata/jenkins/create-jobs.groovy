@@ -18,7 +18,13 @@ new DslScriptLoader(jobManagement).runScript(script)
     job.save()
 }
 
-['example-freestyle', 'example-pipeline', 'example-junit', 'example-warnings', 'example-coverage'].each { jobName ->
+def locks = org.jenkins.plugins.lockableresources.LockableResourcesManager.get()
+locks.createResourceWithLabel('lab-phone-1', 'lab mobile')
+locks.createResourceWithLabel('lab-phone-2', 'lab mobile')
+locks.fromName('lab-phone-2').reserve('admin')
+locks.save()
+
+['example-freestyle', 'example-pipeline', 'example-junit', 'example-warnings', 'example-coverage', 'example-locks'].each { jobName ->
     Jenkins.instance.getItemByFullName(jobName)?.scheduleBuild2(0)
 }
 

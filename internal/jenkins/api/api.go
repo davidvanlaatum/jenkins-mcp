@@ -105,15 +105,16 @@ func defaultFeatureMap(plugins []model.PluginInfo) map[string]bool {
 		active[plugin.ShortName] = plugin.Active && plugin.Enabled
 	}
 	return map[string]bool{
-		"jobs":         true,
-		"builds":       true,
-		"logs":         true,
-		"artifacts":    true,
-		"queue":        true,
-		"junit":        len(plugins) == 0 || active["junit"],
-		"pipeline":     len(plugins) == 0 || active["workflow-job"] || active["pipeline-rest-api"],
-		"coverage":     active["coverage"] || active["jacoco"],
-		"recordIssues": active["warnings-ng"],
+		"jobs":              true,
+		"builds":            true,
+		"logs":              true,
+		"artifacts":         true,
+		"queue":             true,
+		"junit":             len(plugins) == 0 || active["junit"],
+		"pipeline":          len(plugins) == 0 || active["workflow-job"] || active["pipeline-rest-api"],
+		"coverage":          active["coverage"] || active["jacoco"],
+		"recordIssues":      active["warnings-ng"],
+		"lockableResources": active["lockable-resources"],
 	}
 }
 

@@ -7,3 +7,4 @@ warnings-ng
 coverage
 credentials
 matrix-auth
+lockable-resources

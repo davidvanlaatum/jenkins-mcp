@@ -552,3 +552,44 @@ type BuildWatch struct {
 	Complete bool          `json:"complete" jsonschema:"Whether the watched build has completed"`
 	TimedOut bool          `json:"timedOut" jsonschema:"Whether the watch call returned because the wait timeout elapsed"`
 }
+
+// LockableResource describes exported plugin state; absent booleans remain unknown.
+type LockableResource struct {
+	Name              string                     `json:"name" jsonschema:"Lockable resource name"`
+	Description       string                     `json:"description,omitempty" jsonschema:"Resource description exported by Jenkins"`
+	Labels            string                     `json:"labels,omitempty" jsonschema:"Original space-separated resource labels"`
+	LabelList         []string                   `json:"labelList" jsonschema:"Normalized resource label names"`
+	Free              *bool                      `json:"free,omitempty" jsonschema:"Whether Jenkins reports the resource free; omitted when unknown"`
+	Locked            *bool                      `json:"locked,omitempty" jsonschema:"Whether Jenkins reports a build holding this resource; omitted when unknown"`
+	Reserved          *bool                      `json:"reserved,omitempty" jsonschema:"Whether Jenkins reports the resource reserved; omitted when unknown"`
+	ReservedBy        string                     `json:"reservedBy,omitempty" jsonschema:"Reservation owner exported by Jenkins"`
+	ReservedTimestamp *int64                     `json:"reservedTimestamp,omitempty" jsonschema:"Lock or reservation timestamp in Unix epoch milliseconds when exported"`
+	LockCause         string                     `json:"lockCause,omitempty" jsonschema:"Human-readable lock cause exported by Jenkins"`
+	LockReason        string                     `json:"lockReason,omitempty" jsonschema:"Lock or reservation reason exported by Jenkins"`
+	BuildName         string                     `json:"buildName,omitempty" jsonschema:"Display name of the holding build when exported"`
+	Note              string                     `json:"note,omitempty" jsonschema:"Resource note exported by Jenkins"`
+	Ephemeral         *bool                      `json:"ephemeral,omitempty" jsonschema:"Whether Jenkins reports a dynamically created resource; omitted when unknown"`
+	Stolen            *bool                      `json:"stolen,omitempty" jsonschema:"Whether Jenkins reports a stolen reservation; omitted when unknown"`
+	Properties        []LockableResourceProperty `json:"properties,omitempty" jsonschema:"Resource properties exported by Jenkins"`
+}
+type LockableResourceProperty struct {
+	Name  string `json:"name" jsonschema:"Resource property name"`
+	Value string `json:"value" jsonschema:"Resource property value"`
+}
+type LockableLabelSummary struct {
+	Name             string `json:"name" jsonschema:"Label name"`
+	ResourceCount    int    `json:"resourceCount" jsonschema:"Matching resources with this label before pagination"`
+	FreeCount        int    `json:"freeCount" jsonschema:"Matching resources explicitly reported free"`
+	LockedCount      int    `json:"lockedCount" jsonschema:"Matching resources explicitly reported locked"`
+	ReservedCount    int    `json:"reservedCount" jsonschema:"Matching resources explicitly reported reserved"`
+	UnavailableCount int    `json:"unavailableCount" jsonschema:"Matching resources explicitly reported not free, including queued resources"`
+}
+type BuildLockStep struct {
+	NodeID               string         `json:"nodeId" jsonschema:"Pipeline lock step node id"`
+	StageID              string         `json:"stageId,omitempty" jsonschema:"Containing Pipeline stage id when available"`
+	Name                 string         `json:"name" jsonschema:"Lock step display name from the Pipeline flow graph"`
+	Status               PipelineStatus `json:"status,omitempty" jsonschema:"Lock step status from Pipeline wfapi"`
+	ParameterDescription string         `json:"parameterDescription,omitempty" jsonschema:"Original lock arguments description; retained even when ambiguous"`
+	ResourceNames        []string       `json:"resourceNames,omitempty" jsonschema:"Exact resource names only when the parameter description has a simple unambiguous resource form; these are requests, not proof of current ownership"`
+	Ambiguous            bool           `json:"ambiguous" jsonschema:"Whether the parameter description could not be interpreted as an exact resource name"`
+}

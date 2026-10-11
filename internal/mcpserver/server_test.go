@@ -204,6 +204,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_cancel_queue_item",
 		"jenkins_download_artifact",
 		"jenkins_get_build",
+		"jenkins_get_build_lockable_resources",
 		"jenkins_get_capabilities",
 		"jenkins_get_changes",
 		"jenkins_get_flaky_test_stats",
@@ -220,6 +221,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_list_builds",
 		"jenkins_list_issues",
 		"jenkins_list_jobs",
+		"jenkins_list_lockable_resources",
 		"jenkins_list_queue",
 		"jenkins_poll_scm",
 		"jenkins_read_artifact",
@@ -261,37 +263,39 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		idempotent  bool
 	}
 	want := map[string]wantToolAnnotations{
-		"jenkins_get_capabilities":      {readOnly: true},
-		"jenkins_resolve_build_url":     {readOnly: true},
-		"jenkins_list_jobs":             {readOnly: true},
-		"jenkins_get_job":               {readOnly: true},
-		"jenkins_get_job_config":        {readOnly: true},
-		"jenkins_list_builds":           {readOnly: true},
-		"jenkins_get_build":             {readOnly: true},
-		"jenkins_get_log":               {readOnly: true},
-		"jenkins_search_log":            {readOnly: true},
-		"jenkins_tail_log":              {readOnly: true},
-		"jenkins_get_test_report":       {readOnly: true},
-		"jenkins_get_flaky_test_stats":  {readOnly: true},
-		"jenkins_get_pipeline_run":      {readOnly: true},
-		"jenkins_get_pipeline_stage":    {readOnly: true},
-		"jenkins_get_pipeline_node_log": {readOnly: true},
-		"jenkins_get_replay_scripts":    {readOnly: true},
-		"jenkins_list_artifacts":        {readOnly: true},
-		"jenkins_read_artifact":         {readOnly: true},
-		"jenkins_list_issues":           {readOnly: true},
-		"jenkins_get_changes":           {readOnly: true},
-		"jenkins_watch_build":           {readOnly: true},
-		"jenkins_get_queue_item":        {readOnly: true},
-		"jenkins_watch_queue_item":      {readOnly: true},
-		"jenkins_list_queue":            {readOnly: true},
-		"jenkins_download_artifact":     {destructive: ptrBool(false)},
-		"jenkins_poll_scm":              {destructive: ptrBool(false)},
-		"jenkins_trigger_build":         {destructive: ptrBool(false)},
-		"jenkins_replay_build":          {destructive: ptrBool(false)},
-		"jenkins_update_server":         {destructive: ptrBool(true)},
-		"jenkins_cancel_queue_item":     {destructive: ptrBool(true), idempotent: true},
-		"jenkins_cancel_build":          {destructive: ptrBool(true), idempotent: true},
+		"jenkins_get_capabilities":             {readOnly: true},
+		"jenkins_resolve_build_url":            {readOnly: true},
+		"jenkins_list_jobs":                    {readOnly: true},
+		"jenkins_list_lockable_resources":      {readOnly: true},
+		"jenkins_get_build_lockable_resources": {readOnly: true},
+		"jenkins_get_job":                      {readOnly: true},
+		"jenkins_get_job_config":               {readOnly: true},
+		"jenkins_list_builds":                  {readOnly: true},
+		"jenkins_get_build":                    {readOnly: true},
+		"jenkins_get_log":                      {readOnly: true},
+		"jenkins_search_log":                   {readOnly: true},
+		"jenkins_tail_log":                     {readOnly: true},
+		"jenkins_get_test_report":              {readOnly: true},
+		"jenkins_get_flaky_test_stats":         {readOnly: true},
+		"jenkins_get_pipeline_run":             {readOnly: true},
+		"jenkins_get_pipeline_stage":           {readOnly: true},
+		"jenkins_get_pipeline_node_log":        {readOnly: true},
+		"jenkins_get_replay_scripts":           {readOnly: true},
+		"jenkins_list_artifacts":               {readOnly: true},
+		"jenkins_read_artifact":                {readOnly: true},
+		"jenkins_list_issues":                  {readOnly: true},
+		"jenkins_get_changes":                  {readOnly: true},
+		"jenkins_watch_build":                  {readOnly: true},
+		"jenkins_get_queue_item":               {readOnly: true},
+		"jenkins_watch_queue_item":             {readOnly: true},
+		"jenkins_list_queue":                   {readOnly: true},
+		"jenkins_download_artifact":            {destructive: ptrBool(false)},
+		"jenkins_poll_scm":                     {destructive: ptrBool(false)},
+		"jenkins_trigger_build":                {destructive: ptrBool(false)},
+		"jenkins_replay_build":                 {destructive: ptrBool(false)},
+		"jenkins_update_server":                {destructive: ptrBool(true)},
+		"jenkins_cancel_queue_item":            {destructive: ptrBool(true), idempotent: true},
+		"jenkins_cancel_build":                 {destructive: ptrBool(true), idempotent: true},
 	}
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
@@ -382,37 +386,39 @@ func TestRegisteredToolTitles(t *testing.T) {
 	defer func() { _ = clientSession.Close() }()
 
 	want := map[string]string{
-		"jenkins_get_capabilities":      "Get Capabilities",
-		"jenkins_resolve_build_url":     "Resolve Build URL",
-		"jenkins_list_jobs":             "List Jobs",
-		"jenkins_get_job":               "Get Job",
-		"jenkins_get_job_config":        "Get Job Config",
-		"jenkins_list_builds":           "List Builds",
-		"jenkins_get_build":             "Get Build",
-		"jenkins_get_log":               "Get Log",
-		"jenkins_search_log":            "Search Log",
-		"jenkins_tail_log":              "Tail Log",
-		"jenkins_get_test_report":       "Get Test Report",
-		"jenkins_get_flaky_test_stats":  "Get Flaky Test Stats",
-		"jenkins_get_pipeline_run":      "Get Pipeline Run",
-		"jenkins_get_pipeline_stage":    "Get Pipeline Stage",
-		"jenkins_get_pipeline_node_log": "Get Pipeline Node Log",
-		"jenkins_get_replay_scripts":    "Get Replay Scripts",
-		"jenkins_download_artifact":     "Download Artifact",
-		"jenkins_update_server":         "Update Server",
-		"jenkins_list_artifacts":        "List Artifacts",
-		"jenkins_read_artifact":         "Read Artifact",
-		"jenkins_list_issues":           "List Issues",
-		"jenkins_get_changes":           "Get Changes",
-		"jenkins_watch_build":           "Watch Build",
-		"jenkins_poll_scm":              "Poll SCM",
-		"jenkins_trigger_build":         "Trigger Build",
-		"jenkins_replay_build":          "Replay Build",
-		"jenkins_get_queue_item":        "Get Queue Item",
-		"jenkins_watch_queue_item":      "Watch Queue Item",
-		"jenkins_list_queue":            "List Queue",
-		"jenkins_cancel_queue_item":     "Cancel Queue Item",
-		"jenkins_cancel_build":          "Cancel Build",
+		"jenkins_get_capabilities":             "Get Capabilities",
+		"jenkins_resolve_build_url":            "Resolve Build URL",
+		"jenkins_list_jobs":                    "List Jobs",
+		"jenkins_get_job":                      "Get Job",
+		"jenkins_get_job_config":               "Get Job Config",
+		"jenkins_list_builds":                  "List Builds",
+		"jenkins_get_build":                    "Get Build",
+		"jenkins_get_log":                      "Get Log",
+		"jenkins_search_log":                   "Search Log",
+		"jenkins_tail_log":                     "Tail Log",
+		"jenkins_get_test_report":              "Get Test Report",
+		"jenkins_get_flaky_test_stats":         "Get Flaky Test Stats",
+		"jenkins_list_lockable_resources":      "List Lockable Resources",
+		"jenkins_get_build_lockable_resources": "Get Build Lockable Resources",
+		"jenkins_get_pipeline_run":             "Get Pipeline Run",
+		"jenkins_get_pipeline_stage":           "Get Pipeline Stage",
+		"jenkins_get_pipeline_node_log":        "Get Pipeline Node Log",
+		"jenkins_get_replay_scripts":           "Get Replay Scripts",
+		"jenkins_download_artifact":            "Download Artifact",
+		"jenkins_update_server":                "Update Server",
+		"jenkins_list_artifacts":               "List Artifacts",
+		"jenkins_read_artifact":                "Read Artifact",
+		"jenkins_list_issues":                  "List Issues",
+		"jenkins_get_changes":                  "Get Changes",
+		"jenkins_watch_build":                  "Watch Build",
+		"jenkins_poll_scm":                     "Poll SCM",
+		"jenkins_trigger_build":                "Trigger Build",
+		"jenkins_replay_build":                 "Replay Build",
+		"jenkins_get_queue_item":               "Get Queue Item",
+		"jenkins_watch_queue_item":             "Watch Queue Item",
+		"jenkins_list_queue":                   "List Queue",
+		"jenkins_cancel_queue_item":            "Cancel Queue Item",
+		"jenkins_cancel_build":                 "Cancel Build",
 	}
 
 	for tool, err := range clientSession.Tools(ctx, nil) {
@@ -878,7 +884,17 @@ func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string,
 			r.NotEmpty(description, "tool %q %s schema property %q description", toolName, schemaName, propertyName)
 		}
 	}
-	for _, value := range object {
+	for key, value := range object {
+		// Property-name maps are containers of schemas, not schemas themselves.
+		// A public field named properties must not be mistaken for this keyword.
+		if key == "properties" || key == "$defs" || key == "definitions" {
+			if schemas, ok := value.(map[string]any); ok {
+				for _, child := range schemas {
+					assertSchemaPropertyDescriptions(t, toolName, schemaName, child)
+				}
+			}
+			continue
+		}
 		switch value := value.(type) {
 		case map[string]any:
 			assertSchemaPropertyDescriptions(t, toolName, schemaName, value)
@@ -888,4 +904,22 @@ func assertSchemaPropertyDescriptions(t *testing.T, toolName, schemaName string,
 			}
 		}
 	}
+}
+
+func TestSchemaDescriptionsAllowPropertiesNamedProperties(t *testing.T) {
+	assertSchemaPropertyDescriptions(t, "test", "output", map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"properties": map[string]any{
+				"type": "array", "description": "Resource properties",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":  map[string]any{"type": "string", "description": "Property name"},
+						"value": map[string]any{"type": "string", "description": "Property value"},
+					},
+				},
+			},
+		},
+	})
 }
