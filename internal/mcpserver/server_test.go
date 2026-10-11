@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
@@ -959,7 +958,7 @@ func TestSchemaDescriptionsAllowPropertiesNamedProperties(t *testing.T) {
 	})
 }
 
-func TestToolContextLoggerFlowsToHandler(t *testing.T) {
+func TestToolLoggingConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		level    slog.Level
@@ -983,16 +982,9 @@ func TestToolContextLoggerFlowsToHandler(t *testing.T) {
 			type response struct {
 				Value string `json:"value" jsonschema:"Test response value"`
 			}
-			jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				_, _ = w.Write([]byte(`{}`))
-			}))
-			defer jenkins.Close()
-			controller, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "test", URL: jenkins.URL})
-			r.NoError(err)
 			addTool(server, readOnlyTool("context_test", "Context test", "Verify logger propagation"), tc.config, func(ctx context.Context, in struct{}) (response, error) {
 				logging.FromContext(ctx).DebugContext(ctx, "handler reached")
-				_, _, _, err := controller.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
-				return response{Value: "ok"}, err
+				return response{Value: "ok"}, nil
 			})
 			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 			serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -1015,12 +1007,7 @@ func TestToolContextLoggerFlowsToHandler(t *testing.T) {
 			}
 			if tc.level == slog.LevelDebug {
 				r.Contains(got, "handler reached")
-				r.Contains(got, "sending Jenkins request")
-				for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
-					r.Contains(line, "request_id=session-test")
-					r.Contains(line, "tool=context_test")
-					r.Equal(1, strings.Count(line, "tool=context_test"), "tool attribute should appear once per event")
-				}
+
 			}
 			if tc.payloads {
 				r.Contains(got, "arguments=")
@@ -1030,5 +1017,57 @@ func TestToolContextLoggerFlowsToHandler(t *testing.T) {
 				r.NotContains(got, "response_payload=")
 			}
 		})
+	}
+}
+
+func TestEnrichedToolLoggerFlowsToJenkins(t *testing.T) {
+	r := require.New(t)
+	ctx, collector, logger := testhandler.SetupTestHandler(t)
+	ctx = logging.WithLogger(ctx, logger.With("request_id", "session-test"))
+	jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer jenkins.Close()
+	controller, err := jenkinsclient.New(ctx, config.ControllerConfig{ID: "test", URL: jenkins.URL})
+	r.NoError(err)
+	server := New(ctx, Dependencies{Config: config.Defaults(), Version: "test"}).Raw()
+	type response struct {
+		Value string `json:"value" jsonschema:"Test response value"`
+	}
+	addTool(server, readOnlyTool("context_test", "Context test", "Verify logger propagation"), config.LoggingConfig{}, func(ctx context.Context, in struct{}) (response, error) {
+		logging.FromContext(ctx).DebugContext(ctx, "handler reached")
+		_, _, _, err := controller.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
+		return response{Value: "ok"}, err
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err)
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err)
+	defer func() { _ = clientSession.Close() }()
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "context_test", Arguments: map[string]any{}})
+	r.NoError(err)
+	r.False(result.IsError)
+	messages := []string{"tool_call_started", "handler reached", "sending Jenkins request", "completed Jenkins request", "tool_call_finished"}
+	for _, message := range messages {
+		record := collector.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == message })
+		r.NotNil(record, message)
+		r.Equal("session-test", record["request_id"], message)
+		r.Equal("context_test", record["tool"], message)
+	}
+	records := collector.Logs()
+	for _, record := range records {
+		if !slices.Contains(messages, record.Msg) {
+			continue
+		}
+		count := 0
+		for _, attr := range record.Attrs {
+			if attr.Key == "tool" {
+				count++
+			}
+		}
+		r.Equal(1, count, "tool attribute should appear once per event: %s", record.Msg)
 	}
 }
