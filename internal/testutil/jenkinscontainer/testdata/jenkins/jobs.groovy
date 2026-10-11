@@ -135,6 +135,14 @@ printf '\\377\\376\\000\\001binary-fixture' > artifacts/blob.bin
     }
 }
 
+freeStyleJob('example-executor-placement') {
+    description('Long enough build to inspect executor placement with the read-only API.')
+    quietPeriod(0)
+    steps {
+        shell('sleep 20')
+    }
+}
+
 freeStyleJob('example-watch-lifecycle') {
     description('Quiet-period job used for queue and build watch lifecycle integration tests.')
     quietPeriod(5)

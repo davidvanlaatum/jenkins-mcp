@@ -24,7 +24,7 @@ import (
 const (
 	serverName         = "jenkins-mcp-server"
 	serverTitle        = "Jenkins MCP Server"
-	serverDescription  = "Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, and queue state with guarded build actions."
+	serverDescription  = "Inspect Jenkins jobs, builds, Pipelines, logs, tests, issues, artifacts, computers, executors, and queue state with guarded build actions."
 	serverWebsiteURL   = "https://github.com/davidvanlaatum/jenkins-mcp"
 	toolListTTLMs      = int(time.Hour / time.Millisecond)
 	serverInstructions = "Call jenkins_get_capabilities before other tools to discover configured controllers, response limits, optional Jenkins plugin capabilities, mutation availability, and update notices. " +
@@ -343,6 +343,9 @@ func (s *Server) register() {
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_watch_queue_item", "Watch Queue Item", "Bootstrap or long-poll a Jenkins queue item watcher. The first call without lastState returns immediately with a short server-held watch.state ID; pass that state back as lastState on later calls to wait until stable queue item fields change, the item receives an executable build, is cancelled, disappears from the queue, or reaches waitTimeoutMs. Jenkins why text changes, such as quiet-period countdowns, do not wake the long poll by themselves. Timeout responses omit item and build snapshots; continue with the returned ID."), func(ctx context.Context, in jenkinstools.WatchQueueItemRequest) (jenkinstools.WatchQueueItemResponse, error) {
 		return jenkinstools.WatchQueueItem(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, readOnlyTool("jenkins_list_nodes", "List Nodes", "Inspect Jenkins computers and executor placement, including offline state, assigned labels, regular and one-off executors, resolved running build references, and optional known monitor measurements. This is computer state; configured zero-executor nodes may be absent."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.ListNodesResponse, error) {
+		return jenkinstools.ListNodes(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, readOnlyTool("jenkins_list_queue", "List Queue", "List current Jenkins queue items."), func(ctx context.Context, in jenkinstools.BaseRequest) (jenkinstools.ListQueueResponse, error) {
 		return jenkinstools.ListQueue(ctx, s.deps, in)

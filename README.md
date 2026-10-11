@@ -34,6 +34,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_changes`: Fetch SCM change sets for a Jenkins build.
 - `jenkins_list_artifacts`: List artifacts for a Jenkins build.
 - `jenkins_read_artifact`: Read a small text Jenkins artifact inline.
+- `jenkins_list_nodes`: Inspect Jenkins computer/executor state grouped by computer, including offline reason, assigned labels, configured/busy/idle regular executor counts, one-off executors, and current executable metadata. Executable URLs matching configured controllers include a `{ controller, job, build, url }` build reference for follow-up build/log/watch tools. Accepts optional `controller`; returns `nodes`. Known architecture, disk/temp free space, response time, memory and swap measurements are optional and permission-dependent. Idle offline executors do not imply available capacity. This is computer state, not a complete node-configuration inventory: configured zero-executor nodes may have no corresponding Computer and be absent. Responses use bounded tree queries; results exceeding `limits.maxResponseBytes` return a structured `jenkins_error` rather than a partial inventory.
 - `jenkins_list_queue`: List current Jenkins queue items.
 - `jenkins_get_queue_item`: Inspect a Jenkins queue item by id.
 
