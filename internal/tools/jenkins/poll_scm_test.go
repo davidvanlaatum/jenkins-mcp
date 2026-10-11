@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
@@ -27,12 +27,14 @@ func TestPollSCMValidation(t *testing.T) {
 		{"unknown controller", "app", "missing", true, apperrors.CodeInvalidRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
 				t.Errorf("validation must prevent HTTP requests")
 			})
 			deps.Config.Mutations.Enabled = tc.enabled
-			got, err := PollSCM(testutil.Context(t), deps, PollSCMRequest{Job: tc.job, Controller: tc.controller})
+			got, err := PollSCM(loggerCtx, deps, PollSCMRequest{Job: tc.job, Controller: tc.controller})
 			var appErr *apperrors.Error
 			r.ErrorAs(err, &appErr)
 			r.Equal(tc.code, appErr.Code)
@@ -44,6 +46,8 @@ func TestPollSCMValidation(t *testing.T) {
 func TestPollSCMAuditsAttempt(t *testing.T) {
 	for _, status := range []int{http.StatusFound, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			deps := newJenkinsTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
 				switch req.URL.Path {
@@ -60,7 +64,7 @@ func TestPollSCMAuditsAttempt(t *testing.T) {
 			var err error
 			deps.Audit, err = audit.New(config.AuditConfig{Path: path})
 			r.NoError(err)
-			got, err := PollSCM(testutil.Context(t), deps, PollSCMRequest{Job: "app"})
+			got, err := PollSCM(loggerCtx, deps, PollSCMRequest{Job: "app"})
 			outcome := "success"
 			if status == http.StatusFound {
 				r.NoError(err)

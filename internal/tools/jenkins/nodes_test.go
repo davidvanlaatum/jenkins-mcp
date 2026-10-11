@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -16,6 +16,8 @@ import (
 )
 
 func TestListNodesBuildReferences(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.Equal("/computer/api/json", req.URL.Path)
@@ -25,10 +27,10 @@ func TestListNodesBuildReferences(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.DefaultController = "test"
 	cfg.Controllers = []config.ControllerConfig{{ID: "test", URL: server.URL}, {ID: "other", URL: "https://other.example/jenkins"}}
-	client, err := jenkinsclient.New(testutil.Context(t), cfg.Controllers[0])
+	client, err := jenkinsclient.New(loggerCtx, cfg.Controllers[0])
 	r.NoError(err)
 	deps := Deps{Config: cfg, Jenkins: map[string]*jenkinsapi.API{"test": jenkinsapi.New("test", client)}}
-	got, err := ListNodes(testutil.Context(t), deps, BaseRequest{})
+	got, err := ListNodes(loggerCtx, deps, BaseRequest{})
 	r.NoError(err)
 	r.Len(got.Nodes, 1)
 	ref := got.Nodes[0].Executors[0].CurrentExecutable.Build
@@ -44,10 +46,10 @@ func TestListNodesBuildReferences(t *testing.T) {
 	r.Equal("other", other.Controller)
 	r.Equal("pipeline", other.Job)
 	r.Equal(9, other.Build)
-	_, err = ListNodes(testutil.Context(t), deps, BaseRequest{Controller: "missing"})
+	_, err = ListNodes(loggerCtx, deps, BaseRequest{Controller: "missing"})
 	r.Error(err)
 	deps.Config.Limits.MaxResponseBytes = 10
-	_, err = ListNodes(testutil.Context(t), deps, BaseRequest{})
+	_, err = ListNodes(loggerCtx, deps, BaseRequest{})
 	var domain *apperrors.Error
 	r.ErrorAs(err, &domain)
 	r.Equal(apperrors.CodeJenkins, domain.Code)

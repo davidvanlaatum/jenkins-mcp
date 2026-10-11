@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -17,15 +17,19 @@ import (
 )
 
 func lockAPI(t *testing.T, handler http.HandlerFunc) *API {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "test", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "test", URL: server.URL})
 	require.New(t).NoError(err)
 	return New("test", client)
 }
 
 func TestListLockableResources(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		r.Equal("GET", req.Method)
@@ -33,7 +37,7 @@ func TestListLockableResources(t *testing.T) {
 		r.Equal(lockableResourceTree, req.URL.Query().Get("tree"))
 		_, _ = fmt.Fprint(w, `{"resources":[{"name":"z-phone","labels":"lab mobile","labelsAsList":["mobile","lab","lab"],"free":false,"locked":true,"reserved":false,"buildName":"holder #1","lockCause":"held by holder","reservedTimestamp":1780000000000,"properties":[{"name":"os","value":"android"}]},{"name":"a-phone","labels":"lab mobile","free":true,"locked":false,"reserved":false},{"name":"unknown"}]}`)
 	})
-	got, warnings, err := api.ListLockableResources(testutil.Context(t))
+	got, warnings, err := api.ListLockableResources(loggerCtx)
 	r.NoError(err)
 	r.Len(got, 3)
 	r.Equal("a-phone", got[0].Name)
@@ -53,9 +57,11 @@ func TestLockableEndpointErrors(t *testing.T) {
 		code   apperrors.Code
 	}{{404, apperrors.CodeUnsupported}, {403, apperrors.CodePermissionDenied}, {500, apperrors.CodeJenkins}} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(tc.status) })
-			_, _, err := api.ListLockableResources(testutil.Context(t))
+			_, _, err := api.ListLockableResources(loggerCtx)
 			var domain *apperrors.Error
 			r.ErrorAs(err, &domain)
 			r.Equal(tc.code, domain.Code)
@@ -63,9 +69,11 @@ func TestLockableEndpointErrors(t *testing.T) {
 	}
 	for _, body := range []string{`{"resources":[]}`, `{"_class":"plugin"}`} {
 		t.Run(body, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) { _, _ = fmt.Fprint(w, body) })
-			got, _, err := api.ListLockableResources(testutil.Context(t))
+			got, _, err := api.ListLockableResources(loggerCtx)
 			if body == `{"resources":[]}` {
 				r.NoError(err)
 				r.NotNil(got)
@@ -102,6 +110,8 @@ func TestParseLockResource(t *testing.T) {
 }
 
 func TestBuildLockableResources(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
@@ -117,7 +127,7 @@ func TestBuildLockableResources(t *testing.T) {
 			http.NotFound(w, req)
 		}
 	})
-	steps, warnings, err := api.BuildLockableResources(testutil.Context(t), "app", 1)
+	steps, warnings, err := api.BuildLockableResources(loggerCtx, "app", 1)
 	r.NoError(err)
 	r.Len(steps, 2)
 	r.Equal([]string{"phone-1"}, steps[0].ResourceNames)
@@ -137,6 +147,8 @@ func TestBuildLockableResourcesMissingMetadata(t *testing.T) {
 		{"denied", 200, 403, apperrors.CodePermissionDenied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) {
 				if req.URL.Path == "/job/app/1/api/json" {
@@ -146,7 +158,7 @@ func TestBuildLockableResourcesMissingMetadata(t *testing.T) {
 					w.WriteHeader(tc.wfStatus)
 				}
 			})
-			_, _, err := api.BuildLockableResources(testutil.Context(t), "app", 1)
+			_, _, err := api.BuildLockableResources(loggerCtx, "app", 1)
 			var domain *apperrors.Error
 			r.ErrorAs(err, &domain)
 			r.Equal(tc.code, domain.Code)
@@ -162,12 +174,14 @@ func TestLockableCapability(t *testing.T) {
 }
 
 func TestBuildLockableResourcesEmptyGraph(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		r.Equal("/job/app/1/api/json", req.URL.Path)
 		_, _ = fmt.Fprint(w, `{"actions":[{"_class":"org.jenkinsci.plugins.workflow.job.views.FlowGraphAction","nodes":[]}]}`)
 	})
-	steps, warnings, err := api.BuildLockableResources(testutil.Context(t), "app", 1)
+	steps, warnings, err := api.BuildLockableResources(loggerCtx, "app", 1)
 	r.NoError(err)
 	r.Empty(steps)
 	r.Len(warnings, 2)
@@ -175,9 +189,11 @@ func TestBuildLockableResourcesEmptyGraph(t *testing.T) {
 }
 
 func TestBuildLockableResourcesMissingGraph(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := lockAPI(t, func(w http.ResponseWriter, req *http.Request) { _, _ = fmt.Fprint(w, `{"actions":[]}`) })
-	_, _, err := api.BuildLockableResources(testutil.Context(t), "app", 1)
+	_, _, err := api.BuildLockableResources(loggerCtx, "app", 1)
 	var domain *apperrors.Error
 	r.ErrorAs(err, &domain)
 	r.Equal(apperrors.CodeUnsupported, domain.Code)
@@ -192,6 +208,8 @@ func TestBuildLockableResourcesBoundsGraphAndDetails(t *testing.T) {
 		{"details cap", maxBuildLockSteps + 1, 0, maxBuildLockSteps},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			nodes := make([]map[string]string, tc.count)
 			for i := range nodes {
@@ -211,7 +229,7 @@ func TestBuildLockableResourcesBoundsGraphAndDetails(t *testing.T) {
 				requests++
 				_, _ = fmt.Fprint(w, `{"parameterDescription":"phone-1"}`)
 			})
-			steps, warnings, err := api.BuildLockableResources(testutil.Context(t), "app", 1)
+			steps, warnings, err := api.BuildLockableResources(loggerCtx, "app", 1)
 			r.NoError(err)
 			r.Len(steps, tc.expected)
 			r.Equal(tc.expected, requests)

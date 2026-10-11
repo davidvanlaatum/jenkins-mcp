@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
 	"github.com/davidvanlaatum/dvgoutils/logging"
 	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
@@ -16,6 +15,8 @@ import (
 )
 
 func TestCheckReportsNewerRelease(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	userAgentCh := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -27,7 +28,7 @@ func TestCheckReportsNewerRelease(t *testing.T) {
 	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(testutil.Context(t))
+	result, err := checker.Check(loggerCtx)
 	r.NoError(err, "Check()")
 	select {
 	case userAgent := <-userAgentCh:
@@ -40,6 +41,8 @@ func TestCheckReportsNewerRelease(t *testing.T) {
 }
 
 func TestStatusCachesCheckResult(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v1.2.4","html_url":"https://github.com/example/project/releases/tag/v1.2.4"}`))
@@ -49,7 +52,7 @@ func TestStatusCachesCheckResult(t *testing.T) {
 	checker := New(config.UpdateCheckConfig{Enabled: true, SelfUpdateEnabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	checker.checkAndLog(testutil.Context(t))
+	checker.checkAndLog(loggerCtx)
 	status := checker.Status()
 	r.True(status.UpdateAvailable, "status.UpdateAvailable")
 	r.True(status.SelfUpdateEnabled, "status.SelfUpdateEnabled")
@@ -59,6 +62,8 @@ func TestStatusCachesCheckResult(t *testing.T) {
 }
 
 func TestCheckSkipsDevVersion(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,13 +74,15 @@ func TestCheckSkipsDevVersion(t *testing.T) {
 	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "0.1.0-dev")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(testutil.Context(t))
+	result, err := checker.Check(loggerCtx)
 	r.NoError(err, "Check()")
 	r.False(called, "dev versions should not call the release API")
 	r.False(result.UpdateAvailable, "dev versions should not report updates")
 }
 
 func TestCheckIgnoresOlderRelease(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v1.2.2","html_url":"https://github.com/example/project/releases/tag/v1.2.2"}`))
@@ -85,7 +92,7 @@ func TestCheckIgnoresOlderRelease(t *testing.T) {
 	checker := New(config.UpdateCheckConfig{Enabled: true, Repository: "example/project", CheckIntervalHours: 24}, "1.2.3")
 	checker.releaseURL = server.URL
 
-	result, err := checker.Check(testutil.Context(t))
+	result, err := checker.Check(loggerCtx)
 	r.NoError(err, "Check()")
 	r.False(result.UpdateAvailable, "UpdateAvailable for older releases")
 }

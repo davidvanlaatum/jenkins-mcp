@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -36,12 +36,14 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	warningsBuild := jenkinscontainer.WaitForBuildResult(t, api, "example-warnings", model.BuildResultSuccess)
 
 	t.Run("list nodes", func(t *testing.T) {
+		loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 		r := require.New(t)
 		readSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
 		defer cleanup()
-		job, err := api.GetJob(testutil.Context(t), "example-executor-placement")
+		job, err := api.GetJob(loggerCtx, "example-executor-placement")
 		r.NoError(err)
-		_, err = api.TriggerBuild(testutil.Context(t), "example-executor-placement", nil)
+		_, err = api.TriggerBuild(loggerCtx, "example-executor-placement", nil)
 		r.NoError(err)
 		var placed bool
 		r.Eventually(func() bool {
@@ -185,26 +187,28 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	})
 
 	t.Run("SCM polling", func(t *testing.T) {
+		loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 		r := require.New(t)
 		session, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "admin", func(cfg *config.Config) {
 			cfg.Mutations.Enabled = true
 		})
 		defer cleanup()
 		cfg, _ := jenkins.Controller(t, "admin")
-		httpClient, err := jenkinsclient.New(testutil.Context(t), cfg.Controllers[0])
+		httpClient, err := jenkinsclient.New(loggerCtx, cfg.Controllers[0])
 		r.NoError(err)
 		for _, job := range []string{"example-freestyle", "example-pipeline"} {
-			before, err := api.GetJob(testutil.Context(t), job)
+			before, err := api.GetJob(loggerCtx, job)
 			r.NoError(err)
 			got := callIntegrationTool[model.SCMPollResult](t, session, "jenkins_poll_scm", map[string]any{"job": job})
 			r.True(got.Accepted, "polling request accepted for %s", job)
 			// These jobs have no SCM changes: observe the actual polling log,
 			// then ensure polling did not unconditionally trigger a build.
 			r.Eventually(func() bool {
-				status, body, _, err := httpClient.GetText(testutil.Context(t), "job/"+job+"/scmPollLog/", nil)
+				status, body, _, err := httpClient.GetText(loggerCtx, "job/"+job+"/scmPollLog/", nil)
 				return err == nil && status == 200 && strings.Contains(string(body), "No changes")
 			}, 15*time.Second, 100*time.Millisecond, "polling should run for %s", job)
-			after, err := api.GetJob(testutil.Context(t), job)
+			after, err := api.GetJob(loggerCtx, job)
 			r.NoError(err)
 			r.Equal(before.NextBuildNumber, after.NextBuildNumber, "unchanged SCM should not trigger a build")
 			r.False(after.InQueue)
@@ -217,11 +221,11 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 			r.Equal(tc.code, string(payload.Error.Code))
 		}
 		// The endpoint acknowledges even a job without a Poll SCM trigger.
-		before, err := api.GetJob(testutil.Context(t), "example-artifacts")
+		before, err := api.GetJob(loggerCtx, "example-artifacts")
 		r.NoError(err)
 		got := callIntegrationTool[model.SCMPollResult](t, session, "jenkins_poll_scm", map[string]any{"job": "example-artifacts"})
 		r.True(got.Accepted)
-		after, err := api.GetJob(testutil.Context(t), "example-artifacts")
+		after, err := api.GetJob(loggerCtx, "example-artifacts")
 		r.NoError(err)
 		r.Equal(before.NextBuildNumber, after.NextBuildNumber)
 		r.False(after.InQueue)
@@ -498,6 +502,8 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	})
 
 	t.Run("junit test report", func(t *testing.T) {
+		loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 		r := require.New(t)
 		clientSession, cleanup := connectIntegrationMCP(t, jenkins, "read-only")
 		defer cleanup()
@@ -593,7 +599,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal("FAILED", rootFailed.Status, "root-package failed status")
 		r.Contains(rootFailed.ErrorDetails, "seasonal cutoff date mismatch", "root-package failure details")
 
-		missing, err := clientSession.CallTool(testutil.Context(t), &mcp.CallToolParams{
+		missing, err := clientSession.CallTool(loggerCtx, &mcp.CallToolParams{
 			Name: "jenkins_get_test_report",
 			Arguments: map[string]any{
 				"controller": jenkinscontainer.ControllerID,
@@ -682,6 +688,8 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 	})
 
 	t.Run("artifact tools", func(t *testing.T) {
+		loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 		r := require.New(t)
 		buildNumber := jenkinscontainer.WaitForBuildResult(t, api, "example-artifacts", model.BuildResultSuccess)
 
@@ -768,7 +776,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal("nested artifact fixture\n", string(got), "downloaded content")
 		r.Equal(len(got), download.Download.Bytes, "downloaded byte count")
 
-		missing, err := clientSession.CallTool(testutil.Context(t), &mcp.CallToolParams{
+		missing, err := clientSession.CallTool(loggerCtx, &mcp.CallToolParams{
 			Name: "jenkins_read_artifact",
 			Arguments: map[string]any{
 				"controller":   jenkinscontainer.ControllerID,
@@ -1263,10 +1271,12 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 }
 
 func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, name string, args map[string]any) T {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
-	result, err := clientSession.CallTool(testutil.Context(t), &mcp.CallToolParams{
+	result, err := clientSession.CallTool(loggerCtx, &mcp.CallToolParams{
 		Name:      name,
 		Arguments: args,
 	})
@@ -1284,10 +1294,12 @@ func callIntegrationTool[T any](t *testing.T, clientSession *mcp.ClientSession, 
 }
 
 func callIntegrationToolError(t *testing.T, clientSession *mcp.ClientSession, name string, args map[string]any) toolErrorResponse {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
-	result, err := clientSession.CallTool(testutil.Context(t), &mcp.CallToolParams{
+	result, err := clientSession.CallTool(loggerCtx, &mcp.CallToolParams{
 		Name:      name,
 		Arguments: args,
 	})
@@ -1442,6 +1454,8 @@ func connectIntegrationMCP(t *testing.T, jenkins jenkinscontainer.Fixture, user 
 }
 
 func connectIntegrationMCPWithConfig(t *testing.T, jenkins jenkinscontainer.Fixture, user string, mutate func(*config.Config)) (*mcp.ClientSession, func()) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
@@ -1449,7 +1463,7 @@ func connectIntegrationMCPWithConfig(t *testing.T, jenkins jenkinscontainer.Fixt
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	server := New(testutil.Context(t), Dependencies{
+	server := New(loggerCtx, Dependencies{
 		Config:  cfg,
 		Jenkins: map[string]*jenkinsapi.API{jenkinscontainer.ControllerID: api},
 		Audit:   &audit.Logger{},
@@ -1458,7 +1472,7 @@ func connectIntegrationMCPWithConfig(t *testing.T, jenkins jenkinscontainer.Fixt
 	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := testutil.Context(t)
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)

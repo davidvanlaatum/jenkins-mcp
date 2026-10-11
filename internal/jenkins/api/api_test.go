@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/david/jenkins-mcp/internal/testutil"
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
@@ -24,16 +24,20 @@ import (
 )
 
 func TestShouldAbortCoverageProbeHonorsCallerContextOnly(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 
-	r.False(shouldAbortCoverageProbe(testutil.Context(t), context.DeadlineExceeded), "per-endpoint timeout should remain optional")
+	r.False(shouldAbortCoverageProbe(loggerCtx, context.DeadlineExceeded), "per-endpoint timeout should remain optional")
 
-	ctx, cancel := context.WithCancel(testutil.Context(t))
+	ctx, cancel := context.WithCancel(loggerCtx)
 	cancel()
 	r.True(shouldAbortCoverageProbe(ctx, context.Canceled), "caller cancellation should abort coverage probing")
 }
 
 func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	body := "plugin error reflected SECRET_TOKEN_VALUE"
 
@@ -49,11 +53,11 @@ func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "test", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "test", URL: server.URL})
 	r.NoError(err, "client New()")
 	api := New("test", client)
 
-	_, err = api.TriggerBuild(testutil.Context(t), "app", nil)
+	_, err = api.TriggerBuild(loggerCtx, "app", nil)
 	r.Error(err, "TriggerBuild() should return an HTTP error")
 	appErr, ok := err.(*apperrors.Error)
 	r.True(ok, "TriggerBuild() error should be structured")
@@ -67,6 +71,8 @@ func TestTriggerBuildOmitsJenkinsErrorBody(t *testing.T) {
 }
 
 func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/job/app/7/replay/" {
@@ -84,7 +90,7 @@ func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
 </html>`))
 	})
 
-	mainScript, loadedScripts, enabled, rebuildEnabled, err := api.ReplayScripts(testutil.Context(t), "app", 7)
+	mainScript, loadedScripts, enabled, rebuildEnabled, err := api.ReplayScripts(loggerCtx, "app", 7)
 	r.NoError(err, "ReplayScripts() error")
 	r.Equal("pipeline { echo 'main' }", mainScript, "main script")
 	r.Equal("echo 'loaded'", loadedScripts["Script1_groovy"], "loaded script")
@@ -93,6 +99,8 @@ func TestReplayScriptsFetchesNativeReplayAction(t *testing.T) {
 }
 
 func TestReplayBuildSubmitsNativeReplayJSONForm(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var gotJSON string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -110,7 +118,7 @@ func TestReplayBuildSubmitsNativeReplayJSONForm(t *testing.T) {
 		}
 	})
 
-	redirect, err := api.ReplayBuild(testutil.Context(t), "app", 7, "pipeline { echo 'new' }", map[string]string{"Script1.groovy": "echo 'loaded'"}, false)
+	redirect, err := api.ReplayBuild(loggerCtx, "app", 7, "pipeline { echo 'new' }", map[string]string{"Script1.groovy": "echo 'loaded'"}, false)
 	r.NoError(err, "ReplayBuild() error")
 	r.Equal("https://jenkins.example.com/job/app/", redirect, "redirect")
 	var form map[string]string
@@ -129,6 +137,8 @@ func TestReplayScriptsHTMLIgnoresInitialTextareaNewline(t *testing.T) {
 }
 
 func TestReplayBuildUsesNativeRebuildEndpointForUnchangedReplay(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var gotPath string
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -143,12 +153,14 @@ func TestReplayBuildUsesNativeRebuildEndpointForUnchangedReplay(t *testing.T) {
 		}
 	})
 
-	_, err := api.ReplayBuild(testutil.Context(t), "app", 7, "", nil, true)
+	_, err := api.ReplayBuild(loggerCtx, "app", 7, "", nil, true)
 	r.NoError(err, "ReplayBuild() error")
 	r.Equal("/job/app/7/replay/rebuild", gotPath, "rebuild path")
 }
 
 func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var tree string
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +186,7 @@ func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
 		}`)
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 7, model.TestCaseFilter{Status: "PASSED"}, 2)
+	got, err := api.TestReport(loggerCtx, "app", 7, model.TestCaseFilter{Status: "PASSED"}, 2)
 	r.NoError(err, "TestReport() error")
 	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]", tree, "tree query")
 	r.Equal(4, got.TotalCount, "summary total should remain full report count")
@@ -187,6 +199,8 @@ func TestTestReportFiltersCasesBeforeLimit(t *testing.T) {
 }
 
 func TestTestReportFiltersByRegexAndDuration(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/job/app/8/testReport/api/json" {
@@ -215,7 +229,7 @@ func TestTestReportFiltersByRegexAndDuration(t *testing.T) {
 	minMillis := int64(1000)
 	maxMillis := int64(2000)
 
-	got, err := api.TestReport(testutil.Context(t), "app", 8, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 8, model.TestCaseFilter{
 		Status:            "failed",
 		SuiteNameContains: "auth",
 		CaseNameRegex:     "^Login",
@@ -231,6 +245,8 @@ func TestTestReportFiltersByRegexAndDuration(t *testing.T) {
 }
 
 func TestTestReportFetchesFailureDetailsForExactFollowUp(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -270,7 +286,7 @@ func TestTestReportFetchesFailureDetailsForExactFollowUp(t *testing.T) {
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 9, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 9, model.TestCaseFilter{
 		SuiteName: "AuthSuite",
 		ClassName: "example.AuthTest",
 		CaseName:  "Login",
@@ -287,6 +303,8 @@ func TestTestReportFetchesFailureDetailsForExactFollowUp(t *testing.T) {
 }
 
 func TestTestReportUsesJenkinsSafeNameForCaseDetailURL(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -318,7 +336,7 @@ func TestTestReportUsesJenkinsSafeNameForCaseDetailURL(t *testing.T) {
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 13, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 13, model.TestCaseFilter{
 		CaseName: "case with spaces",
 	}, 50)
 	r.NoError(err, "TestReport() error")
@@ -330,6 +348,8 @@ func TestTestReportUsesJenkinsSafeNameForCaseDetailURL(t *testing.T) {
 }
 
 func TestTestReportUsesJenkinsSafeNameForLegacyCaseDetailURL(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -362,7 +382,7 @@ func TestTestReportUsesJenkinsSafeNameForLegacyCaseDetailURL(t *testing.T) {
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 16, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 16, model.TestCaseFilter{
 		ClassName: "CalendarRulesTest",
 		CaseName:  "testShouldRefreshSeasonalCutoffDate",
 	}, 10)
@@ -380,6 +400,8 @@ func TestTestReportUsesJenkinsSafeNameForLegacyCaseDetailURL(t *testing.T) {
 }
 
 func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -412,7 +434,7 @@ func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 17, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 17, model.TestCaseFilter{
 		ClassName: "CalendarRulesTest",
 		CaseName:  "test should refresh seasonal cutoff date",
 	}, 10)
@@ -429,6 +451,8 @@ func TestTestReportDerivesJenkinsSafeNameWhenCompactMetadataOmitsIt(t *testing.T
 }
 
 func TestTestReportExactFollowUpFetchesDetailsFromClassChildURL(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -468,7 +492,7 @@ func TestTestReportExactFollowUpFetchesDetailsFromClassChildURL(t *testing.T) {
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 18, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 18, model.TestCaseFilter{
 		ClassName: "PublicHolidayTest",
 		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
 	}, 10)
@@ -495,6 +519,8 @@ func TestTestReportExactFollowUpFetchesDetailsFromClassChildURL(t *testing.T) {
 }
 
 func TestTestReportExactFollowUpReturnsCompactMatchWhenDetailLookup404s(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -518,7 +544,7 @@ func TestTestReportExactFollowUpReturnsCompactMatchWhenDetailLookup404s(t *testi
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 19, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 19, model.TestCaseFilter{
 		ClassName: "PublicHolidayTest",
 		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
 	}, 10)
@@ -539,6 +565,8 @@ func TestTestReportExactFollowUpReturnsCompactMatchWhenDetailLookup404s(t *testi
 }
 
 func TestTestReportExactFollowUpFetchesDetailsFromClassDepthChild(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -579,7 +607,7 @@ func TestTestReportExactFollowUpFetchesDetailsFromClassDepthChild(t *testing.T) 
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 20, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 20, model.TestCaseFilter{
 		ClassName: "PublicHolidayTest",
 		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
 	}, 10)
@@ -605,6 +633,8 @@ func TestTestReportExactFollowUpFetchesDetailsFromClassDepthChild(t *testing.T) 
 }
 
 func TestTestReportExactFollowUpFallsBackWhenClassDepthExceedsLimit(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		switch {
@@ -635,7 +665,7 @@ func TestTestReportExactFollowUpFallsBackWhenClassDepthExceedsLimit(t *testing.T
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 21, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 21, model.TestCaseFilter{
 		ClassName: "PublicHolidayTest",
 		CaseName:  "testThisShouldBeUpdatedFor2026GrandFinal",
 	}, 10)
@@ -662,6 +692,8 @@ func TestTestCaseDetailPathsUseJenkinsSafeNameForLegacyURLs(t *testing.T) {
 }
 
 func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var tree string
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -684,7 +716,7 @@ func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
 		}`)
 	})
 
-	got, err := api.CompactTestReport(testutil.Context(t), "app", 10)
+	got, err := api.CompactTestReport(loggerCtx, "app", 10)
 	r.NoError(err, "CompactTestReport() error")
 	r.Equal("totalCount,failCount,skipCount,passCount,suites[name,cases[className,name,safeName,status,duration]]", tree, "tree query")
 	r.Len(got.Suites, 1, "suite count")
@@ -694,6 +726,8 @@ func TestCompactTestReportUsesTreeAndOmitsFailureText(t *testing.T) {
 }
 
 func TestTestReportExactFollowUpUsesClassEndpointWhenCompactMetadataIsTooLarge(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -726,7 +760,7 @@ func TestTestReportExactFollowUpUsesClassEndpointWhenCompactMetadataIsTooLarge(t
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 11, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 11, model.TestCaseFilter{
 		ClassName: "example.AuthTest",
 		CaseName:  "case with spaces",
 	}, 50)
@@ -744,6 +778,8 @@ func TestTestReportExactFollowUpUsesClassEndpointWhenCompactMetadataIsTooLarge(t
 }
 
 func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteFilter(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -756,7 +792,7 @@ func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteFilter(t *t
 		http.NotFound(w, req)
 	})
 
-	_, err := api.TestReport(testutil.Context(t), "app", 12, model.TestCaseFilter{
+	_, err := api.TestReport(loggerCtx, "app", 12, model.TestCaseFilter{
 		SuiteName: "OtherSuite",
 		ClassName: "example.AuthTest",
 		CaseName:  "Login",
@@ -772,6 +808,8 @@ func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteFilter(t *t
 }
 
 func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteSubstringFilter(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	var paths []string
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -784,7 +822,7 @@ func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteSubstringFi
 		http.NotFound(w, req)
 	})
 
-	_, err := api.TestReport(testutil.Context(t), "app", 15, model.TestCaseFilter{
+	_, err := api.TestReport(loggerCtx, "app", 15, model.TestCaseFilter{
 		SuiteNameContains: "auth",
 		ClassName:         "example.AuthTest",
 		CaseName:          "Login",
@@ -800,6 +838,8 @@ func TestTestReportExactFollowUpDoesNotBypassCompactMetadataWithSuiteSubstringFi
 }
 
 func TestTestReportExactFollowUpAppliesFiltersAfterClassEndpointLookup(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
 		switch {
@@ -829,7 +869,7 @@ func TestTestReportExactFollowUpAppliesFiltersAfterClassEndpointLookup(t *testin
 		}
 	})
 
-	got, err := api.TestReport(testutil.Context(t), "app", 14, model.TestCaseFilter{
+	got, err := api.TestReport(loggerCtx, "app", 14, model.TestCaseFilter{
 		ClassName: "example.AuthTest",
 		CaseName:  "Login",
 		Status:    "PASSED",
@@ -841,12 +881,14 @@ func TestTestReportExactFollowUpAppliesFiltersAfterClassEndpointLookup(t *testin
 }
 
 func TestTestReportRejectsInvalidRegex(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
 
-	_, err := api.TestReport(testutil.Context(t), "app", 1, model.TestCaseFilter{SuiteNameRegex: "["}, 50)
+	_, err := api.TestReport(loggerCtx, "app", 1, model.TestCaseFilter{SuiteNameRegex: "["}, 50)
 	r.Error(err, "TestReport() accepted invalid regex")
 	appErr, ok := err.(*apperrors.Error)
 	r.True(ok, "error type")
@@ -854,6 +896,8 @@ func TestTestReportRejectsInvalidRegex(t *testing.T) {
 }
 
 func TestSearchLogPagesProgressiveLogUntilMatch(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := "start\n" + strings.Repeat("noise\n", 5) + "compiler error: boom\nend\n"
 	var starts []string
@@ -871,7 +915,7 @@ func TestSearchLogPagesProgressiveLogUntilMatch(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	})
 
-	got, err := api.SearchLog(testutil.Context(t), "app", 7, 0, "error", 12, 200, 20, 0)
+	got, err := api.SearchLog(loggerCtx, "app", 7, 0, "error", 12, 200, 20, 0)
 	r.NoError(err, "SearchLog() error")
 	r.Greater(len(starts), 1, "search should page through multiple progressive chunks")
 	r.Len(got.Matches, 1, "matches")
@@ -883,6 +927,8 @@ func TestSearchLogPagesProgressiveLogUntilMatch(t *testing.T) {
 }
 
 func TestSearchLogReusesCachedPagesAcrossQueries(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := strings.Repeat("noise line\n", 20) + "alpha marker\nbeta marker\n"
 	var requests atomic.Int32
@@ -895,26 +941,28 @@ func TestSearchLogReusesCachedPagesAcrossQueries(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	}))
 	t.Cleanup(server.Close)
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err)
 	cache, err := logcache.New(t.TempDir(), 100, 1024*1024)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(cache.Close()) })
 	api := NewWithLogCache("work", client, cache)
 
-	alpha, err := api.SearchLog(testutil.Context(t), "app", 7, 0, "alpha", 32, 1024, 20, 0)
+	alpha, err := api.SearchLog(loggerCtx, "app", 7, 0, "alpha", 32, 1024, 20, 0)
 	r.NoError(err)
 	r.Len(alpha.Matches, 1)
 	firstRequestCount := requests.Load()
 	r.Positive(firstRequestCount)
 
-	beta, err := api.SearchLog(testutil.Context(t), "app", 7, 0, "beta", 32, 1024, 20, 0)
+	beta, err := api.SearchLog(loggerCtx, "app", 7, 0, "beta", 32, 1024, 20, 0)
 	r.NoError(err)
 	r.Len(beta.Matches, 1)
 	r.Equal(firstRequestCount, requests.Load(), "second query should reuse every raw log page")
 }
 
 func TestGetLogReusesFixedCachePageAcrossOffsets(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := strings.Repeat("x", logCachePageBytes+128)
 	var requests atomic.Int32
@@ -927,23 +975,25 @@ func TestGetLogReusesFixedCachePageAcrossOffsets(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	}))
 	t.Cleanup(server.Close)
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err)
 	cache, err := logcache.New(t.TempDir(), 100, 4*logCachePageBytes)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(cache.Close()) })
 	api := NewWithLogCache("work", client, cache)
 
-	first, err := api.GetLog(testutil.Context(t), "app", 7, 0, 64)
+	first, err := api.GetLog(loggerCtx, "app", 7, 0, 64)
 	r.NoError(err)
 	r.Len(first.Text, 64)
-	second, err := api.GetLog(testutil.Context(t), "app", 7, 64, 64)
+	second, err := api.GetLog(loggerCtx, "app", 7, 64, 64)
 	r.NoError(err)
 	r.Len(second.Text, 64)
 	r.Equal(int32(1), requests.Load(), "overlapping ranges should reuse one fixed cache page")
 }
 
 func TestGetLogKeepsRunningFrontierDistinctFromTruncation(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Text-Size", "7")
@@ -951,14 +1001,14 @@ func TestGetLogKeepsRunningFrontierDistinctFromTruncation(t *testing.T) {
 		_, _ = io.WriteString(w, "running")
 	}))
 	t.Cleanup(server.Close)
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "work", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "work", URL: server.URL})
 	r.NoError(err)
 	cache, err := logcache.New(t.TempDir(), 100, 2*logCachePageBytes)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(cache.Close()) })
 	api := NewWithLogCache("work", client, cache)
 
-	got, err := api.GetLog(testutil.Context(t), "app", 7, 0, 64)
+	got, err := api.GetLog(loggerCtx, "app", 7, 0, 64)
 	r.NoError(err)
 	r.Equal("running", got.Text)
 	r.True(got.More, "running log should report that more data may arrive")
@@ -966,6 +1016,8 @@ func TestGetLogKeepsRunningFrontierDistinctFromTruncation(t *testing.T) {
 }
 
 func TestTailLogUsesProgressiveTextSize(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := strings.Repeat("prefix-", 20) + "last-ten!!"
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -976,13 +1028,15 @@ func TestTailLogUsesProgressiveTextSize(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	})
 
-	got, err := api.TailLog(testutil.Context(t), "app", 7, 10)
+	got, err := api.TailLog(loggerCtx, "app", 7, 10)
 	r.NoError(err)
 	r.Equal("last-ten!!", got.Text)
 	r.Equal(int64(len(log)-10), got.Start)
 }
 
 func TestPipelineNodeLogUsesBoundedProgressiveTail(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	const totalSize = int64(9 * 1024 * 1024)
 	tail := strings.Repeat("t", 64)
@@ -1008,7 +1062,7 @@ func TestPipelineNodeLogUsesBoundedProgressiveTail(t *testing.T) {
 		}
 	})
 
-	got, err := api.PipelineNodeLog(testutil.Context(t), "app", 7, "23", 64)
+	got, err := api.PipelineNodeLog(loggerCtx, "app", 7, "23", 64)
 	r.NoError(err)
 	r.Equal("23", got.NodeID)
 	r.Equal(model.PipelineStatusSuccess, got.NodeStatus)
@@ -1020,6 +1074,8 @@ func TestPipelineNodeLogUsesBoundedProgressiveTail(t *testing.T) {
 }
 
 func TestPipelineNodeLogCoalescesConcurrentEquivalentRequests(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := strings.Repeat("node log\n", 128)
 	var requests atomic.Int32
@@ -1039,7 +1095,7 @@ func TestPipelineNodeLogCoalescesConcurrentEquivalentRequests(t *testing.T) {
 	errs := make(chan error, callers)
 	for range callers {
 		go func() {
-			got, err := api.PipelineNodeLog(testutil.Context(t), "app", 9, "41", 64)
+			got, err := api.PipelineNodeLog(loggerCtx, "app", 9, "41", 64)
 			if err == nil && got.Text != log[len(log)-64:] {
 				err = fmt.Errorf("unexpected tail %q", got.Text)
 			}
@@ -1050,18 +1106,20 @@ func TestPipelineNodeLogCoalescesConcurrentEquivalentRequests(t *testing.T) {
 		r.NoError(<-errs)
 	}
 	r.Equal(int32(3), requests.Load(), "concurrent callers should share metadata, the size probe, and the data page")
-	_, err := api.PipelineNodeLog(testutil.Context(t), "app", 9, "41", 64)
+	_, err := api.PipelineNodeLog(loggerCtx, "app", 9, "41", 64)
 	r.NoError(err)
 	r.Equal(int32(3), requests.Load(), "completed node log should remain cached")
 }
 
 func TestPipelineNodeLogClassifiesProgressiveHTTPFailure(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	api := newTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.NotFound(w, nil)
 	})
 
-	_, err := api.PipelineNodeLog(testutil.Context(t), "app", 7, "missing", 64)
+	_, err := api.PipelineNodeLog(loggerCtx, "app", 7, "missing", 64)
 	r.Error(err)
 	var appErr *apperrors.Error
 	r.ErrorAs(err, &appErr)
@@ -1086,6 +1144,8 @@ func TestPipelineNodeStatusTerminality(t *testing.T) {
 }
 
 func TestSearchLogStopsAtScanBudget(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := strings.Repeat("noise\n", 20)
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -1100,7 +1160,7 @@ func TestSearchLogStopsAtScanBudget(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	})
 
-	got, err := api.SearchLog(testutil.Context(t), "app", 8, 0, "error", 10, 15, 20, 0)
+	got, err := api.SearchLog(loggerCtx, "app", 8, 0, "error", 10, 15, 20, 0)
 	r.NoError(err, "SearchLog() error")
 	r.Empty(got.Matches, "matches")
 	r.Equal(int64(15), got.ScannedBytes, "scanned bytes")
@@ -1111,6 +1171,8 @@ func TestSearchLogStopsAtScanBudget(t *testing.T) {
 }
 
 func TestSearchLogCanContinueAfterMatchLimitWithinChunk(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	log := "first error\nnoise\nsecond error\n"
 	api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -1124,7 +1186,7 @@ func TestSearchLogCanContinueAfterMatchLimitWithinChunk(t *testing.T) {
 		_, _ = io.WriteString(w, log[start:])
 	})
 
-	first, err := api.SearchLog(testutil.Context(t), "app", 9, 0, "error", 1024, 1024, 1, 0)
+	first, err := api.SearchLog(loggerCtx, "app", 9, 0, "error", 1024, 1024, 1, 0)
 	r.NoError(err, "first SearchLog() error")
 	r.Len(first.Matches, 1, "first matches")
 	r.Equal("first error", first.Matches[0].Text, "first match")
@@ -1133,7 +1195,7 @@ func TestSearchLogCanContinueAfterMatchLimitWithinChunk(t *testing.T) {
 	r.Positive(first.NextStart, "first next start")
 	r.Less(first.NextStart, int64(len(log)), "first next start should not skip the rest of the scanned chunk")
 
-	second, err := api.SearchLog(testutil.Context(t), "app", 9, first.NextStart, "error", 1024, 1024, 1, 0)
+	second, err := api.SearchLog(loggerCtx, "app", 9, first.NextStart, "error", 1024, 1024, 1, 0)
 	r.NoError(err, "second SearchLog() error")
 	r.Len(second.Matches, 1, "second matches")
 	r.Equal("second error", second.Matches[0].Text, "second match")
@@ -1141,23 +1203,27 @@ func TestSearchLogCanContinueAfterMatchLimitWithinChunk(t *testing.T) {
 }
 
 func newTestAPI(t *testing.T, handler http.HandlerFunc) *API {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 	r := require.New(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "test", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "test", URL: server.URL})
 	r.NoError(err, "client New()")
 	return New("test", client)
 }
 
 func newTestAPIWithLogCache(t *testing.T, handler http.HandlerFunc) *API {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 	r := require.New(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	client, err := jenkinsclient.New(testutil.Context(t), config.ControllerConfig{ID: "test", URL: server.URL})
+	client, err := jenkinsclient.New(loggerCtx, config.ControllerConfig{ID: "test", URL: server.URL})
 	r.NoError(err, "client New()")
 	cache, err := logcache.New(t.TempDir(), 100, 4*logCachePageBytes)
 	r.NoError(err, "logcache New()")
