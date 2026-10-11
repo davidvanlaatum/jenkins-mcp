@@ -116,4 +116,6 @@ func TestUpdateCheckLogsWithContextLogger(t *testing.T) {
 	record = handler.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == "update check failed" })
 	r.NotNil(record)
 	r.Equal("updates", record["component"])
+	r.NotEmpty(record["err"])
+	r.NotContains(record, "error")
 }

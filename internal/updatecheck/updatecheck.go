@@ -96,7 +96,7 @@ func (c *Checker) checkAndLog(ctx context.Context) {
 	result, err := c.Check(ctx)
 	if err != nil {
 		c.setError(err)
-		logging.FromContext(ctx).DebugContext(ctx, "update check failed", "error", err)
+		logging.FromContext(ctx).DebugContext(ctx, "update check failed", logging.Err(err))
 		return
 	}
 	c.setResult(result)

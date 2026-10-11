@@ -12,6 +12,7 @@ import (
 
 	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
+	"github.com/davidvanlaatum/dvgoutils"
 	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1062,12 +1063,7 @@ func TestEnrichedToolLoggerFlowsToJenkins(t *testing.T) {
 		if !slices.Contains(messages, record.Msg) {
 			continue
 		}
-		count := 0
-		for _, attr := range record.Attrs {
-			if attr.Key == "tool" {
-				count++
-			}
-		}
+		count := dvgoutils.CountSlice(record.Attrs, func(attr slog.Attr) bool { return attr.Key == "tool" })
 		r.Equal(1, count, "tool attribute should appear once per event: %s", record.Msg)
 	}
 }

@@ -135,7 +135,7 @@ func (c *Client) DoLimited(ctx context.Context, method, path string, query url.V
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return 0, nil, nil, false, err
 		}
-		logging.FromContext(ctx).WarnContext(ctx, "Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), "error", err)
+		logging.FromContext(ctx).WarnContext(ctx, "Jenkins request failed", "method", method, "url", req.URL.Redacted(), "duration_ms", time.Since(started).Milliseconds(), logging.Err(err))
 		return 0, nil, nil, false, apperrors.Wrap(apperrors.CodeUnavailable, "Jenkins request failed", err.Error())
 	}
 	defer func() { _ = res.Body.Close() }()
@@ -194,7 +194,7 @@ func (c *Client) clearCrumbSession(ctx context.Context) {
 
 	c.crumb = nil
 	if err := c.jar.Reset(); err != nil {
-		logging.FromContext(ctx).WarnContext(ctx, "failed to reset Jenkins cookie jar", "error", err)
+		logging.FromContext(ctx).WarnContext(ctx, "failed to reset Jenkins cookie jar", logging.Err(err))
 	}
 }
 
