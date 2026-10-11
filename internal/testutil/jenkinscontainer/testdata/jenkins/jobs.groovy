@@ -1,3 +1,7 @@
+folder('example-polling-folder') {
+    description('Folder without a job SCM polling endpoint.')
+}
+
 freeStyleJob('example-freestyle') {
     description('Buildable freestyle job created by Job DSL for jenkins-mcp integration tests.')
     steps {

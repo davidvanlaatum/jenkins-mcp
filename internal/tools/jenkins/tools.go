@@ -2295,6 +2295,29 @@ func watchContextError(err error) error {
 	return err
 }
 
+type PollSCMRequest struct {
+	Controller string `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
+	Job        string `json:"job" jsonschema:"Jenkins job path, using / for folders; polling requires an enabled job with a configured Poll SCM trigger"`
+}
+
+type PollSCMResponse = model.SCMPollResult
+
+func PollSCM(ctx context.Context, deps Deps, in PollSCMRequest) (PollSCMResponse, error) {
+	if !deps.Config.Mutations.Enabled {
+		return PollSCMResponse{}, apperrors.New(apperrors.CodeMutationDisabled, "mutating Jenkins tools are disabled")
+	}
+	if err := validation.JobPath(in.Job); err != nil {
+		return PollSCMResponse{}, apperrors.Wrap(apperrors.CodeInvalidRequest, err.Error(), map[string]any{"job": in.Job})
+	}
+	api, err := apiFor(deps, in.Controller)
+	if err != nil {
+		return PollSCMResponse{}, err
+	}
+	result, err := api.PollSCM(ctx, in.Job)
+	emit(deps, in.Controller, "poll_scm", in.Job, err)
+	return result, err
+}
+
 type TriggerBuildRequest struct {
 	Controller string            `json:"controller,omitempty" jsonschema:"Jenkins controller id; defaults to configured default controller"`
 	Job        string            `json:"job" jsonschema:"Jenkins job path, using / for folders"`
