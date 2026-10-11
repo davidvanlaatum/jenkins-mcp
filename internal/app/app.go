@@ -24,10 +24,8 @@ import (
 var Version = "0.1.0-dev"
 
 type Server struct {
-	ctx           context.Context
 	mcp           *mcpserver.Server
 	updateChecker *updatecheck.Checker
-	logFile       *os.File
 	logCache      *logcache.Cache
 }
 
@@ -55,17 +53,11 @@ func SelfUpdate(ctx context.Context, cfg config.UpdateCheckConfig, force bool) (
 }
 
 func New(ctx context.Context, cfg config.Config) (*Server, error) {
-	logWriter, logFile, err := newLogWriter(cfg.Logging)
-	if err != nil {
-		return nil, err
-	}
-	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel(cfg.Logging.Level)}))
-	ctx = logging.WithLogger(ctx, logger)
+	var err error
 	var sharedLogCache *logcache.Cache
 	if cfg.LogCache.Enabled {
 		sharedLogCache, err = logcache.New("", maxLogCacheEntries, cfg.LogCache.MaxBytes)
 		if err != nil {
-			_ = closeLogFile(logFile)
 			return nil, err
 		}
 	}
@@ -74,7 +66,6 @@ func New(ctx context.Context, cfg config.Config) (*Server, error) {
 		httpClient, err := jenkinsclient.New(ctx, controller)
 		if err != nil {
 			_ = closeLogCache(sharedLogCache)
-			_ = closeLogFile(logFile)
 			return nil, err
 		}
 		clients[controller.ID] = jenkinsapi.NewWithLogCache(controller.ID, httpClient, sharedLogCache)
@@ -82,12 +73,10 @@ func New(ctx context.Context, cfg config.Config) (*Server, error) {
 	auditer, err := audit.New(cfg.Audit)
 	if err != nil {
 		_ = closeLogCache(sharedLogCache)
-		_ = closeLogFile(logFile)
 		return nil, err
 	}
 	updateChecker := updatecheck.New(cfg.Updates, Version)
 	return &Server{
-		ctx: ctx,
 		mcp: mcpserver.New(ctx, mcpserver.Dependencies{
 			Config:       cfg,
 			Jenkins:      clients,
@@ -104,9 +93,20 @@ func New(ctx context.Context, cfg config.Config) (*Server, error) {
 			},
 		}),
 		updateChecker: updateChecker,
-		logFile:       logFile,
 		logCache:      sharedLogCache,
 	}, nil
+}
+
+// ConfigureLogging attaches the configured startup logger without retaining the
+// context. The caller owns the returned cleanup function and passes the returned
+// context to both construction and server operations.
+func ConfigureLogging(ctx context.Context, cfg config.LoggingConfig) (context.Context, func() error, error) {
+	logWriter, logFile, err := newLogWriter(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel(cfg.Level)}))
+	return logging.WithLogger(ctx, logger), func() error { return closeLogFile(logFile) }, nil
 }
 
 func newLogWriter(cfg config.LoggingConfig) (io.Writer, *os.File, error) {
@@ -153,9 +153,8 @@ func logLevel(level string) slog.Level {
 	}
 }
 
-func (s *Server) RunStdio() error {
+func (s *Server) RunStdio(ctx context.Context) error {
 	defer func() { _ = closeLogCache(s.logCache) }()
-	defer func() { _ = closeLogFile(s.logFile) }()
-	s.updateChecker.Start(s.ctx)
-	return stdiotransport.Run(s.ctx, s.mcp.Raw())
+	s.updateChecker.Start(ctx)
+	return stdiotransport.Run(ctx, s.mcp.Raw())
 }

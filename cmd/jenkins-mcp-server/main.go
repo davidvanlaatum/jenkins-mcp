@@ -64,11 +64,17 @@ func run() error {
 		return err
 	}
 
+	ctx, closeLogging, err := app.ConfigureLogging(ctx, cfg.Logging)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeLogging() }()
+
 	server, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if err := server.RunStdio(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := server.RunStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
