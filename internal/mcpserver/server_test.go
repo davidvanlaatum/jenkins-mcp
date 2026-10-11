@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
+
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
+
+	"github.com/davidvanlaatum/dvgoutils"
+	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -22,6 +26,8 @@ import (
 )
 
 func TestToolErrorsAreStructured(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -29,11 +35,11 @@ func TestToolErrorsAreStructured(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -63,6 +69,8 @@ func TestToolErrorsAreStructured(t *testing.T) {
 }
 
 func TestToolErrorsDoNotExposeJenkinsHTMLResponseBodies(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	const htmlBody = `<!doctype html><html><body><h1>Jenkins failed</h1><p>secret-html-token</p></body></html>`
 	jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -78,9 +86,9 @@ func TestToolErrorsDoNotExposeJenkinsHTMLResponseBodies(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	controller, err := jenkinsclient.New(cfg.Controllers[0], slog.New(slog.NewTextHandler(io.Discard, nil)))
+	controller, err := jenkinsclient.New(loggerCtx, cfg.Controllers[0])
 	r.NoError(err, "jenkins client")
-	server := New(Dependencies{
+	server := New(loggerCtx, Dependencies{
 		Config:  cfg,
 		Jenkins: map[string]*jenkinsapi.API{"default": jenkinsapi.New("default", controller)},
 		Audit:   &audit.Logger{},
@@ -89,7 +97,7 @@ func TestToolErrorsDoNotExposeJenkinsHTMLResponseBodies(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -141,11 +149,11 @@ func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
 		Logging:           config.LoggingConfig{ToolCalls: true, ToolPayloads: true},
 	}
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Logger: logger, Version: "test"}).Raw()
+	server := New(logging.WithLogger(t.Context(), logger), Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := logging.WithLogger(t.Context(), logger)
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -173,6 +181,8 @@ func TestToolCallsAreLoggedWithPayloadsWhenEnabled(t *testing.T) {
 }
 
 func TestRegisteredToolNames(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -180,11 +190,11 @@ func TestRegisteredToolNames(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -239,6 +249,8 @@ func TestRegisteredToolNames(t *testing.T) {
 }
 
 func TestRegisteredToolAnnotations(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -246,11 +258,11 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -325,6 +337,8 @@ func ptrBool(v bool) *bool {
 }
 
 func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -332,11 +346,11 @@ func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test-version"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test-version"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -368,6 +382,8 @@ func TestServerNegotiatesLatestProtocolCapabilities(t *testing.T) {
 }
 
 func TestRegisteredToolTitles(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -375,11 +391,11 @@ func TestRegisteredToolTitles(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -436,6 +452,8 @@ func TestRegisteredToolTitles(t *testing.T) {
 }
 
 func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -443,11 +461,11 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -484,6 +502,8 @@ func TestListJobsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 }
 
 func TestListBuildsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -491,11 +511,11 @@ func TestListBuildsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -533,6 +553,8 @@ func TestListBuildsToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
 }
 
 func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -540,11 +562,11 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -588,6 +610,8 @@ func TestGetTestReportToolDescriptionAndInputSchemaMentionFilters(t *testing.T) 
 }
 
 func TestGetFlakyTestStatsToolDescriptionAndInputSchema(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -595,11 +619,11 @@ func TestGetFlakyTestStatsToolDescriptionAndInputSchema(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -637,6 +661,8 @@ func TestGetFlakyTestStatsToolDescriptionAndInputSchema(t *testing.T) {
 }
 
 func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -644,11 +670,11 @@ func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -684,6 +710,8 @@ func TestRegisteredToolInputSchemaPropertiesHaveDescriptions(t *testing.T) {
 }
 
 func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -691,11 +719,11 @@ func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -742,6 +770,8 @@ func TestRegisteredToolOutputSchemaPropertiesHaveDescriptions(t *testing.T) {
 }
 
 func TestGetBuildOutputSchemaDescribesCoverageFields(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -749,11 +779,11 @@ func TestGetBuildOutputSchemaDescribesCoverageFields(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -780,6 +810,8 @@ func TestGetBuildOutputSchemaDescribesCoverageFields(t *testing.T) {
 }
 
 func TestGetTestReportOutputSchemaOmitsInternalSafeName(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	cfg := config.Config{
 		DefaultController: "default",
@@ -787,11 +819,11 @@ func TestGetTestReportOutputSchemaOmitsInternalSafeName(t *testing.T) {
 		Limits:            config.Defaults().Limits,
 		Artifacts:         config.Defaults().Artifacts,
 	}
-	server := New(Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
+	server := New(loggerCtx, Dependencies{Config: cfg, Jenkins: nil, Audit: &audit.Logger{}, Version: "test"}).Raw()
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	r.NoError(err, "server connect")
 	defer func() { _ = serverSession.Close() }()
@@ -925,4 +957,113 @@ func TestSchemaDescriptionsAllowPropertiesNamedProperties(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestToolLoggingConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		level    slog.Level
+		config   config.LoggingConfig
+		logged   bool
+		payloads bool
+	}{
+		{name: "debug", level: slog.LevelDebug, logged: true},
+		{name: "info disabled", level: slog.LevelInfo},
+		{name: "explicit calls", level: slog.LevelInfo, config: config.LoggingConfig{ToolCalls: true}, logged: true},
+		{name: "explicit payloads", level: slog.LevelInfo, config: config.LoggingConfig{ToolPayloads: true}, logged: true, payloads: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
+			r := require.New(t)
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: tc.level})).With("request_id", "session-test")
+			ctx := logging.WithLogger(t.Context(), logger)
+			server := New(loggerCtx, Dependencies{Config: config.Defaults(), Version: "test"}).Raw()
+			type response struct {
+				Value string `json:"value" jsonschema:"Test response value"`
+			}
+			addTool(server, readOnlyTool("context_test", "Context test", "Verify logger propagation"), tc.config, func(ctx context.Context, in struct{}) (response, error) {
+				logging.FromContext(ctx).DebugContext(ctx, "handler reached")
+				return response{Value: "ok"}, nil
+			})
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+			serverSession, err := server.Connect(ctx, serverTransport, nil)
+			r.NoError(err)
+			defer func() { _ = serverSession.Close() }()
+			clientSession, err := client.Connect(ctx, clientTransport, nil)
+			r.NoError(err)
+			defer func() { _ = clientSession.Close() }()
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "context_test", Arguments: map[string]any{}})
+			r.NoError(err)
+			r.False(result.IsError)
+			got := logs.String()
+			if tc.logged {
+				r.Contains(got, "tool_call_started")
+				r.Contains(got, "tool_call_finished")
+				r.Contains(got, "request_id=session-test")
+			} else {
+				r.Empty(got)
+			}
+			if tc.level == slog.LevelDebug {
+				r.Contains(got, "handler reached")
+
+			}
+			if tc.payloads {
+				r.Contains(got, "arguments=")
+				r.Contains(got, "response_payload=")
+			} else {
+				r.NotContains(got, "arguments=")
+				r.NotContains(got, "response_payload=")
+			}
+		})
+	}
+}
+
+func TestEnrichedToolLoggerFlowsToJenkins(t *testing.T) {
+	r := require.New(t)
+	ctx, collector, logger := testhandler.SetupTestHandler(t)
+	ctx = logging.WithLogger(ctx, logger.With("request_id", "session-test"))
+	jenkins := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer jenkins.Close()
+	controller, err := jenkinsclient.New(ctx, config.ControllerConfig{ID: "test", URL: jenkins.URL})
+	r.NoError(err)
+	server := New(ctx, Dependencies{Config: config.Defaults(), Version: "test"}).Raw()
+	type response struct {
+		Value string `json:"value" jsonschema:"Test response value"`
+	}
+	addTool(server, readOnlyTool("context_test", "Context test", "Verify logger propagation"), config.LoggingConfig{}, func(ctx context.Context, in struct{}) (response, error) {
+		logging.FromContext(ctx).DebugContext(ctx, "handler reached")
+		_, _, _, err := controller.Do(ctx, http.MethodGet, "api/json", nil, nil, nil)
+		return response{Value: "ok"}, err
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	r.NoError(err)
+	defer func() { _ = serverSession.Close() }()
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	r.NoError(err)
+	defer func() { _ = clientSession.Close() }()
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "context_test", Arguments: map[string]any{}})
+	r.NoError(err)
+	r.False(result.IsError)
+	messages := []string{"tool_call_started", "handler reached", "sending Jenkins request", "completed Jenkins request", "tool_call_finished"}
+	for _, message := range messages {
+		record := collector.FirstMatchingLogForAssert(func(record testhandler.LogRecord) bool { return record.Msg == message })
+		r.NotNil(record, message)
+		r.Equal("session-test", record["request_id"], message)
+		r.Equal("context_test", record["tool"], message)
+	}
+	records := collector.Logs()
+	for _, record := range records {
+		if !slices.Contains(messages, record.Msg) {
+			continue
+		}
+		count := dvgoutils.CountSlice(record.Attrs, func(attr slog.Attr) bool { return attr.Key == "tool" })
+		r.Equal(1, count, "tool attribute should appear once per event: %s", record.Msg)
+	}
 }

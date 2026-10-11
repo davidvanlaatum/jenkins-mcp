@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
+
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +23,8 @@ func TestPollSCM(t *testing.T) {
 		{"server error", 200, 500, apperrors.CodeJenkins},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			polls := 0
 			api := newTestAPI(t, func(w http.ResponseWriter, req *http.Request) {
@@ -46,7 +50,7 @@ func TestPollSCM(t *testing.T) {
 					http.NotFound(w, req)
 				}
 			})
-			got, err := api.PollSCM(t.Context(), "folder/app")
+			got, err := api.PollSCM(loggerCtx, "folder/app")
 			if tc.code == "" {
 				r.NoError(err)
 				r.True(got.Accepted)

@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/davidvanlaatum/dvgoutils/logging"
 
 	"github.com/david/jenkins-mcp/internal/config"
 )
@@ -45,18 +46,16 @@ type Status struct {
 type Checker struct {
 	cfg        config.UpdateCheckConfig
 	version    string
-	logger     *slog.Logger
 	httpClient *http.Client
 	releaseURL string
 	mu         sync.RWMutex
 	status     Status
 }
 
-func New(cfg config.UpdateCheckConfig, version string, logger *slog.Logger) *Checker {
+func New(cfg config.UpdateCheckConfig, version string) *Checker {
 	return &Checker{
 		cfg:        cfg,
 		version:    version,
-		logger:     logger,
 		httpClient: &http.Client{Timeout: defaultTimeout},
 		releaseURL: cfg.ReleaseURL(),
 		status: Status{
@@ -97,12 +96,12 @@ func (c *Checker) checkAndLog(ctx context.Context) {
 	result, err := c.Check(ctx)
 	if err != nil {
 		c.setError(err)
-		c.logger.Debug("update check failed", "error", err)
+		logging.FromContext(ctx).DebugContext(ctx, "update check failed", logging.Err(err))
 		return
 	}
 	c.setResult(result)
 	if result.UpdateAvailable {
-		c.logger.Warn("new jenkins-mcp release available", "current", result.CurrentVersion, "latest", result.LatestVersion, "url", result.ReleaseURL)
+		logging.FromContext(ctx).WarnContext(ctx, "new jenkins-mcp release available", "current", result.CurrentVersion, "latest", result.LatestVersion, "url", result.ReleaseURL)
 	}
 }
 

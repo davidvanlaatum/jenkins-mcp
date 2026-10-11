@@ -8,6 +8,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
+
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
@@ -77,6 +79,8 @@ func TestWatchCacheConcurrentAccess(t *testing.T) {
 func TestWatchBuildDefaultIgnoresStagesUntilCompletionOrTimeout(t *testing.T) {
 	for _, complete := range []bool{false, true} {
 		t.Run(fmt.Sprintf("complete=%v", complete), func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			polls := 0
 			deps := newWatchTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
@@ -99,10 +103,10 @@ func TestWatchBuildDefaultIgnoresStagesUntilCompletionOrTimeout(t *testing.T) {
 					http.NotFound(w, req)
 				}
 			}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 100, MaxWaitTimeoutMs: 100, MaxConsecutiveFailures: 3})
-			first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+			first, err := WatchBuild(loggerCtx, deps, WatchBuildRequest{Job: "app", Build: 42})
 			r.NoError(err)
 			r.Len(first.Watch.State, 22)
-			second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: first.Watch.State})
+			second, err := WatchBuild(loggerCtx, deps, WatchBuildRequest{Job: "app", Build: 42, LastState: first.Watch.State})
 			r.NoError(err)
 			r.Equal(complete, second.Watch.Complete)
 			r.Equal(!complete, second.Watch.TimedOut)
@@ -115,7 +119,7 @@ func TestWatchBuildDefaultIgnoresStagesUntilCompletionOrTimeout(t *testing.T) {
 				r.NoError(err)
 				r.Equal(first.Watch.Build.URL, cached.Summary.URL)
 				r.Equal("SUCCESS", string(cached.Stages[0].Status))
-				resumed, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: second.Watch.State, WaitFor: "change"})
+				resumed, err := WatchBuild(loggerCtx, deps, WatchBuildRequest{Job: "app", Build: 42, LastState: second.Watch.State, WaitFor: "change"})
 				r.NoError(err)
 				r.True(resumed.Watch.TimedOut, "resume uses latest cached stages")
 			}
@@ -125,7 +129,9 @@ func TestWatchBuildDefaultIgnoresStagesUntilCompletionOrTimeout(t *testing.T) {
 }
 
 func TestWatchBuildRejectsInvalidWaitMode(t *testing.T) {
-	_, err := WatchBuild(t.Context(), Deps{}, WatchBuildRequest{Job: "app", Build: 42, WaitFor: "bogus"})
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
+	_, err := WatchBuild(loggerCtx, Deps{}, WatchBuildRequest{Job: "app", Build: 42, WaitFor: "bogus"})
 	require.New(t).Error(err)
 	assertAppErrorCode(t, err, apperrors.CodeInvalidRequest)
 }
@@ -190,6 +196,8 @@ func TestWatchBuildPreservesLatestObservationAcrossPollingFailures(t *testing.T)
 	for _, scenario := range []struct{ complete, initialInput bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 		complete, initialInput := scenario.complete, scenario.initialInput
 		t.Run(fmt.Sprintf("complete=%v/input=%v", complete, initialInput), func(t *testing.T) {
+			loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 			r := require.New(t)
 			polls := 0
 			deps := newWatchTestDeps(t, func(w http.ResponseWriter, req *http.Request) {
@@ -226,9 +234,9 @@ func TestWatchBuildPreservesLatestObservationAcrossPollingFailures(t *testing.T)
 					http.NotFound(w, req)
 				}
 			}, config.WatchConfig{PollIntervalMs: 5, DefaultWaitTimeoutMs: 50, MaxWaitTimeoutMs: 50, MaxConsecutiveFailures: 100})
-			first, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42})
+			first, err := WatchBuild(loggerCtx, deps, WatchBuildRequest{Job: "app", Build: 42})
 			r.NoError(err)
-			second, err := WatchBuild(t.Context(), deps, WatchBuildRequest{Job: "app", Build: 42, LastState: first.Watch.State})
+			second, err := WatchBuild(loggerCtx, deps, WatchBuildRequest{Job: "app", Build: 42, LastState: first.Watch.State})
 			r.NoError(err)
 			r.Equal(complete, second.Watch.Complete)
 			r.Equal(!complete, second.Watch.TimedOut)

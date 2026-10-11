@@ -5,12 +5,13 @@ package jenkinscontainer
 import (
 	"embed"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -56,6 +57,8 @@ type Fixture struct {
 }
 
 func Start(t *testing.T) Fixture {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
@@ -63,7 +66,7 @@ func Start(t *testing.T) Fixture {
 	r.NoError(err, "read Jenkins integration image testdata")
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 
-	ctx := t.Context()
+	ctx := loggerCtx
 	container, err := testcontainers.Run(
 		ctx,
 		"",
@@ -93,6 +96,8 @@ func Start(t *testing.T) Fixture {
 }
 
 func (f Fixture) Controller(t *testing.T, user string) (config.Config, *jenkinsapi.API) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
@@ -107,12 +112,14 @@ func (f Fixture) Controller(t *testing.T, user string) (config.Config, *jenkinsa
 		Username: user,
 		Token:    token,
 	}}
-	client, err := jenkinsclient.New(cfg.Controllers[0], slog.Default())
+	client, err := jenkinsclient.New(loggerCtx, cfg.Controllers[0])
 	r.NoError(err, "Jenkins client")
 	return cfg, jenkinsapi.New(ControllerID, client)
 }
 
 func waitForJobs(t *testing.T, api *jenkinsapi.API) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
@@ -120,7 +127,7 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 	var lastErr error
 	var missing []string
 	for time.Now().Before(deadline) {
-		jobs, err := api.ListJobs(t.Context(), "")
+		jobs, err := api.ListJobs(loggerCtx, "")
 		if err == nil {
 			seen := map[string]bool{}
 			for _, job := range jobs {
@@ -140,13 +147,15 @@ func waitForJobs(t *testing.T, api *jenkinsapi.API) {
 }
 
 func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result model.BuildResult) int {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
 	deadline := time.Now().Add(90 * time.Second)
 	var lastSeen string
 	for time.Now().Before(deadline) {
-		builds, err := api.ListBuilds(t.Context(), job, 0, 1)
+		builds, err := api.ListBuilds(loggerCtx, job, 0, 1)
 		if err != nil {
 			lastSeen = err.Error()
 			time.Sleep(500 * time.Millisecond)
@@ -170,13 +179,15 @@ func WaitForBuildResult(t *testing.T, api *jenkinsapi.API, job string, result mo
 }
 
 func WaitForBuildNumberResult(t *testing.T, api *jenkinsapi.API, job string, number int, result model.BuildResult) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	t.Helper()
 
 	r := require.New(t)
 	deadline := time.Now().Add(90 * time.Second)
 	var lastSeen string
 	for time.Now().Before(deadline) {
-		build, err := api.GetBuild(t.Context(), job, number)
+		build, err := api.GetBuild(loggerCtx, job, number)
 		if err != nil {
 			lastSeen = err.Error()
 			time.Sleep(500 * time.Millisecond)

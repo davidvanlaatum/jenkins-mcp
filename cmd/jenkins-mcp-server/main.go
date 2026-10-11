@@ -64,7 +64,13 @@ func run() error {
 		return err
 	}
 
-	server, err := app.New(cfg)
+	ctx, closeLogging, err := app.ConfigureLogging(ctx, cfg.Logging)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeLogging() }()
+
+	server, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidvanlaatum/dvgoutils/logging/testhandler"
+
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/testutil/jenkinscontainer"
 	jenkinstools "github.com/david/jenkins-mcp/internal/tools/jenkins"
@@ -13,6 +15,8 @@ import (
 )
 
 func TestIntegrationLockableResources(t *testing.T) {
+	loggerCtx, _, _ := testhandler.SetupTestHandler(t)
+
 	r := require.New(t)
 	fixture := jenkinscontainer.Start(t)
 	_, admin := fixture.Controller(t, "admin")
@@ -33,10 +37,10 @@ func TestIntegrationLockableResources(t *testing.T) {
 	r.Equal(1, listed.Labels[0].ReservedCount)
 
 	// The input step keeps the resource locked without relying on a fixed sleep.
-	_, err := admin.TriggerBuild(t.Context(), "example-lock-holder", nil)
+	_, err := admin.TriggerBuild(loggerCtx, "example-lock-holder", nil)
 	r.NoError(err)
 	r.Eventually(func() bool {
-		resources, _, err := admin.ListLockableResources(t.Context())
+		resources, _, err := admin.ListLockableResources(loggerCtx)
 		if err != nil {
 			return false
 		}
@@ -47,7 +51,7 @@ func TestIntegrationLockableResources(t *testing.T) {
 		}
 		return false
 	}, 45*time.Second, 250*time.Millisecond, "holder acquired resource")
-	t.Cleanup(func() { _ = admin.CancelBuild(t.Context(), "example-lock-holder", 1) })
+	t.Cleanup(func() { _ = admin.CancelBuild(loggerCtx, "example-lock-holder", 1) })
 	held := callIntegrationTool[jenkinstools.ListLockableResourcesResponse](t, session, "jenkins_list_lockable_resources", map[string]any{"state": "locked"})
 	r.Len(held.Resources, 1)
 	r.False(*held.Resources[0].Free)
