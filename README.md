@@ -27,7 +27,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch the bounded tail of a Pipeline flow node log through Jenkins' progressive-text endpoint, coalescing concurrent requests and reusing disk-cached raw pages when log caching is enabled.
-- `jenkins_get_replay_scripts`: Fetch the native Jenkins Pipeline Replay script set for a build, including primary and loaded-script identifiers, script content, truncation metadata, and digests.
+- `jenkins_get_replay_scripts`: Fetch Jenkins Pipeline Replay scripts through the optional Jenkins MCP plugin (`getReplayScripts`), with native Replay HTML fallback when the plugin/tool is unavailable. Includes primary and loaded-script identifiers, script content, truncation metadata, and digests. The plugin requires `Item.EXTENDED_READ`; script access does not establish replay permission.
 - `jenkins_watch_build`: Long-poll with short server-held state IDs (30-minute idle expiry) for completion or required input by default; use `waitFor: "change"` for stage-status changes; timeout responses omit build and Pipeline snapshots; prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
 - `jenkins_watch_queue_item`: Uses short server-held state IDs (30-minute idle expiry) and omits item/build snapshots on timeout. Long-poll a Jenkins queue item watcher until stable queue fields change, it receives an executable build, is cancelled, disappears, or times out; Jenkins `why` text changes such as quiet-period countdowns do not wake the long poll by themselves, and prefer the configured wait default (2 minutes) or longer supported waits, shortening `waitTimeoutMs` only for known or observed host timeouts.
 - `jenkins_list_issues`: List paged, typed Warnings NG issues for a build. The response includes discovered tools so callers can select a tool when a build has multiple Warnings NG results.
@@ -45,7 +45,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 ### Jenkins-Mutating Tools
 - `jenkins_poll_scm`: Request SCM polling for a job; Jenkins decides whether changes warrant a build. Requires mutations to be enabled and a configured Poll SCM trigger on an enabled job. `accepted` confirms request acceptance only, not polling completion or a queued build.
 - `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
-- `jenkins_replay_build`: Replay a Jenkins Pipeline build through native Pipeline Replay, optionally with full primary and loaded-script overrides.
+- `jenkins_replay_build`: Replay a Jenkins Pipeline build through native Pipeline Replay, optionally with full primary and loaded-script overrides. Omitted overrides use originals from the same plugin-first retrieval path; Jenkins enforces replay permission and sandbox checks.
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
 - `jenkins_cancel_build`: Cancel a running Jenkins build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
 

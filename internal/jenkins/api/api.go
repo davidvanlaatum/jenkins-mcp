@@ -2123,6 +2123,13 @@ func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]st
 }
 
 func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string, map[string]string, bool, bool, error) {
+	mainScript, loadedScripts, available, err := a.pluginReplayScripts(ctx, job, number)
+	if available || err != nil {
+		// These flags only indicate that originals are available to the existing
+		// callers. The plugin cannot establish replay permission; native scheduling
+		// still enforces ReplayAction permission and sandbox checks.
+		return mainScript, loadedScripts, err == nil, err == nil, err
+	}
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/"
 	status, body, _, err := a.client.GetText(ctx, path, nil)
 	if err != nil {
@@ -2131,7 +2138,7 @@ func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string
 	if status < 200 || status > 299 {
 		return "", nil, false, false, jenkinsHTTPError(status)
 	}
-	mainScript, loadedScripts, err := parseReplayScriptsPage(string(body))
+	mainScript, loadedScripts, err = parseReplayScriptsPage(string(body))
 	if err != nil {
 		return "", nil, false, false, err
 	}

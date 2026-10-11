@@ -4,6 +4,7 @@
 - **`cmd/jenkins-mcp-server`**: Entry point. Sets up logging, loads config, and starts the server.
 - **`internal/app`**: Orchestrates dependency injection (config, audit, jenkins clients) and server lifecycle.
 - **`internal/mcpserver`**: Defines the MCP server, registers tools, and handles error normalization.
+- **`internal/mcpclient`**: Owns upstream MCP SDK transport and discovery for Jenkins plugin tools. Keep SDK imports/types inside `internal/mcpserver` and `internal/mcpclient`, including tests; pass ordinary JSON and normalized errors to Jenkins API/tool packages.
 - **`internal/tools/jenkins`**: Implements the tool handlers (business logic). This is the primary place for adding tool functionality.
 - **`internal/jenkins/api`**: High-level Jenkins API logic, including tree-query construction and result parsing.
 - **`internal/jenkins/client`**: Low-level HTTP client. Handles basic auth, Jenkins crumbs (CSRF), JSON decoding, and response size limits.

@@ -4,9 +4,12 @@ The project follows the package boundaries from the planning architecture:
 
 - `cmd/jenkins-mcp-server`: thin process entrypoint.
 - `internal/app`: dependency assembly.
-- `internal/mcpserver`: official Go MCP SDK boundary.
+- `internal/mcpserver`: inbound official Go MCP SDK adapter.
+- `internal/mcpclient`: outbound official Go MCP SDK adapter for Jenkins plugin tools. It accepts controller HTTP policy and returns project-owned JSON/error values; SDK types stay inside the adapter.
 - `internal/tools/jenkins`: tool contracts and orchestration.
 - `internal/jenkins`: Jenkins HTTP client, endpoint adapters, and normalized models.
+
+MCP SDK imports are restricted to these two adapters, including in tests. `scripts/check-boundaries.sh` enforces this boundary; Jenkins API and tool packages must not import SDK types.
 
 Run validation with:
 
