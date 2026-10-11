@@ -2082,6 +2082,25 @@ func firstPositive(values ...int) int {
 	return 0
 }
 
+func (a *API) PollSCM(ctx context.Context, job string) (model.SCMPollResult, error) {
+	// Distinguish a missing job from an existing job without a polling endpoint.
+	if _, err := a.GetJob(ctx, job); err != nil {
+		return model.SCMPollResult{}, err
+	}
+	status, _, _, err := a.client.Post(ctx, urlx.JobPath(job)+"/polling", nil, nil)
+	if err != nil {
+		return model.SCMPollResult{}, err
+	}
+	if status == http.StatusNotFound {
+		return model.SCMPollResult{}, apperrors.Wrap(apperrors.CodeUnsupported, "Jenkins job does not expose an SCM polling endpoint", map[string]any{"job": job, "status": status})
+	}
+	if status < 200 || status > 399 {
+		return model.SCMPollResult{}, jenkinsHTTPError(status)
+	}
+	// Jenkins redirects after calling schedulePolling without returning its result.
+	return model.SCMPollResult{Accepted: true}, nil
+}
+
 func (a *API) TriggerBuild(ctx context.Context, job string, params map[string]string) (string, error) {
 	path := urlx.JobPath(job) + "/build"
 	var form url.Values

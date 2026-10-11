@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/audit"
 	"github.com/david/jenkins-mcp/internal/config"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
+	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/testutil/jenkinscontainer"
 )
@@ -133,6 +135,59 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.Equal("freestyle", fallback.Config.Summary.Kind, "fallback summary kind")
 		r.Contains(configWarningCodes(fallback.Config.Warnings), "config_permission_denied", "fallback warning")
 		assertConfigParameterRedaction(t, fallback.Config.Summary.Parameters)
+	})
+
+	t.Run("SCM polling", func(t *testing.T) {
+		r := require.New(t)
+		session, cleanup := connectIntegrationMCPWithConfig(t, jenkins, "admin", func(cfg *config.Config) {
+			cfg.Mutations.Enabled = true
+		})
+		defer cleanup()
+		cfg, _ := jenkins.Controller(t, "admin")
+		httpClient, err := jenkinsclient.New(cfg.Controllers[0], nil)
+		r.NoError(err)
+		for _, job := range []string{"example-freestyle", "example-pipeline"} {
+			before, err := api.GetJob(t.Context(), job)
+			r.NoError(err)
+			got := callIntegrationTool[model.SCMPollResult](t, session, "jenkins_poll_scm", map[string]any{"job": job})
+			r.True(got.Accepted, "polling request accepted for %s", job)
+			// These jobs have no SCM changes: observe the actual polling log,
+			// then ensure polling did not unconditionally trigger a build.
+			r.Eventually(func() bool {
+				status, body, _, err := httpClient.GetText(t.Context(), "job/"+job+"/scmPollLog/", nil)
+				return err == nil && status == 200 && strings.Contains(string(body), "No changes")
+			}, 15*time.Second, 100*time.Millisecond, "polling should run for %s", job)
+			after, err := api.GetJob(t.Context(), job)
+			r.NoError(err)
+			r.Equal(before.NextBuildNumber, after.NextBuildNumber, "unchanged SCM should not trigger a build")
+			r.False(after.InQueue)
+		}
+		for _, tc := range []struct{ job, code string }{
+			{"missing-polling-job", "not_found"},
+			{"example-polling-folder", "unsupported"},
+		} {
+			payload := callIntegrationToolError(t, session, "jenkins_poll_scm", map[string]any{"job": tc.job})
+			r.Equal(tc.code, string(payload.Error.Code))
+		}
+		// The endpoint acknowledges even a job without a Poll SCM trigger.
+		before, err := api.GetJob(t.Context(), "example-artifacts")
+		r.NoError(err)
+		got := callIntegrationTool[model.SCMPollResult](t, session, "jenkins_poll_scm", map[string]any{"job": "example-artifacts"})
+		r.True(got.Accepted)
+		after, err := api.GetJob(t.Context(), "example-artifacts")
+		r.NoError(err)
+		r.Equal(before.NextBuildNumber, after.NextBuildNumber)
+		r.False(after.InQueue)
+		readOnly, readCleanup := connectIntegrationMCPWithConfig(t, jenkins, "read-only", func(cfg *config.Config) {
+			cfg.Mutations.Enabled = true
+		})
+		defer readCleanup()
+		payload := callIntegrationToolError(t, readOnly, "jenkins_poll_scm", map[string]any{"job": "example-freestyle"})
+		r.Equal("permission_denied", string(payload.Error.Code))
+		disabled, disabledCleanup := connectIntegrationMCP(t, jenkins, "admin")
+		defer disabledCleanup()
+		payload = callIntegrationToolError(t, disabled, "jenkins_poll_scm", map[string]any{"job": "example-freestyle"})
+		r.Equal("mutation_disabled", string(payload.Error.Code))
 	})
 
 	t.Run("permission-specific behavior", func(t *testing.T) {

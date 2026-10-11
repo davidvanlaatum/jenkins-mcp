@@ -9,6 +9,15 @@ workspace.mkdirs()
 def jobManagement = new JenkinsJobManagement(System.out, [:], workspace)
 new DslScriptLoader(jobManagement).runScript(script)
 
+// Empty schedules allow explicit polling without periodic background activity.
+['example-freestyle', 'example-pipeline'].each { jobName ->
+    def job = Jenkins.instance.getItemByFullName(jobName)
+    def trigger = new hudson.triggers.SCMTrigger('')
+    job.addTrigger(trigger)
+    trigger.start(job, true)
+    job.save()
+}
+
 ['example-freestyle', 'example-pipeline', 'example-junit', 'example-warnings', 'example-coverage'].each { jobName ->
     Jenkins.instance.getItemByFullName(jobName)?.scheduleBuild2(0)
 }

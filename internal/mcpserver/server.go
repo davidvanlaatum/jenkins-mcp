@@ -323,6 +323,9 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_watch_build", "Watch Build", "Bootstrap or long-poll a Jenkins build watcher. The first call without lastState returns immediately with a short server-held watch.state ID; pass that state back as lastState on later calls to wait until completion or required Pipeline input (default waitFor=completion_or_input); use waitFor=change to also wake on Pipeline stage-status or pending input changes. Timeout responses omit build and pipeline snapshots; continue with the returned ID. Invalid or expired lastState values return an error and must be re-bootstrapped. Prefer this over jenkins_get_build when waiting for progress."), func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
 		return jenkinstools.WatchBuild(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, additiveMutationTool("jenkins_poll_scm", "Poll SCM", "Request SCM polling for a Jenkins job. Jenkins decides whether source changes warrant a build. Acceptance does not confirm polling ran; disabled jobs or jobs without a Poll SCM trigger may do nothing. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.PollSCMRequest) (jenkinstools.PollSCMResponse, error) {
+		return jenkinstools.PollSCM(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {
 		return jenkinstools.TriggerBuild(ctx, s.deps, in)
 	})

@@ -34,12 +34,21 @@
 
 ## Jenkins-Mutating Tools
 
+- `jenkins_poll_scm`: Request SCM polling for a job; Jenkins decides whether changes warrant a build. Requires mutations to be enabled and a configured Poll SCM trigger on an enabled job. `accepted` confirms request acceptance only, not polling completion or a queued build.
 - `jenkins_trigger_build`: triggers a build or parameterized build.
 - `jenkins_replay_build`: replays a Pipeline build through Jenkins' native Pipeline Replay action. With no overrides, it uses Jenkins' unchanged Replay/Rebuild endpoint. With `mainScriptOverride` or `loadedScriptOverrides`, it fetches the original Replay script set, fills omitted scripts with their original content, and submits full replacement script bodies to Jenkins. `loadedScriptOverrides` keys must match loaded-script ids from `jenkins_get_replay_scripts`; omitted loaded scripts are replayed unchanged, and a loaded-script-only override reuses the original primary script. The response avoids script bodies and reports the source build, whether original scripts or overrides were used, overridden and included script identifiers, Jenkins' redirect URL, and a predicted `scheduledBuild` from the job `nextBuildNumber` captured before replay. Native Replay web endpoints usually redirect back to the job rather than exposing a queue item; if Jenkins returns a queue URL, it is included as `queueUrl`.
 - `jenkins_cancel_queue_item`: cancels a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
 - `jenkins_cancel_build`: stops a running build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
 
-Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Trigger, replay, and cancel attempts emit JSONL audit events when `audit.path` is configured. Artifact downloads are local file side effects rather than Jenkins mutations, so they remain available when Jenkins mutations are disabled.
+Jenkins-mutating tools require `mutations.enabled` or `JENKINS_MUTATIONS=true`. Polling, trigger, replay, and cancel attempts emit JSONL audit events when `audit.path` is configured. Artifact downloads are local file side effects rather than Jenkins mutations, so they remain available when Jenkins mutations are disabled.
+
+### SCM polling
+
+Call `jenkins_poll_scm` with `job` (including folders separated by `/`) and optionally `controller`. The tool uses the native job `POST /polling` endpoint with the existing authentication and CSRF handling. Jenkins Job/Read and Job/Build permissions are required.
+
+Freestyle and Pipeline jobs support this endpoint. Target individual branch jobs rather than multibranch parents or organization folders; this tool does not request branch indexing. Existing jobs without the endpoint return `unsupported`; missing jobs return `not_found`.
+
+The response is `{ "accepted": true }` when Jenkins accepts the request. Jenkins does not return the polling scheduling result: disabled jobs or jobs without a configured Poll SCM trigger may accept the request and do nothing. Configure SCM and Poll SCM first; Pipeline polling uses SCMs recorded by prior builds. Acceptance does not establish that polling started or completed, changes were detected, or a build was queued. Polling can run asynchronously and Jenkins may coalesce concurrent requests. Use existing job/build inspection tools to observe subsequent builds.
 
 ## MCP Discovery and Tool Caching
 

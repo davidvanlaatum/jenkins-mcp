@@ -2,6 +2,10 @@ package model
 
 import "encoding/json"
 
+type SCMPollResult struct {
+	Accepted bool `json:"accepted" jsonschema:"Whether Jenkins accepted the SCM polling request; does not confirm polling started or completed, changes were found, or a build was queued. Disabled jobs or jobs without a Poll SCM trigger may do nothing"`
+}
+
 type ControllerInfo struct {
 	ID          string `json:"id" jsonschema:"Configured Jenkins controller id"`
 	URL         string `json:"url,omitempty" jsonschema:"Base URL for the Jenkins controller"`
