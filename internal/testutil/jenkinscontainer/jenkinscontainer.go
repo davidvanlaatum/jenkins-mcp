@@ -45,6 +45,7 @@ var expectedJobs = []string{
 	"example-artifacts",
 	"example-config-inspection",
 	"example-pipeline",
+	"example-replay-loaded",
 	"example-watch-lifecycle",
 	"example-locks",
 	"example-lock-holder",

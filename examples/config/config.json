@@ -3,6 +3,7 @@
   "controllers": [
     {
       "id": "default",
+      "mcpPluginMode": "discover",
       "url": "https://jenkins.example.com",
       "username": "your-user",
       "token": "your-api-token"

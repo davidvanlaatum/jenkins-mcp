@@ -35,6 +35,33 @@ func TestLoadFromEnvironment(t *testing.T) {
 	r.Equal("<redacted>", cfg.Redacted().Controllers[0].Token, "token should be redacted")
 }
 
+func TestLoadControllerMCPPluginMode(t *testing.T) {
+	for _, mode := range []string{"", "discover", "off", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			r := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.json")
+			data, err := json.Marshal(map[string]any{"defaultController": "default", "controllers": []ControllerConfig{{ID: "default", URL: "https://jenkins.example.com", MCPPluginMode: mode}}})
+			r.NoError(err)
+			r.NoError(os.WriteFile(path, data, 0o600))
+			cfg, err := Load([]string{"--config", path}, nil)
+			if mode == "invalid" {
+				r.ErrorContains(err, "mcpPluginMode must be discover or off")
+			} else {
+				r.NoError(err)
+				r.Equal(mode, cfg.Controllers[0].MCPPluginMode)
+			}
+		})
+	}
+	// Environment overrides file-based selection, including multiple controllers.
+	r := require.New(t)
+	cfg := Defaults()
+	cfg.Controllers = []ControllerConfig{{ID: "one", MCPPluginMode: "discover"}, {ID: "two"}}
+	applyEnv(&cfg, map[string]string{"JENKINS_MCP_PLUGIN_MODE": "off"})
+	for _, controller := range cfg.Controllers {
+		r.Equal("off", controller.MCPPluginMode)
+	}
+}
+
 func TestLoadLogCacheFromFile(t *testing.T) {
 	r := require.New(t)
 	path := filepath.Join(t.TempDir(), "config.json")

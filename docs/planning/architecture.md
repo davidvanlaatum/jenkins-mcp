@@ -23,6 +23,8 @@ date: '2026-04-25'
 
 # Architecture Decision Document
 
+Implementation update for issue #114: upstream Jenkins MCP plugin calls use a dedicated `internal/mcpclient` SDK adapter. The SDK boundary now includes `internal/mcpserver` and `internal/mcpclient`; Jenkins HTTP/API and tool packages continue to use project-owned JSON and normalized errors. The boundary checker and development guide enforce this approved extension to the original server-only design.
+
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
 
 ## Project Context Analysis

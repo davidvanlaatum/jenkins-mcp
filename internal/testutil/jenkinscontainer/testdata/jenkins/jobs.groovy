@@ -243,3 +243,20 @@ stage('holding') {
         }
     }
 }
+
+pipelineJob('example-replay-loaded') {
+    description('Pipeline with multiple loaded scripts for plugin Replay interoperability.')
+    definition {
+        cps {
+            script("""
+node {
+    writeFile file: 'one.groovy', text: "echo 'loaded one original'"
+    writeFile file: 'two.groovy', text: "echo 'loaded two original'"
+    load 'one.groovy'
+    load 'two.groovy'
+}
+""")
+            sandbox()
+        }
+    }
+}

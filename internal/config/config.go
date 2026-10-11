@@ -22,6 +22,7 @@ const starterConfig = `{
   "controllers": [
     {
       "id": "default",
+      "mcpPluginMode": "discover",
       "url": "https://jenkins.example.com",
       "username": "jenkins-user",
       "token": "jenkins-api-token"
@@ -48,10 +49,11 @@ type Config struct {
 }
 
 type ControllerConfig struct {
-	ID       string `json:"id"`
-	URL      string `json:"url"`
-	Username string `json:"username,omitempty"`
-	Token    string `json:"token,omitempty"`
+	ID            string `json:"id"`
+	URL           string `json:"url"`
+	Username      string `json:"username,omitempty"`
+	Token         string `json:"token,omitempty"`
+	MCPPluginMode string `json:"mcpPluginMode,omitempty" jsonschema:"Upstream Jenkins MCP plugin selection: discover (default, including when omitted) discovers tools and uses HTML only when absent; off skips upstream MCP and forces native Replay HTML"`
 }
 
 type MutationConfig struct {
@@ -347,6 +349,9 @@ func (c Config) Validate() error {
 	seen := map[string]bool{}
 	hasDefault := false
 	for _, controller := range c.Controllers {
+		if controller.MCPPluginMode != "" && controller.MCPPluginMode != "discover" && controller.MCPPluginMode != "off" {
+			return fmt.Errorf("controller %q mcpPluginMode must be discover or off", controller.ID)
+		}
 		if strings.TrimSpace(controller.ID) == "" {
 			return errors.New("controller id is required")
 		}
@@ -535,6 +540,11 @@ func applyEnv(cfg *Config, env map[string]string) {
 		}
 		cfg.Controllers = []ControllerConfig{{ID: id, URL: env["JENKINS_URL"], Username: env["JENKINS_USER"], Token: env["JENKINS_TOKEN"]}}
 		cfg.DefaultController = id
+	}
+	if v := env["JENKINS_MCP_PLUGIN_MODE"]; v != "" {
+		for i := range cfg.Controllers {
+			cfg.Controllers[i].MCPPluginMode = v
+		}
 	}
 	if v := env["JENKINS_MUTATIONS"]; v != "" {
 		cfg.Mutations.Enabled = strings.EqualFold(v, "true") || v == "1"

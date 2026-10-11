@@ -27,6 +27,20 @@ func TestReadBoundedReturnsErrorWhenLimitExceeded(t *testing.T) {
 	r.Error(err, "readBounded() should fail when response exceeds limit")
 }
 
+func TestMCPPluginOffSkipsAllUpstreamRequests(t *testing.T) {
+	r := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		t.Errorf("forced-off mode issued an upstream request: %s", req.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+	c, err := New(config.ControllerConfig{URL: server.URL, MCPPluginMode: "off"}, nil)
+	r.NoError(err)
+	result, available, err := c.CallMCPTool(t.Context(), "getReplayScripts", nil)
+	r.NoError(err)
+	r.False(available)
+	r.Nil(result)
+}
+
 func TestReadBoundedAllowsExactLimit(t *testing.T) {
 	r := require.New(t)
 
