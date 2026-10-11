@@ -24,6 +24,7 @@ import (
 	jenkinsclient "github.com/david/jenkins-mcp/internal/jenkins/client"
 	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/testutil/jenkinscontainer"
+	jenkinstools "github.com/david/jenkins-mcp/internal/tools/jenkins"
 )
 
 func TestIntegrationJenkinsMCP(t *testing.T) {
@@ -1223,22 +1224,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		replayedScript := strings.Replace(mainScript, "hello from pipeline", "hello from replay integration", 1)
 		r.NotEqual(mainScript, replayedScript, "replay script override should change the script")
 
-		replay := callIntegrationTool[struct {
-			Replay struct {
-				SourceBuild struct {
-					Job   string `json:"job"`
-					Build int    `json:"build"`
-				} `json:"sourceBuild"`
-				ScheduledBuild *struct {
-					Job   string `json:"job"`
-					Build int    `json:"build"`
-				} `json:"scheduledBuild"`
-				Replayed             bool     `json:"replayed"`
-				UsedOriginalScripts  bool     `json:"usedOriginalScripts"`
-				MainScriptOverridden bool     `json:"mainScriptOverridden"`
-				IncludedScriptIDs    []string `json:"includedScriptIds"`
-			} `json:"replay"`
-		}](t, clientSession, "jenkins_replay_build", map[string]any{
+		replay := callIntegrationTool[jenkinstools.ReplayBuildResponse](t, clientSession, "jenkins_replay_build", map[string]any{
 			"controller":         jenkinscontainer.ControllerID,
 			"job":                "example-pipeline",
 			"build":              pipelineBuild,
@@ -1249,12 +1235,14 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		r.True(replay.Replay.MainScriptOverridden, "main script should be marked overridden")
 		r.Equal("example-pipeline", replay.Replay.SourceBuild.Job, "replay source job")
 		r.Equal(pipelineBuild, replay.Replay.SourceBuild.Build, "replay source build")
-		r.NotNil(replay.Replay.ScheduledBuild, "replay should report predicted scheduled build")
-		r.Equal("example-pipeline", replay.Replay.ScheduledBuild.Job, "scheduled build job")
-		r.Greater(replay.Replay.ScheduledBuild.Build, pipelineBuild, "scheduled build number")
-		r.Contains(replay.Replay.IncludedScriptIDs, "main", "submitted script ids should include main")
-
-		jenkinscontainer.WaitForBuildNumberResult(t, api, "example-pipeline", replay.Replay.ScheduledBuild.Build, model.BuildResultSuccess)
+		r.Nil(replay.Replay.ScheduledBuild)
+		r.Equal("mcp_plugin", replay.Replay.Backend)
+		r.True(replay.Replay.QueueAuthoritative)
+		r.Contains(replay.Replay.IncludedScriptIDs, "main")
+		resolved := resolveReplayQueue(t, clientSession, replay.Replay.QueueID)
+		r.Equal("example-pipeline", resolved.Job)
+		r.Greater(resolved.Build, pipelineBuild)
+		jenkinscontainer.WaitForBuildNumberResult(t, api, "example-pipeline", resolved.Build, model.BuildResultSuccess)
 		replayedLog := callIntegrationTool[struct {
 			Log struct {
 				Text string `json:"text"`
@@ -1262,7 +1250,7 @@ func TestIntegrationJenkinsMCP(t *testing.T) {
 		}](t, clientSession, "jenkins_get_log", map[string]any{
 			"controller": jenkinscontainer.ControllerID,
 			"job":        "example-pipeline",
-			"build":      replay.Replay.ScheduledBuild.Build,
+			"build":      resolved.Build,
 			"maxBytes":   8192,
 		})
 		r.Contains(replayedLog.Log.Text, "hello from replay integration", "replayed build should run the edited script")

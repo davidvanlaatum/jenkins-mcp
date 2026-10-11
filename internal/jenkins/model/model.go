@@ -183,11 +183,15 @@ type ReplayScriptSet struct {
 }
 
 type ReplayBuild struct {
+	Backend                 string          `json:"backend" jsonschema:"Scheduling backend: mcp_plugin or native"`
+	QueueID                 int64           `json:"queueId,omitempty" jsonschema:"Authoritative Jenkins queue item id for jenkins_get_queue_item or jenkins_watch_queue_item"`
+	QueueAuthoritative      bool            `json:"queueAuthoritative" jsonschema:"Whether Jenkins supplied an actual queue reference rather than a predicted build number"`
+	ScheduledBuildPredicted bool            `json:"scheduledBuildPredicted" jsonschema:"Whether scheduledBuild is only a prediction and can differ under concurrent scheduling"`
 	SourceBuild             BuildReference  `json:"sourceBuild" jsonschema:"Jenkins build that was replayed"`
-	ScheduledBuild          *BuildReference `json:"scheduledBuild,omitempty" jsonschema:"Predicted build reference from the job nextBuildNumber captured before replay; Jenkins may still leave the item queued briefly"`
-	QueueURL                string          `json:"queueUrl,omitempty" jsonschema:"Jenkins queue item URL when the Replay endpoint exposes one"`
+	ScheduledBuild          *BuildReference `json:"scheduledBuild,omitempty" jsonschema:"Native fallback prediction from job nextBuildNumber; may differ under concurrent scheduling and is omitted for plugin scheduling"`
+	QueueURL                string          `json:"queueUrl,omitempty" jsonschema:"Authoritative Jenkins queue item URL when scheduling exposes one"`
 	RedirectURL             string          `json:"redirectUrl,omitempty" jsonschema:"Jenkins redirect URL returned by the native Replay web endpoint"`
-	Replayed                bool            `json:"replayed" jsonschema:"Whether Jenkins accepted the native Replay request"`
+	Replayed                bool            `json:"replayed" jsonschema:"Whether Jenkins accepted the Replay scheduling request"`
 	UsedOriginalScripts     bool            `json:"usedOriginalScripts" jsonschema:"Whether the replay used the original primary and loaded scripts without overrides"`
 	MainScriptOverridden    bool            `json:"mainScriptOverridden" jsonschema:"Whether the primary Pipeline script was overridden"`
 	LoadedScriptOverrideIDs []string        `json:"loadedScriptOverrideIds,omitempty" jsonschema:"Loaded Replay script identifiers overridden in the request"`

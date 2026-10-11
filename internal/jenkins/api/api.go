@@ -2126,8 +2126,8 @@ func (a *API) ReplayScripts(ctx context.Context, job string, number int) (string
 	mainScript, loadedScripts, available, err := a.pluginReplayScripts(ctx, job, number)
 	if available || err != nil {
 		// These flags only indicate that originals are available to the existing
-		// callers. The plugin cannot establish replay permission; native scheduling
-		// still enforces ReplayAction permission and sandbox checks.
+		// callers. Script retrieval cannot establish replay permission; both
+		// scheduling backends enforce ReplayAction permission and sandbox checks.
 		return mainScript, loadedScripts, err == nil, err == nil, err
 	}
 	path := urlx.JobPath(job) + "/" + strconv.Itoa(number) + "/replay/"

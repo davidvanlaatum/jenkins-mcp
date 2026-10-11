@@ -21,6 +21,12 @@ const maxMCPResponseBytes = 8 * 1024 * 1024
 // absent. Sessions are scoped to a single operation and never shared across
 // controllers, credentials, or calls.
 func CallTool(ctx context.Context, policy *http.Client, endpoint, username, token, name string, arguments any) (json.RawMessage, bool, error) {
+	return CallToolPrepared(ctx, policy, endpoint, username, token, name, func() (any, error) { return arguments, nil })
+}
+
+// CallToolPrepared prepares arguments only after discovery confirms the tool.
+// Preparation failures never send a tools/call request.
+func CallToolPrepared(ctx context.Context, policy *http.Client, endpoint, username, token, name string, prepare func() (any, error)) (json.RawMessage, bool, error) {
 	timeout := policy.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -59,6 +65,10 @@ func CallTool(ctx context.Context, policy *http.Client, endpoint, username, toke
 		}
 		for _, tool := range list.Tools {
 			if tool.Name == name {
+				arguments, err := prepare()
+				if err != nil {
+					return nil, true, err
+				}
 				result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: arguments})
 				if err != nil {
 					return nil, true, transport.normalize(err)
@@ -67,6 +77,11 @@ func CallTool(ctx context.Context, policy *http.Client, endpoint, username, toke
 					// Never copy upstream tool text (which may contain scripts or secrets)
 					// into the public normalized error.
 					return nil, true, apperrors.Wrap(apperrors.CodeJenkins, "Jenkins MCP tool failed", map[string]any{"tool": name})
+				}
+				// replayBuild currently returns the plugin's JSON text envelope.
+				// Keep the stricter structured-only contract for other tools.
+				if name == "replayBuild" && result.StructuredContent == nil {
+					return replayQueueResult(result)
 				}
 				if result.StructuredContent == nil {
 					return nil, true, apperrors.Wrap(apperrors.CodeJenkins, "Jenkins MCP tool returned no structured content", map[string]any{"tool": name})
@@ -189,4 +204,19 @@ func (b *mcpBoundedBody) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return n, err
+}
+
+func replayQueueResult(result *mcp.CallToolResult) (json.RawMessage, bool, error) {
+	if len(result.Content) == 1 {
+		if content, ok := result.Content[0].(*mcp.TextContent); ok {
+			var envelope struct {
+				Status string          `json:"status"`
+				Result json.RawMessage `json:"result"`
+			}
+			if json.Unmarshal([]byte(content.Text), &envelope) == nil && envelope.Status == "COMPLETED" && len(envelope.Result) > 0 {
+				return envelope.Result, true, nil
+			}
+		}
+	}
+	return nil, true, apperrors.Wrap(apperrors.CodeJenkins, "invalid Jenkins MCP replay queue response; scheduling outcome is uncertain, do not retry automatically", nil)
 }
