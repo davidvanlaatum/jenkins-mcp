@@ -210,6 +210,7 @@ func TestRegisteredToolNames(t *testing.T) {
 	slices.Sort(names)
 
 	want := []string{
+		"jenkins_abort_pipeline_input",
 		"jenkins_cancel_build",
 		"jenkins_cancel_queue_item",
 		"jenkins_download_artifact",
@@ -221,6 +222,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_get_job",
 		"jenkins_get_job_config",
 		"jenkins_get_log",
+		"jenkins_get_pipeline_inputs",
 		"jenkins_get_pipeline_node_log",
 		"jenkins_get_pipeline_run",
 		"jenkins_get_pipeline_stage",
@@ -235,6 +237,7 @@ func TestRegisteredToolNames(t *testing.T) {
 		"jenkins_list_nodes",
 		"jenkins_list_queue",
 		"jenkins_poll_scm",
+		"jenkins_proceed_pipeline_input",
 		"jenkins_read_artifact",
 		"jenkins_replay_build",
 		"jenkins_resolve_build_url",
@@ -304,6 +307,9 @@ func TestRegisteredToolAnnotations(t *testing.T) {
 		"jenkins_list_nodes":                   {readOnly: true},
 		"jenkins_list_queue":                   {readOnly: true},
 		"jenkins_download_artifact":            {destructive: ptrBool(false)},
+		"jenkins_get_pipeline_inputs":          {readOnly: true},
+		"jenkins_proceed_pipeline_input":       {destructive: ptrBool(false)},
+		"jenkins_abort_pipeline_input":         {destructive: ptrBool(true)},
 		"jenkins_poll_scm":                     {destructive: ptrBool(false)},
 		"jenkins_trigger_build":                {destructive: ptrBool(false)},
 		"jenkins_replay_build":                 {destructive: ptrBool(false)},
@@ -429,6 +435,9 @@ func TestRegisteredToolTitles(t *testing.T) {
 		"jenkins_list_issues":                  "List Issues",
 		"jenkins_get_changes":                  "Get Changes",
 		"jenkins_watch_build":                  "Watch Build",
+		"jenkins_get_pipeline_inputs":          "Get Pipeline Inputs",
+		"jenkins_proceed_pipeline_input":       "Proceed Pipeline Input",
+		"jenkins_abort_pipeline_input":         "Abort Pipeline Input",
 		"jenkins_poll_scm":                     "Poll SCM",
 		"jenkins_trigger_build":                "Trigger Build",
 		"jenkins_replay_build":                 "Replay Build",

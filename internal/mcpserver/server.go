@@ -17,6 +17,7 @@ import (
 	"github.com/david/jenkins-mcp/internal/config"
 	apperrors "github.com/david/jenkins-mcp/internal/errors"
 	jenkinsapi "github.com/david/jenkins-mcp/internal/jenkins/api"
+	"github.com/david/jenkins-mcp/internal/jenkins/model"
 	"github.com/david/jenkins-mcp/internal/selfupdate"
 	jenkinstools "github.com/david/jenkins-mcp/internal/tools/jenkins"
 	"github.com/david/jenkins-mcp/internal/updatecheck"
@@ -224,6 +225,14 @@ func payloadString(v any) string {
 }
 
 func requestPayload(req *mcp.CallToolRequest, fallback any) string {
+	// Input values can contain passwords under arbitrary parameter names.
+	// Redact before considering raw arguments, even with payload logging enabled.
+	if in, ok := fallback.(jenkinstools.ProceedPipelineInputRequest); ok {
+		return payloadString(struct {
+			jenkinstools.PipelineInputRequest
+			Parameters string `json:"parameters"`
+		}{in.PipelineInputRequest, "[REDACTED]"})
+	}
 	if req != nil && req.Params != nil && req.Params.Arguments != nil {
 		return string(req.Params.Arguments)
 	}
@@ -325,10 +334,19 @@ func (s *Server) register() {
 	addConfiguredTool(s, readOnlyTool("jenkins_watch_build", "Watch Build", "Bootstrap or long-poll a Jenkins build watcher. The first call without lastState returns immediately with a short server-held watch.state ID; pass that state back as lastState on later calls to wait until completion or required Pipeline input (default waitFor=completion_or_input); use waitFor=change to also wake on Pipeline stage-status or pending input changes. Timeout responses omit build and pipeline snapshots; continue with the returned ID. Invalid or expired lastState values return an error and must be re-bootstrapped. Prefer this over jenkins_get_build when waiting for progress."), func(ctx context.Context, in jenkinstools.WatchBuildRequest) (jenkinstools.WatchBuildResponse, error) {
 		return jenkinstools.WatchBuild(ctx, s.deps, in)
 	})
+	addConfiguredTool(s, readOnlyTool("jenkins_get_pipeline_inputs", "Get Pipeline Inputs", "Inspect pending native Pipeline input steps and parameter definitions without returning defaults."), func(ctx context.Context, in jenkinstools.BuildRequest) (jenkinstools.PipelineInputsResponse, error) {
+		return jenkinstools.PipelineInputs(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, additiveMutationTool("jenkins_proceed_pipeline_input", "Proceed Pipeline Input", "Approve a selected pending Pipeline input with all required parameter values. Jenkins enforces submitter permissions. Acceptance does not imply build completion. Do not retry an uncertain response automatically. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.ProceedPipelineInputRequest) (model.PipelineInputResult, error) {
+		return jenkinstools.ProceedPipelineInput(ctx, s.deps, in)
+	})
+	addConfiguredTool(s, destructiveMutationTool("jenkins_abort_pipeline_input", "Abort Pipeline Input", "Reject a selected pending Pipeline input; this can abort the Pipeline unless handled by its script. Do not retry an uncertain response automatically. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.PipelineInputRequest) (model.PipelineInputResult, error) {
+		return jenkinstools.AbortPipelineInput(ctx, s.deps, in)
+	})
 	addConfiguredTool(s, additiveMutationTool("jenkins_poll_scm", "Poll SCM", "Request SCM polling for a Jenkins job. Jenkins decides whether source changes warrant a build. Acceptance does not confirm polling ran; disabled jobs or jobs without a Poll SCM trigger may do nothing. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.PollSCMRequest) (jenkinstools.PollSCMResponse, error) {
 		return jenkinstools.PollSCM(ctx, s.deps, in)
 	})
-	addConfiguredTool(s, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {
+	addConfiguredTool(s, additiveMutationTool("jenkins_trigger_build", "Trigger Build", "Trigger a Jenkins build. First call jenkins_get_job to discover available build parameter definitions (names, types, descriptions, defaults, choices, and required flags), then supply selected values via the parameters map. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.TriggerBuildRequest) (jenkinstools.TriggerBuildResponse, error) {
 		return jenkinstools.TriggerBuild(ctx, s.deps, in)
 	})
 	addConfiguredTool(s, additiveMutationTool("jenkins_replay_build", "Replay Build", "Replay a Jenkins Pipeline build, preferring the Jenkins MCP plugin for an authoritative queueId to resolve with queue tools. Native fallback reports a predicted scheduledBuild. Supports full primary and loaded-script overrides. Scheduling errors never fall back or retry; inspect Jenkins before retrying an uncertain outcome. Disabled unless mutations.enabled is true."), func(ctx context.Context, in jenkinstools.ReplayBuildRequest) (jenkinstools.ReplayBuildResponse, error) {
