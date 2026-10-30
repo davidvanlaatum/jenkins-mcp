@@ -260,3 +260,32 @@ node {
         }
     }
 }
+
+pipelineJob('example-input') {
+    definition {
+        cps {
+            script('''
+stage('approval') {
+    def approver = input id: 'approve', message: 'Continue fixture?', submitter: 'admin', submitterParameter: 'APPROVER'
+    if (approver != 'admin') { error('Submitter identity was not preserved') }
+}
+stage('parameters') {
+    def response = input id: 'values', message: 'Supply fixture values', parameters: [
+        string(name: 'TARGET', defaultValue: 'default-target'),
+        booleanParam(name: 'CONFIRM', defaultValue: false),
+        choice(name: 'REGION', choices: ['east', 'west']),
+        text(name: 'NOTES', defaultValue: 'default-notes'),
+        password(name: 'SECRET', defaultValue: 'fixture-default-secret')
+    ]
+    if (response.TARGET != 'test-target' || response.CONFIRM != true || response.REGION != 'west' || response.NOTES != 'line one\\nline two' || response.SECRET.toString() != 'fixture-submitted-secret') {
+        error('Input values were not preserved')
+    }
+}
+stage('reject') {
+    input id: 'reject', message: 'Reject this fixture'
+}
+'''.stripIndent())
+            sandbox()
+        }
+    }
+}

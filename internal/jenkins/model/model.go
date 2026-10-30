@@ -597,3 +597,23 @@ type BuildLockStep struct {
 	ResourceNames        []string       `json:"resourceNames,omitempty" jsonschema:"Exact resource names only when the parameter description has a simple unambiguous resource form; these are requests, not proof of current ownership"`
 	Ambiguous            bool           `json:"ambiguous" jsonschema:"Whether the parameter description could not be interpreted as an exact resource name"`
 }
+
+// PipelineInput describes a pending native Pipeline Input Step.
+type PipelineInput struct {
+	ID         string                   `json:"id" jsonschema:"Jenkins identifier for this pending input step"`
+	Message    string                   `json:"message" jsonschema:"Prompt displayed by the Pipeline"`
+	OK         string                   `json:"ok,omitempty" jsonschema:"Label of the approval button when configured"`
+	Submitter  string                   `json:"submitter,omitempty" jsonschema:"Configured allowed submitter users or groups; Jenkins enforces authorization"`
+	Parameters []PipelineInputParameter `json:"parameters" jsonschema:"Parameters required to proceed; default values are intentionally omitted"`
+}
+type PipelineInputParameter struct {
+	Name        string   `json:"name" jsonschema:"Exact Jenkins parameter name"`
+	Description string   `json:"description,omitempty" jsonschema:"Description configured by the Pipeline"`
+	Type        string   `json:"type" jsonschema:"Parameter kind: string, text, boolean, choice, password, or unsupported"`
+	Choices     []string `json:"choices,omitempty" jsonschema:"Allowed values for a choice parameter"`
+	Supported   bool     `json:"supported" jsonschema:"Whether the proceed tool supports this parameter type"`
+}
+type PipelineInputResult struct {
+	InputID  string `json:"inputId" jsonschema:"Identifier of the input step Jenkins accepted a response for"`
+	Accepted bool   `json:"accepted" jsonschema:"Whether Jenkins accepted the input response; does not imply build completion"`
+}

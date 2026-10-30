@@ -24,6 +24,7 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_get_flaky_test_stats`: Analyze compact JUnit status histories across selected builds of one job, dropping builds with no JUnit data, counting state transitions only across reported observations, and returning sorted flaky-test stats plus failed-build references for targeted follow-up.
 - `jenkins_list_lockable_resources`: List Lockable Resources plugin resources with exact name, name substring, exact label, and state filters, pagination, and client-computed label availability counts.
 - `jenkins_get_build_lockable_resources`: Inspect lock step requests visible in one build's exported Pipeline flow graph without listing controller resources; includes raw arguments and visibility warnings.
+- `jenkins_get_pipeline_inputs`: Inspect pending Pipeline input prompts and parameter definitions without exposing defaults.
 - `jenkins_get_pipeline_run`: Fetch Pipeline stage evidence and pending input-step actions using the Jenkins Pipeline REST wfapi endpoint.
 - `jenkins_get_pipeline_stage`: Fetch Pipeline stage details and child flow nodes for a stage id.
 - `jenkins_get_pipeline_node_log`: Fetch the bounded tail of a Pipeline flow node log through Jenkins' progressive-text endpoint, coalescing concurrent requests and reusing disk-cached raw pages when log caching is enabled.
@@ -43,8 +44,10 @@ Go-based MCP server for Jenkins diagnostics and guarded build actions. It runs o
 - `jenkins_update_server`: Download, verify, and install or stage the latest released server binary. Requires `updates.selfUpdateEnabled`.
 
 ### Jenkins-Mutating Tools
+- `jenkins_proceed_pipeline_input`: Approve a pending Pipeline input, optionally supplying all parameter values.
+- `jenkins_abort_pipeline_input`: Reject a pending Pipeline input, which can abort its Pipeline.
 - `jenkins_poll_scm`: Request SCM polling for a job; Jenkins decides whether changes warrant a build. Requires mutations to be enabled and a configured Poll SCM trigger on an enabled job. `accepted` confirms request acceptance only, not polling completion or a queued build.
-- `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard).
+- `jenkins_trigger_build`: Trigger a Jenkins build (parameterized or standard); first inspect `jenkins_get_job` for parameter definitions, then supply selected values via `parameters`.
 - `jenkins_replay_build`: Replay a Jenkins Pipeline build, preferring the Jenkins MCP plugin’s authoritative queue item and retaining native Replay for unsupported controllers. Supports full primary and loaded-script overrides; omitted scripts use originals. Jenkins enforces replay permission and sandbox checks.
 - `jenkins_cancel_queue_item`: Cancel a queued Jenkins item. The tool is annotated as idempotent because repeating the cancellation cannot cause another queue-state transition.
 - `jenkins_cancel_build`: Cancel a running Jenkins build. The tool is annotated as idempotent because repeating the cancellation cannot cause another build-state transition.
