@@ -3,7 +3,7 @@ module github.com/david/jenkins-mcp
 go 1.27.0
 
 require (
-	github.com/davidvanlaatum/dvgoutils v0.0.1
+	github.com/davidvanlaatum/dvgoutils v0.1.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
@@ -62,6 +62,6 @@ require (
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
